@@ -8,9 +8,8 @@ Work top to bottom. Each epic is unblocked only after the one above it is done.
 
 The skeleton app is full of demo files and a placeholder schema. Clear it out before building anything real.
 
-- [ ] Delete all `demo-*` files from `src/components`, `src/data`, `src/hooks`, `src/lib`
-- [ ] Delete all demo routes under `src/routes/demo/`
-- [ ] Replace `src/db/schema.ts` with the real schema (`users`, `projects`, `scenes` tables as per HLD)
+- [ ] Replace `src/db/schema.ts` with the real schema (`users`, `projects`, `scenes` tables as per DATA_MODEL.md)
+- [ ] ~~Delete demo files~~ — deferred until first real routes are built and working (demo files serve as reference)
 - [ ] Add all missing env vars to `.env.local`: `REPLICATE_API_KEY` (for testing), `ENCRYPTION_KEY` (32-byte secret), `CLOUDFLARE_R2_*` (account ID, bucket, access key, secret), `TRIGGER_SECRET_KEY`
 - [ ] Run `pnpm db:push` to apply the new schema to Neon
 
