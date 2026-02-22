@@ -6,7 +6,7 @@ import viteTsConfigPaths from 'vite-tsconfig-paths'
 import { fileURLToPath, URL } from 'url'
 
 import tailwindcss from '@tailwindcss/vite'
-import neon from './neon-vite-plugin.ts'
+import neon from './neon-vite-plugin.js'
 import netlify from '@netlify/vite-plugin-tanstack-start'
 
 const config = defineConfig({

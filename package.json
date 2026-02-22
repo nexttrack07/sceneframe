@@ -21,7 +21,6 @@
     "@clerk/clerk-react": "^5.49.0",
     "@faker-js/faker": "^10.0.0",
     "@neondatabase/serverless": "^1.0.0",
-    "@neondatabase/vite-plugin-postgres": "^0.5.0",
     "@sentry/tanstackstart-react": "^10.22.0",
     "@tailwindcss/vite": "^4.0.6",
     "@tanstack/ai": "latest",
@@ -59,6 +58,7 @@
     "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.6",
     "tw-animate-css": "^1.3.6",
+    "vite-plugin-db": "^0.7.0",
     "vite-tsconfig-paths": "^6.0.2",
     "zod": "^4.1.11"
   },
@@ -82,5 +82,16 @@
     "vite": "^7.1.7",
     "vitest": "^3.0.5",
     "web-vitals": "^5.1.0"
+  },
+  "packageManager": "pnpm@10.6.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@clerk/shared",
+      "@parcel/watcher",
+      "@sentry/cli",
+      "esbuild",
+      "protobufjs",
+      "sharp"
+    ]
   }
 }
