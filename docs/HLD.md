@@ -52,43 +52,19 @@ AI generation is never called directly from a server function. Instead, server f
 
 ## Database Schema
 
-### `users`
-Stores the encrypted Replicate API key per user. Clerk provides the `user_id`.
+See `docs/DATA_MODEL.md` for the full schema with all columns, constraints, indexes, and reasoning. Summary below.
 
-| Column | Type | Notes |
-|---|---|---|
-| `user_id` | text (PK) | Clerk user ID |
-| `replicate_key_enc` | text | AES-256 encrypted Replicate API key |
-| `created_at` | timestamp | |
+### `users`
+Clerk user ID as PK. Stores encrypted AI provider key using envelope encryption (`provider_key_enc`, `provider_key_dek`, `provider_key_iv`).
 
 ### `projects`
-One project = one Director Prompt = one Kanban board.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `user_id` | text | FK → users |
-| `name` | text | User-defined project name |
-| `director_prompt` | text | The original concept the user typed |
-| `created_at` | timestamp | |
+One project = one Director Prompt = one Kanban board. Stores `director_prompt` and `script_raw` (full LLM output before parsing).
 
 ### `scenes`
-One row per scene card. Tracks which stage it's in and holds asset URLs as they're generated.
+One row per scene card. Holds `title` (nullable), `description`, `stage`, float-based `order`, soft-delete `deleted_at`. No status column — status is derived from assets at query time.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `project_id` | uuid | FK → projects |
-| `order` | integer | Scene sequence (1, 2, 3…) |
-| `description` | text | LLM-generated scene description |
-| `stage` | enum | `script`, `images`, `video`, `audio` |
-| `status` | enum | `idle`, `generating`, `done`, `error` |
-| `start_image_url` | text | nullable |
-| `end_image_url` | text | nullable |
-| `video_url` | text | nullable |
-| `audio_url` | text | nullable |
-| `replicate_prediction_id` | text | nullable — tracks active job |
-| `updated_at` | timestamp | |
+### `assets`
+One row per generated output. Stores `type` (`start_image`, `end_image`, `video`, `voiceover`, `background_music`), `stage` (denormalised), `model`, `model_settings` (jsonb), `url`, `storage_key` (stable R2 path), `is_selected`, `batch_id`, soft-delete `deleted_at`.
 
 ---
 
@@ -110,34 +86,35 @@ Validates the scene has the required assets for the target stage, then updates `
 All AI work runs inside Trigger.dev tasks. This gives us retries, timeouts, real-time logs, and no risk of serverless function timeouts on long-running Replicate calls.
 
 ### `generate-script`
-1. Decrypts the user's Replicate key.
+1. Decrypts the user's provider key.
 2. Calls a Replicate-hosted LLM with the Director Prompt.
-3. Parses the response into 3–5 scene descriptions.
-4. Inserts one `scenes` row per scene (`stage: script, status: idle`).
+3. Stores raw LLM output in `projects.script_raw`.
+4. Parses the response into 3–5 scenes.
+5. Inserts one `scenes` row per scene (`stage: script`).
 
 ### `generate-images`
-1. Calls Replicate text-to-image twice (start frame + end frame).
-2. Waits for both predictions to complete.
-3. Downloads output images and uploads them to R2.
-4. Updates scene with R2 URLs, sets `status: done`.
+1. Calls image model twice (start frame + end frame).
+2. Waits for both jobs to complete.
+3. Downloads outputs and uploads to R2.
+4. Inserts two `assets` rows (`type: start_image`, `type: end_image`) with `url`, `storage_key`, `model`, `model_settings`, `status: done`.
 
 ### `generate-video`
-1. Calls Replicate image-to-video with the scene's R2 image URLs.
-2. Waits for prediction to complete.
-3. Downloads the `.mp4` and uploads it to R2.
-4. Updates scene with R2 video URL, sets `status: done`.
+1. Calls image-to-video model with the selected start and end image URLs from `assets`.
+2. Waits for job to complete.
+3. Downloads `.mp4` and uploads to R2.
+4. Inserts one `assets` row (`type: video`) with `url`, `storage_key`, `model`, `model_settings`, `status: done`.
 
-### `generate-audio`
-1. Calls Replicate audio model with the scene description.
-2. Waits for prediction to complete.
-3. Downloads the audio file and uploads it to R2.
-4. Updates scene with R2 audio URL, sets `status: done`.
+### `generate-voiceover` / `generate-background-music`
+1. Calls audio model with scene description or style prompt.
+2. Waits for job to complete.
+3. Downloads audio and uploads to R2.
+4. Inserts one `assets` row (`type: voiceover` or `background_music`) with `url`, `storage_key`, `model`, `model_settings`, `status: done`.
 
 ---
 
 ## Status Updates
 
-Trigger.dev jobs update the scene row in Neon directly when a job completes or fails. The frontend polls scene status every few seconds and updates the UI when `status` changes. No separate webhook handler is needed — Trigger.dev manages the async lifecycle.
+Trigger.dev jobs insert or update `assets` rows directly when a job completes or fails. Scene status is derived at query time from its assets — no status column on scenes. The frontend polls every few seconds and the UI derives state from the latest asset data.
 
 ---
 
