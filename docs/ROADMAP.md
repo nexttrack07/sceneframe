@@ -8,10 +8,10 @@ Work top to bottom. Each epic is unblocked only after the one above it is done.
 
 The skeleton app is full of demo files and a placeholder schema. Clear it out before building anything real.
 
-- [ ] Replace `src/db/schema.ts` with the real schema (`users`, `projects`, `scenes` tables as per DATA_MODEL.md)
+- [x] Replace `src/db/schema.ts` with the real schema (`users`, `projects`, `scenes` tables as per DATA_MODEL.md)
 - [ ] ~~Delete demo files~~ — deferred until first real routes are built and working (demo files serve as reference)
-- [ ] Add all missing env vars to `.env.local`: `REPLICATE_API_KEY` (for testing), `ENCRYPTION_KEY` (32-byte secret), `CLOUDFLARE_R2_*` (account ID, bucket, access key, secret), `TRIGGER_SECRET_KEY`
-- [ ] Run `pnpm db:push` to apply the new schema to Neon
+- [x] Add all missing env vars to `.env.local`: `REPLICATE_API_KEY` (for testing), `ENCRYPTION_KEY` (32-byte secret), `CLOUDFLARE_R2_*` (account ID, bucket, access key, secret), `TRIGGER_SECRET_KEY`
+- [x] Run `pnpm db:push` to apply the new schema to Neon
 
 ---
 
@@ -19,9 +19,9 @@ The skeleton app is full of demo files and a placeholder schema. Clear it out be
 
 Write the shared server-side utilities that every feature depends on. No UI yet.
 
-- [ ] Encryption utility (`src/lib/encryption.server.ts`): AES-256-GCM encrypt/decrypt functions using per-user DEK + env KEK (server-only module)
-- [ ] R2 utility (`src/lib/r2.server.ts`): upload file from URL, generate public URL, delete object
-- [ ] Trigger.dev setup: install SDK, configure client, create `src/trigger/` directory
+- [x] Encryption utility (`src/lib/encryption.server.ts`): AES-256-GCM encrypt/decrypt functions using per-user DEK + env KEK (server-only module)
+- [x] R2 utility (`src/lib/r2.server.ts`): upload file from URL, generate public URL, delete object
+- [x] Trigger.dev setup: install SDK, configure client, create `src/trigger/` directory
 
 ---
 
