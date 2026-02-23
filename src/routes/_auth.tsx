@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
+import AppNav from '@/components/AppNav'
 
 const checkAuth = createServerFn().handler(async () => {
   const { userId } = await auth()
@@ -12,5 +13,16 @@ const checkAuth = createServerFn().handler(async () => {
 
 export const Route = createFileRoute('/_auth')({
   beforeLoad: () => checkAuth(),
-  component: () => <Outlet />,
+  component: AuthLayout,
 })
+
+function AuthLayout() {
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <AppNav />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+    </div>
+  )
+}

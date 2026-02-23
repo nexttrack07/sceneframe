@@ -35,8 +35,8 @@ Write the shared server-side utilities that every feature depends on. No UI yet.
 
 ## Epic 4: Projects
 
-- [ ] Build `/dashboard` route: lists user's projects, "New Project" button
-- [ ] Build `/projects/new` route: project name + Director Prompt form, server function to create project row and enqueue `generate-script` Trigger.dev job, redirect to project workspace on submit
+- [x] Build `/dashboard` route: lists user's projects, "New Project" button
+- [x] Build `/projects/new` route: project name + Director Prompt form, server function to create project row and enqueue `generate-script` Trigger.dev job, redirect to project workspace on submit
 
 ---
 

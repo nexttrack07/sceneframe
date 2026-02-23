@@ -6,8 +6,6 @@ import {
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 
-import Header from '../components/Header'
-
 import ClerkProvider from '../integrations/clerk/provider'
 
 import StoreDevtools from '../lib/demo-store-devtools'
@@ -65,7 +63,6 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <ClerkProvider>
-          <Header />
           {children}
           <TanStackDevtools
             config={{
