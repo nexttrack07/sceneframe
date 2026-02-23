@@ -5,7 +5,7 @@ import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { users } from '@/db/schema'
 import type { Project } from '@/db/schema'
-import { eq, isNull, desc } from 'drizzle-orm'
+import { and, eq, isNull, desc } from 'drizzle-orm'
 import { Button } from '@/components/ui/button'
 import { Plus, Film, Clock } from 'lucide-react'
 
@@ -23,7 +23,7 @@ const loadDashboard = createServerFn().handler(async () => {
     }
 
     const userProjects = await db.query.projects.findMany({
-      where: (p) => eq(p.userId, userId) && isNull(p.deletedAt),
+      where: (p) => and(eq(p.userId, userId), isNull(p.deletedAt)),
       orderBy: (p) => desc(p.createdAt),
     })
 

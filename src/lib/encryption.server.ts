@@ -7,6 +7,7 @@ const AUTH_TAG_LENGTH = 16
 function getKek(): Buffer {
   const key = process.env.ENCRYPTION_KEY
   if (!key) throw new Error('ENCRYPTION_KEY env var is not set')
+  if (key.length !== 64) throw new Error('ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes for AES-256)')
   return Buffer.from(key, 'hex')
 }
 

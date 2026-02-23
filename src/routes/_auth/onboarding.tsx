@@ -1,10 +1,11 @@
 import { useId, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
 import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { users } from '@/db/schema'
+import { eq } from 'drizzle-orm'
 import { encryptUserApiKey } from '@/lib/encryption.server'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +17,20 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+
+const loadOnboarding = createServerFn().handler(async () => {
+  return Sentry.startSpan({ name: 'Load onboarding' }, async () => {
+    const { userId } = await auth()
+    if (!userId) throw redirect({ to: '/sign-in' })
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { onboardingComplete: true },
+    })
+
+    return { isReturning: !!user?.onboardingComplete }
+  })
+})
 
 const saveApiKey = createServerFn({ method: 'POST' })
   .inputValidator((data: { apiKey: string }) => data)
@@ -53,10 +68,12 @@ const saveApiKey = createServerFn({ method: 'POST' })
   })
 
 export const Route = createFileRoute('/_auth/onboarding')({
+  loader: () => loadOnboarding(),
   component: OnboardingPage,
 })
 
 function OnboardingPage() {
+  const { isReturning } = Route.useLoaderData()
   const navigate = useNavigate()
   const apiKeyId = useId()
   const [apiKey, setApiKey] = useState('')
@@ -81,10 +98,13 @@ function OnboardingPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold">Welcome to SceneFrame</CardTitle>
+          <CardTitle className="text-2xl font-bold">
+            {isReturning ? 'Update your Replicate API key' : 'Welcome to SceneFrame'}
+          </CardTitle>
           <CardDescription>
-            Enter your Replicate API key to start generating cinematic scenes.
-            Your key is encrypted and stored securely — we never see it in plain text.
+            {isReturning
+              ? 'Enter a new key below to replace the one currently stored. Your key is encrypted at rest.'
+              : 'Enter your Replicate API key to start generating cinematic scenes. Your key is encrypted and stored securely — we never see it in plain text.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -116,7 +136,7 @@ function OnboardingPage() {
               <p className="text-sm text-destructive">{error}</p>
             )}
             <Button type="submit" className="w-full" disabled={isPending}>
-              {isPending ? 'Saving…' : 'Save and continue'}
+              {isPending ? 'Saving…' : isReturning ? 'Update key' : 'Save and continue'}
             </Button>
           </form>
         </CardContent>

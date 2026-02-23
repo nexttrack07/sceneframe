@@ -23,10 +23,9 @@ export const users = pgTable('users', {
   id: text('id').primaryKey(), // Clerk user ID
   providerKeyEnc: text('provider_key_enc'),
   providerKeyDek: text('provider_key_dek'),
-  providerKeyIv: text('provider_key_iv'),
   onboardingComplete: boolean('onboarding_complete').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
 })
 
 // ---------------------------------------------------------------------------
@@ -48,7 +47,7 @@ export const projects = pgTable(
     settings: jsonb('settings'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
   },
   (table) => [
     index('idx_projects_user_id').on(table.userId),
@@ -74,7 +73,7 @@ export const scenes = pgTable(
     stage: text('stage').notNull().default('script'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
   },
   (table) => [
     index('idx_scenes_project_id').on(table.projectId),
@@ -118,7 +117,7 @@ export const assets = pgTable(
     jobId: text('job_id'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
   },
   (table) => [
     index('idx_assets_scene_id').on(table.sceneId),

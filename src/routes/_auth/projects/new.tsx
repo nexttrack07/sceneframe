@@ -6,7 +6,8 @@ import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { projects } from '@/db/schema'
 import { eq } from 'drizzle-orm'
-import { generateScript } from '@/trigger/generate-script'
+import { tasks } from '@trigger.dev/sdk'
+import type { generateScript } from '@/trigger/generate-script'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,7 +35,18 @@ const createProject = createServerFn({ method: 'POST' })
         })
         .returning({ id: projects.id })
 
-      const handle = await generateScript.trigger({ projectId: project.id, userId })
+      if (!project) throw new Error('Failed to create project')
+
+      let handle: Awaited<ReturnType<typeof tasks.trigger>>
+      try {
+        handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId: project.id })
+      } catch (err) {
+        await db
+          .update(projects)
+          .set({ scriptStatus: 'error' })
+          .where(eq(projects.id, project.id))
+        throw err
+      }
 
       await db
         .update(projects)

@@ -7,7 +7,6 @@ import { and, eq, isNull } from 'drizzle-orm'
 
 interface GenerateScriptPayload {
   projectId: string
-  userId: string
 }
 
 interface ParsedScene {
@@ -46,7 +45,7 @@ function parseScenes(rawOutput: string): ParsedScene[] {
     parsed = JSON.parse(match[0])
   }
 
-  if (!Array.isArray(parsed.scenes) || parsed.scenes.length < 2) {
+  if (!Array.isArray(parsed.scenes) || parsed.scenes.length < 3) {
     throw new Error(`Expected 3–5 scenes, got ${parsed.scenes?.length ?? 0}`)
   }
 
@@ -60,21 +59,17 @@ export const generateScript = task({
   id: 'generate-script',
 
   run: async (payload: GenerateScriptPayload) => {
-    const { projectId, userId } = payload
+    const { projectId } = payload
 
     // --- 1. Load project ---
     const project = await db.query.projects.findFirst({
-      where: and(
-        eq(projects.id, projectId),
-        eq(projects.userId, userId),
-        isNull(projects.deletedAt),
-      ),
+      where: and(eq(projects.id, projectId), isNull(projects.deletedAt)),
     })
     if (!project) throw new Error(`Project ${projectId} not found`)
 
     // --- 2. Load user + decrypt API key ---
     const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+      where: eq(users.id, project.userId),
     })
     if (!user?.providerKeyEnc || !user?.providerKeyDek) {
       throw new Error('No Replicate API key found for user')
@@ -108,7 +103,8 @@ export const generateScript = task({
     // --- 5. Parse scenes ---
     const parsedScenes = parseScenes(rawText)
 
-    // --- 6. Insert scene rows ---
+    // --- 6. Insert scene rows (delete any from a prior attempt first) ---
+    await db.delete(scenes).where(eq(scenes.projectId, projectId))
     await db.insert(scenes).values(
       parsedScenes.map((scene, i) => ({
         projectId,

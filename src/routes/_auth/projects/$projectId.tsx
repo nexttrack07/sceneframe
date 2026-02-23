@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
@@ -6,9 +6,11 @@ import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { projects, scenes } from '@/db/schema'
 import { and, asc, eq, isNull } from 'drizzle-orm'
-import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Loader2, AlertCircle, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { tasks } from '@trigger.dev/sdk'
+import type { generateScript } from '@/trigger/generate-script'
 import type { Scene } from '@/db/schema'
 
 // ---------------------------------------------------------------------------
@@ -37,6 +39,43 @@ const loadProject = createServerFn()
       })
 
       return { project, scenes: projectScenes }
+    })
+  })
+
+const triggerScript = createServerFn({ method: 'POST' })
+  .inputValidator((projectId: string) => projectId)
+  .handler(async ({ data: projectId }) => {
+    return Sentry.startSpan({ name: 'Trigger generate-script' }, async () => {
+      const { userId } = await auth()
+      if (!userId) throw new Error('Unauthenticated')
+
+      const project = await db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, projectId),
+          eq(projects.userId, userId),
+          isNull(projects.deletedAt),
+        ),
+      })
+      if (!project) throw new Error('Project not found')
+
+      // Trigger first — if the API is unreachable we want to fail before mutating state
+      let handle: Awaited<ReturnType<typeof tasks.trigger>>
+      try {
+        handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId })
+      } catch (err) {
+        await db
+          .update(projects)
+          .set({ scriptStatus: 'error', scriptJobId: null })
+          .where(eq(projects.id, projectId))
+        throw err
+      }
+
+      // Commit state change and clear old scenes only after the job is queued
+      await db.delete(scenes).where(eq(scenes.projectId, projectId))
+      await db
+        .update(projects)
+        .set({ scriptStatus: 'generating', scriptJobId: handle.id })
+        .where(eq(projects.id, projectId))
     })
   })
 
@@ -97,8 +136,8 @@ function ProjectPage() {
               key={stage.key}
               stage={stage}
               scenes={projectScenes.filter((s) => s.stage === stage.key)}
-              isLoading={stage.key === 'script' && project.scriptStatus === 'generating'}
-              hasError={stage.key === 'script' && project.scriptStatus === 'error'}
+              projectId={project.id}
+              scriptStatus={stage.key === 'script' ? project.scriptStatus : 'done'}
             />
           ))}
         </div>
@@ -140,14 +179,18 @@ type StageConfig = (typeof STAGES)[number]
 function KanbanColumn({
   stage,
   scenes: columnScenes,
-  isLoading,
-  hasError,
+  projectId,
+  scriptStatus,
 }: {
   stage: StageConfig
   scenes: Scene[]
-  isLoading: boolean
-  hasError: boolean
+  projectId: string
+  scriptStatus: string
 }) {
+  const isLoading = scriptStatus === 'generating'
+  const hasError = scriptStatus === 'error'
+  const isIdle = scriptStatus === 'idle'
+
   return (
     <div className="flex-1 bg-gray-50 flex flex-col">
       {/* Column header */}
@@ -162,9 +205,9 @@ function KanbanColumn({
       {/* Cards */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {isLoading && <GeneratingPlaceholders />}
-        {hasError && <ErrorState />}
-        {!isLoading && !hasError && columnScenes.length === 0 && stage.key === 'script' && (
-          <EmptyScript />
+        {hasError && <ErrorState projectId={projectId} />}
+        {(isIdle || (!isLoading && !hasError && columnScenes.length === 0)) && stage.key === 'script' && (
+          <EmptyScript projectId={projectId} />
         )}
         {columnScenes.map((scene) => (
           <SceneCard key={scene.id} scene={scene} stageColor={stage.color} />
@@ -212,23 +255,61 @@ function GeneratingPlaceholders() {
   )
 }
 
-function ErrorState() {
+function TriggerScriptButton({
+  projectId,
+  label,
+  variant = 'default',
+}: {
+  projectId: string
+  label: string
+  variant?: 'default' | 'outline'
+}) {
+  const router = useRouter()
+  const [isPending, setIsPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleClick() {
+    setIsPending(true)
+    setError(null)
+    try {
+      await triggerScript({ data: projectId })
+      router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setIsPending(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <Button size="sm" variant={variant} disabled={isPending} onClick={handleClick}>
+        {isPending ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Wand2 size={13} className="mr-1.5" />}
+        {isPending ? 'Starting…' : label}
+      </Button>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+    </div>
+  )
+}
+
+function ErrorState({ projectId }: { projectId: string }) {
   return (
     <div className="bg-red-50 rounded-lg border border-red-200 p-4 text-center">
       <AlertCircle size={20} className="text-red-400 mx-auto mb-2" />
       <p className="text-sm font-medium text-red-700">Script generation failed</p>
       <p className="text-xs text-red-500 mt-0.5">Check your Replicate API key or try again.</p>
-      <Button size="sm" variant="outline" className="mt-3 text-red-600 border-red-300 hover:bg-red-50">
-        Retry
-      </Button>
+      <div className="mt-3">
+        <TriggerScriptButton projectId={projectId} label="Retry" variant="outline" />
+      </div>
     </div>
   )
 }
 
-function EmptyScript() {
+function EmptyScript({ projectId }: { projectId: string }) {
   return (
-    <div className="text-center py-8 text-gray-400">
-      <p className="text-xs">No scenes yet.</p>
+    <div className="flex flex-col items-center text-center py-8 gap-3">
+      <p className="text-xs text-gray-400">No scenes yet.</p>
+      <TriggerScriptButton projectId={projectId} label="Generate Script" />
     </div>
   )
 }
