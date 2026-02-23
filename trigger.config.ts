@@ -1,9 +1,9 @@
-import { defineConfig } from '@trigger.dev/sdk/v3'
+import { defineConfig } from '@trigger.dev/sdk'
 
 export default defineConfig({
-  // Find your project ref in the Trigger.dev dashboard → Project Settings
-  project: 'proj_REPLACE_WITH_YOUR_PROJECT_REF',
+  project: 'proj_vmvlnmsgweifpocgjqve',
   dirs: ['./src/trigger'],
+  maxDuration: 300, // 5 minutes — enough for LLM + image/video generation
   retries: {
     enabledInDev: false,
     default: {

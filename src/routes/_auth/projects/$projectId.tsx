@@ -1,16 +1,24 @@
-import { createFileRoute, redirect, Link } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
 import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
-import { projects } from '@/db/schema'
-import { and, eq, isNull } from 'drizzle-orm'
-import { ArrowLeft } from 'lucide-react'
+import { projects, scenes } from '@/db/schema'
+import { and, asc, eq, isNull } from 'drizzle-orm'
+import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import type { Scene } from '@/db/schema'
+
+// ---------------------------------------------------------------------------
+// Server loader
+// ---------------------------------------------------------------------------
 
 const loadProject = createServerFn()
   .inputValidator((projectId: string) => projectId)
   .handler(async ({ data: projectId }) => {
-    return Sentry.startSpan({ name: 'Load project' }, async () => {
+    return Sentry.startSpan({ name: 'Load project workspace' }, async () => {
       const { userId } = await auth()
       if (!userId) throw redirect({ to: '/sign-in' })
 
@@ -21,10 +29,14 @@ const loadProject = createServerFn()
           isNull(projects.deletedAt),
         ),
       })
-
       if (!project) throw redirect({ to: '/dashboard' })
 
-      return { project }
+      const projectScenes = await db.query.scenes.findMany({
+        where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+        orderBy: asc(scenes.order),
+      })
+
+      return { project, scenes: projectScenes }
     })
   })
 
@@ -33,32 +45,190 @@ export const Route = createFileRoute('/_auth/projects/$projectId')({
   component: ProjectPage,
 })
 
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+const STAGES = [
+  { key: 'script', label: 'Script', color: 'border-indigo-400', dot: 'bg-indigo-400' },
+  { key: 'images', label: 'Images', color: 'border-blue-400', dot: 'bg-blue-400' },
+  { key: 'video', label: 'Video', color: 'border-violet-400', dot: 'bg-violet-400' },
+  { key: 'audio', label: 'Audio', color: 'border-amber-400', dot: 'bg-amber-400' },
+] as const
+
 function ProjectPage() {
-  const { project } = Route.useLoaderData()
+  const { project, scenes: projectScenes } = Route.useLoaderData()
+  const router = useRouter()
+
+  // Poll while script is generating
+  useEffect(() => {
+    if (project.scriptStatus !== 'generating') return
+    const id = setInterval(() => router.invalidate(), 3000)
+    return () => clearInterval(id)
+  }, [project.scriptStatus, router])
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
-      <Link
-        to="/dashboard"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-6 transition-colors"
-      >
-        <ArrowLeft size={15} />
-        All projects
-      </Link>
-
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
-        <p className="text-sm text-gray-500 mt-1 max-w-2xl">{project.directorPrompt}</p>
-      </div>
-
-      <div className="rounded-xl border border-dashed border-gray-300 bg-white flex items-center justify-center py-24 text-center">
-        <div>
-          <p className="text-sm font-medium text-gray-500">Scene workspace coming in Epic 5</p>
-          <p className="text-xs text-gray-400 mt-1">
-            The 4-column Kanban board (Script → Images → Video → Audio) will be built here.
-          </p>
+    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+      {/* Header */}
+      <div className="px-6 py-4 border-b bg-white shrink-0">
+        <Link
+          to="/dashboard"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-2 transition-colors"
+        >
+          <ArrowLeft size={14} />
+          All projects
+        </Link>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
+            <p className="text-sm text-gray-500 mt-0.5 max-w-2xl line-clamp-2">
+              {project.directorPrompt}
+            </p>
+          </div>
+          <ScriptStatusBadge status={project.scriptStatus} />
         </div>
       </div>
+
+      {/* Kanban board */}
+      <div className="flex-1 overflow-x-auto">
+        <div className="flex h-full min-w-[900px] gap-px bg-gray-200">
+          {STAGES.map((stage) => (
+            <KanbanColumn
+              key={stage.key}
+              stage={stage}
+              scenes={projectScenes.filter((s) => s.stage === stage.key)}
+              isLoading={stage.key === 'script' && project.scriptStatus === 'generating'}
+              hasError={stage.key === 'script' && project.scriptStatus === 'error'}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Status badge
+// ---------------------------------------------------------------------------
+
+function ScriptStatusBadge({ status }: { status: string }) {
+  if (status === 'generating') {
+    return (
+      <Badge variant="outline" className="gap-1.5 text-amber-600 border-amber-300 bg-amber-50 shrink-0">
+        <Loader2 size={11} className="animate-spin" />
+        Generating script…
+      </Badge>
+    )
+  }
+  if (status === 'error') {
+    return (
+      <Badge variant="outline" className="gap-1.5 text-red-600 border-red-300 bg-red-50 shrink-0">
+        <AlertCircle size={11} />
+        Script failed
+      </Badge>
+    )
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Column
+// ---------------------------------------------------------------------------
+
+type StageConfig = (typeof STAGES)[number]
+
+function KanbanColumn({
+  stage,
+  scenes: columnScenes,
+  isLoading,
+  hasError,
+}: {
+  stage: StageConfig
+  scenes: Scene[]
+  isLoading: boolean
+  hasError: boolean
+}) {
+  return (
+    <div className="flex-1 bg-gray-50 flex flex-col">
+      {/* Column header */}
+      <div className="px-4 py-3 bg-white border-b flex items-center gap-2 shrink-0">
+        <span className={`w-2 h-2 rounded-full ${stage.dot}`} />
+        <span className="text-sm font-semibold text-gray-700">{stage.label}</span>
+        {columnScenes.length > 0 && (
+          <span className="ml-auto text-xs text-gray-400 tabular-nums">{columnScenes.length}</span>
+        )}
+      </div>
+
+      {/* Cards */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {isLoading && <GeneratingPlaceholders />}
+        {hasError && <ErrorState />}
+        {!isLoading && !hasError && columnScenes.length === 0 && stage.key === 'script' && (
+          <EmptyScript />
+        )}
+        {columnScenes.map((scene) => (
+          <SceneCard key={scene.id} scene={scene} stageColor={stage.color} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Scene card
+// ---------------------------------------------------------------------------
+
+function SceneCard({ scene, stageColor }: { scene: Scene; stageColor: string }) {
+  return (
+    <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${stageColor} p-4 shadow-sm`}>
+      {scene.title && (
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+          {scene.title}
+        </p>
+      )}
+      <p className="text-sm text-gray-800 leading-relaxed">{scene.description}</p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// States
+// ---------------------------------------------------------------------------
+
+function GeneratingPlaceholders() {
+  return (
+    <>
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="bg-white rounded-lg border border-gray-200 border-l-4 border-l-indigo-300 p-4 animate-pulse">
+          <div className="h-3 bg-gray-200 rounded w-1/3 mb-2" />
+          <div className="h-3 bg-gray-100 rounded w-full mb-1.5" />
+          <div className="h-3 bg-gray-100 rounded w-4/5" />
+        </div>
+      ))}
+      <p className="text-center text-xs text-gray-400 pt-1">
+        Generating scenes with the LLM…
+      </p>
+    </>
+  )
+}
+
+function ErrorState() {
+  return (
+    <div className="bg-red-50 rounded-lg border border-red-200 p-4 text-center">
+      <AlertCircle size={20} className="text-red-400 mx-auto mb-2" />
+      <p className="text-sm font-medium text-red-700">Script generation failed</p>
+      <p className="text-xs text-red-500 mt-0.5">Check your Replicate API key or try again.</p>
+      <Button size="sm" variant="outline" className="mt-3 text-red-600 border-red-300 hover:bg-red-50">
+        Retry
+      </Button>
+    </div>
+  )
+}
+
+function EmptyScript() {
+  return (
+    <div className="text-center py-8 text-gray-400">
+      <p className="text-xs">No scenes yet.</p>
     </div>
   )
 }

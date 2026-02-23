@@ -15,3 +15,5 @@ todos.json
 # Local Netlify folder
 .netlify
 .env.local
+.trigger
+.trigger/*

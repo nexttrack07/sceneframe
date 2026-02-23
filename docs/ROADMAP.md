@@ -42,9 +42,9 @@ Write the shared server-side utilities that every feature depends on. No UI yet.
 
 ## Epic 5: Script Generation + Scene Workspace
 
-- [ ] `generate-script` Trigger.dev job: decrypt user key → call Replicate LLM → parse 3–5 scenes → insert scene rows (`stage: script, status: idle`)
-- [ ] Build `/projects/$projectId` route: 4-column Kanban board layout, scene cards in Script column, polling until all scenes are `status: done`
-- [ ] Scene card component: title, description, status badge, left border strip, stage action button
+- [x] `generate-script` Trigger.dev job: decrypt user key → call Replicate LLM → parse 3–5 scenes → insert scene rows (`stage: script, status: idle`)
+- [x] Build `/projects/$projectId` route: 4-column Kanban board layout, scene cards in Script column, polling until all scenes are `status: done`
+- [x] Scene card component: title, description, status badge, left border strip, stage action button
 
 ---
 

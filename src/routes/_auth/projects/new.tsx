@@ -5,6 +5,8 @@ import { auth } from '@clerk/tanstack-react-start/server'
 import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { projects } from '@/db/schema'
+import { eq } from 'drizzle-orm'
+import { generateScript } from '@/trigger/generate-script'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,12 +30,16 @@ const createProject = createServerFn({ method: 'POST' })
           userId,
           name: name.trim(),
           directorPrompt: directorPrompt.trim(),
-          scriptStatus: 'idle',
+          scriptStatus: 'generating',
         })
         .returning({ id: projects.id })
 
-      // generate-script job will be wired in Epic 5
-      // tasks.trigger('generate-script', { projectId: project.id, userId })
+      const handle = await generateScript.trigger({ projectId: project.id, userId })
+
+      await db
+        .update(projects)
+        .set({ scriptJobId: handle.id })
+        .where(eq(projects.id, project.id))
 
       return { projectId: project.id }
     })
