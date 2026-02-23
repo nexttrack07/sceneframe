@@ -8,8 +8,6 @@ import { TanStackDevtools } from '@tanstack/react-devtools'
 
 import ClerkProvider from '../integrations/clerk/provider'
 
-import StoreDevtools from '../lib/demo-store-devtools'
-
 import AiDevtools from '../lib/ai-devtools'
 
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
@@ -74,7 +72,6 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                   name: 'Tanstack Router',
                   render: <TanStackRouterDevtoolsPanel />,
                 },
-                StoreDevtools,
                 AiDevtools,
                 TanStackQueryDevtools,
               ]}

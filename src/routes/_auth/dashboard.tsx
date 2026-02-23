@@ -1,7 +1,6 @@
 import { createFileRoute, redirect, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
-import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { users } from '@/db/schema'
 import type { Project } from '@/db/schema'
@@ -10,25 +9,23 @@ import { Button } from '@/components/ui/button'
 import { Plus, Film, Clock } from 'lucide-react'
 
 const loadDashboard = createServerFn().handler(async () => {
-  return Sentry.startSpan({ name: 'Load dashboard' }, async () => {
-    const { userId } = await auth()
-    if (!userId) throw redirect({ to: '/sign-in' })
+  const { userId } = await auth()
+  if (!userId) throw redirect({ to: '/sign-in' })
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-    })
-
-    if (!user?.onboardingComplete) {
-      throw redirect({ to: '/onboarding' })
-    }
-
-    const userProjects = await db.query.projects.findMany({
-      where: (p) => and(eq(p.userId, userId), isNull(p.deletedAt)),
-      orderBy: (p) => desc(p.createdAt),
-    })
-
-    return { projects: userProjects }
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
   })
+
+  if (!user?.onboardingComplete) {
+    throw redirect({ to: '/onboarding' })
+  }
+
+  const userProjects = await db.query.projects.findMany({
+    where: (p) => and(eq(p.userId, userId), isNull(p.deletedAt)),
+    orderBy: (p) => desc(p.createdAt),
+  })
+
+  return { projects: userProjects }
 })
 
 export const Route = createFileRoute('/_auth/dashboard')({

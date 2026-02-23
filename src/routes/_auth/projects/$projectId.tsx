@@ -2,16 +2,27 @@ import { useEffect, useState } from 'react'
 import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
-import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { projects, scenes } from '@/db/schema'
 import { and, asc, eq, isNull } from 'drizzle-orm'
-import { ArrowLeft, Loader2, AlertCircle, Wand2 } from 'lucide-react'
+import { ArrowLeft, Loader2, AlertCircle, Wand2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { tasks } from '@trigger.dev/sdk'
+import { runs, tasks } from '@trigger.dev/sdk'
 import type { generateScript } from '@/trigger/generate-script'
 import type { Scene } from '@/db/schema'
+
+// Trigger.dev run statuses that mean the job is no longer executing
+const TERMINAL_RUN_STATUSES = new Set([
+  'COMPLETED',
+  'CANCELED',
+  'FAILED',
+  'CRASHED',
+  'INTERRUPTED',
+  'SYSTEM_FAILURE',
+  'EXPIRED',
+  'TIMED_OUT',
+])
 
 // ---------------------------------------------------------------------------
 // Server loader
@@ -20,63 +31,109 @@ import type { Scene } from '@/db/schema'
 const loadProject = createServerFn()
   .inputValidator((projectId: string) => projectId)
   .handler(async ({ data: projectId }) => {
-    return Sentry.startSpan({ name: 'Load project workspace' }, async () => {
-      const { userId } = await auth()
-      if (!userId) throw redirect({ to: '/sign-in' })
+    const { userId } = await auth()
+    if (!userId) throw redirect({ to: '/sign-in' })
 
-      const project = await db.query.projects.findFirst({
-        where: and(
-          eq(projects.id, projectId),
-          eq(projects.userId, userId),
-          isNull(projects.deletedAt),
-        ),
-      })
-      if (!project) throw redirect({ to: '/dashboard' })
-
-      const projectScenes = await db.query.scenes.findMany({
-        where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-        orderBy: asc(scenes.order),
-      })
-
-      return { project, scenes: projectScenes }
+    let project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
     })
+    if (!project) throw redirect({ to: '/dashboard' })
+
+    // If the project is stuck in 'generating', verify the job is still alive.
+    // This handles: worker crashed, onFailure hook silently failed, dev worker restarted.
+    if (project.scriptStatus === 'generating' && project.scriptJobId) {
+      const run = await runs.retrieve(project.scriptJobId).catch(() => null)
+      const isTerminal = !run || TERMINAL_RUN_STATUSES.has(run.status)
+
+      if (isTerminal) {
+        // Determine correct status: done if scenes exist, error if not
+        const existingScenes = await db.query.scenes.findMany({
+          where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+          columns: { id: true },
+        })
+        const correctedStatus = existingScenes.length > 0 ? 'done' : 'error'
+        await db
+          .update(projects)
+          .set({ scriptStatus: correctedStatus, scriptJobId: null })
+          .where(eq(projects.id, projectId))
+        project = { ...project, scriptStatus: correctedStatus, scriptJobId: null }
+      }
+    }
+
+    const projectScenes = await db.query.scenes.findMany({
+      where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+      orderBy: asc(scenes.order),
+    })
+
+    return { project, scenes: projectScenes }
   })
 
 const triggerScript = createServerFn({ method: 'POST' })
   .inputValidator((projectId: string) => projectId)
   .handler(async ({ data: projectId }) => {
-    return Sentry.startSpan({ name: 'Trigger generate-script' }, async () => {
-      const { userId } = await auth()
-      if (!userId) throw new Error('Unauthenticated')
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
 
-      const project = await db.query.projects.findFirst({
-        where: and(
-          eq(projects.id, projectId),
-          eq(projects.userId, userId),
-          isNull(projects.deletedAt),
-        ),
-      })
-      if (!project) throw new Error('Project not found')
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
 
-      // Trigger first — if the API is unreachable we want to fail before mutating state
-      let handle: Awaited<ReturnType<typeof tasks.trigger>>
-      try {
-        handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId })
-      } catch (err) {
-        await db
-          .update(projects)
-          .set({ scriptStatus: 'error', scriptJobId: null })
-          .where(eq(projects.id, projectId))
-        throw err
-      }
-
-      // Commit state change and clear old scenes only after the job is queued
-      await db.delete(scenes).where(eq(scenes.projectId, projectId))
+    // Trigger first — if the API is unreachable we want to fail before mutating state
+    let handle: Awaited<ReturnType<typeof tasks.trigger>>
+    try {
+      handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId })
+    } catch (err) {
       await db
         .update(projects)
-        .set({ scriptStatus: 'generating', scriptJobId: handle.id })
+        .set({ scriptStatus: 'error', scriptJobId: null })
         .where(eq(projects.id, projectId))
+      throw err
+    }
+
+    console.log(`[triggerScript] Run created: ${handle.id} for project ${projectId}`)
+
+    // Commit state change and clear old scenes only after the job is queued
+    await db.delete(scenes).where(eq(scenes.projectId, projectId))
+    await db
+      .update(projects)
+      .set({ scriptStatus: 'generating', scriptJobId: handle.id })
+      .where(eq(projects.id, projectId))
+  })
+
+const cancelScript = createServerFn({ method: 'POST' })
+  .inputValidator((projectId: string) => projectId)
+  .handler(async ({ data: projectId }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
     })
+    if (!project) throw new Error('Project not found')
+    if (project.scriptStatus !== 'generating') return // already resolved, nothing to do
+
+    // Best-effort cancel — the job may have already finished between the click and this call
+    if (project.scriptJobId) {
+      await runs.cancel(project.scriptJobId).catch(() => {})
+    }
+
+    await db
+      .update(projects)
+      .set({ scriptStatus: 'idle', scriptJobId: null })
+      .where(eq(projects.id, projectId))
   })
 
 export const Route = createFileRoute('/_auth/projects/$projectId')({
@@ -124,7 +181,12 @@ function ProjectPage() {
               {project.directorPrompt}
             </p>
           </div>
-          <ScriptStatusBadge status={project.scriptStatus} />
+          <div className="flex items-center gap-2 shrink-0">
+            <ScriptStatusBadge status={project.scriptStatus} />
+            {project.scriptStatus === 'generating' && (
+              <CancelScriptButton projectId={project.id} />
+            )}
+          </div>
         </div>
       </div>
 
@@ -289,6 +351,36 @@ function TriggerScriptButton({
       </Button>
       {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
+  )
+}
+
+function CancelScriptButton({ projectId }: { projectId: string }) {
+  const router = useRouter()
+  const [isPending, setIsPending] = useState(false)
+
+  async function handleClick() {
+    setIsPending(true)
+    try {
+      await cancelScript({ data: projectId })
+      router.invalidate()
+    } finally {
+      setIsPending(false)
+    }
+  }
+
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      disabled={isPending}
+      onClick={handleClick}
+      className="text-gray-400 hover:text-red-600 hover:bg-red-50"
+    >
+      {isPending
+        ? <Loader2 size={13} className="animate-spin mr-1.5" />
+        : <X size={13} className="mr-1.5" />}
+      {isPending ? 'Cancelling…' : 'Cancel'}
+    </Button>
   )
 }
 

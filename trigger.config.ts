@@ -4,6 +4,7 @@ export default defineConfig({
   project: 'proj_vmvlnmsgweifpocgjqve',
   dirs: ['./src/trigger'],
   maxDuration: 300, // 5 minutes — enough for LLM + image/video generation
+  enableConsoleLogging: true,
   retries: {
     enabledInDev: false,
     default: {

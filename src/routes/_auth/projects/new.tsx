@@ -2,7 +2,6 @@ import { useId, useState } from 'react'
 import { createFileRoute, useNavigate, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
-import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { projects } from '@/db/schema'
 import { eq } from 'drizzle-orm'
@@ -17,44 +16,42 @@ import { ArrowLeft } from 'lucide-react'
 const createProject = createServerFn({ method: 'POST' })
   .inputValidator((data: { name: string; directorPrompt: string }) => data)
   .handler(async ({ data }) => {
-    return Sentry.startSpan({ name: 'Create project' }, async () => {
-      const { userId } = await auth()
-      if (!userId) throw new Error('Unauthenticated')
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
 
-      const { name, directorPrompt } = data
-      if (!name.trim()) throw new Error('Project name is required')
-      if (!directorPrompt.trim()) throw new Error('Director Prompt is required')
+    const { name, directorPrompt } = data
+    if (!name.trim()) throw new Error('Project name is required')
+    if (!directorPrompt.trim()) throw new Error('Director Prompt is required')
 
-      const [project] = await db
-        .insert(projects)
-        .values({
-          userId,
-          name: name.trim(),
-          directorPrompt: directorPrompt.trim(),
-          scriptStatus: 'generating',
-        })
-        .returning({ id: projects.id })
+    const [project] = await db
+      .insert(projects)
+      .values({
+        userId,
+        name: name.trim(),
+        directorPrompt: directorPrompt.trim(),
+        scriptStatus: 'generating',
+      })
+      .returning({ id: projects.id })
 
-      if (!project) throw new Error('Failed to create project')
+    if (!project) throw new Error('Failed to create project')
 
-      let handle: Awaited<ReturnType<typeof tasks.trigger>>
-      try {
-        handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId: project.id })
-      } catch (err) {
-        await db
-          .update(projects)
-          .set({ scriptStatus: 'error' })
-          .where(eq(projects.id, project.id))
-        throw err
-      }
-
+    let handle: Awaited<ReturnType<typeof tasks.trigger>>
+    try {
+      handle = await tasks.trigger<typeof generateScript>('generate-script', { projectId: project.id })
+    } catch (err) {
       await db
         .update(projects)
-        .set({ scriptJobId: handle.id })
+        .set({ scriptStatus: 'error' })
         .where(eq(projects.id, project.id))
+      throw err
+    }
 
-      return { projectId: project.id }
-    })
+    await db
+      .update(projects)
+      .set({ scriptJobId: handle.id })
+      .where(eq(projects.id, project.id))
+
+    return { projectId: project.id }
   })
 
 export const Route = createFileRoute('/_auth/projects/new')({

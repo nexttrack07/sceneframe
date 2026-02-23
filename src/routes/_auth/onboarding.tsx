@@ -2,7 +2,6 @@ import { useId, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
-import * as Sentry from '@sentry/tanstackstart-react'
 import { db } from '@/db/index'
 import { users } from '@/db/schema'
 import { eq } from 'drizzle-orm'
@@ -19,52 +18,48 @@ import {
 } from '@/components/ui/card'
 
 const loadOnboarding = createServerFn().handler(async () => {
-  return Sentry.startSpan({ name: 'Load onboarding' }, async () => {
-    const { userId } = await auth()
-    if (!userId) throw redirect({ to: '/sign-in' })
+  const { userId } = await auth()
+  if (!userId) throw redirect({ to: '/sign-in' })
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-      columns: { onboardingComplete: true },
-    })
-
-    return { isReturning: !!user?.onboardingComplete }
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { onboardingComplete: true },
   })
+
+  return { isReturning: !!user?.onboardingComplete }
 })
 
 const saveApiKey = createServerFn({ method: 'POST' })
   .inputValidator((data: { apiKey: string }) => data)
   .handler(async ({ data }) => {
-    return Sentry.startSpan({ name: 'Save Replicate API key' }, async () => {
-      const { userId } = await auth()
-      if (!userId) throw redirect({ to: '/sign-in' })
+    const { userId } = await auth()
+    if (!userId) throw redirect({ to: '/sign-in' })
 
-      const { apiKey } = data
-      if (!apiKey?.startsWith('r8_')) {
-        throw new Error('Invalid Replicate API key — must start with r8_')
-      }
+    const { apiKey } = data
+    if (!apiKey?.startsWith('r8_')) {
+      throw new Error('Invalid Replicate API key — must start with r8_')
+    }
 
-      const { providerKeyEnc, providerKeyDek } = encryptUserApiKey(apiKey)
+    const { providerKeyEnc, providerKeyDek } = encryptUserApiKey(apiKey)
 
-      await db
-        .insert(users)
-        .values({
-          id: userId,
+    await db
+      .insert(users)
+      .values({
+        id: userId,
+        providerKeyEnc,
+        providerKeyDek,
+        onboardingComplete: true,
+      })
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
           providerKeyEnc,
           providerKeyDek,
           onboardingComplete: true,
-        })
-        .onConflictDoUpdate({
-          target: users.id,
-          set: {
-            providerKeyEnc,
-            providerKeyDek,
-            onboardingComplete: true,
-          },
-        })
+        },
+      })
 
-      return { ok: true }
-    })
+    return { ok: true }
   })
 
 export const Route = createFileRoute('/_auth/onboarding')({
