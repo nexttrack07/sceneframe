@@ -35,7 +35,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'TanStack Start Starter',
+        title: 'SceneFrame',
       },
     ],
     links: [
@@ -47,6 +47,14 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
   }),
 
   shellComponent: RootDocument,
+  notFoundComponent: () => (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold text-gray-900">404</h1>
+        <p className="mt-2 text-gray-500">Page not found</p>
+      </div>
+    </div>
+  ),
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {

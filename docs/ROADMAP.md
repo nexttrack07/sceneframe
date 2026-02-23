@@ -27,9 +27,9 @@ Write the shared server-side utilities that every feature depends on. No UI yet.
 
 ## Epic 3: Auth + API Key Onboarding
 
-- [ ] Add auth guard to root route using Clerk's `getAuth` — redirect unauthenticated users to sign-in
-- [ ] Build `/onboarding` route: form to enter Replicate API key, server function to encrypt + save it to `users` table, redirect to dashboard on success
-- [ ] Add check on dashboard load: if no key saved, redirect to `/onboarding`
+- [x] Add auth guard to root route using Clerk's `getAuth` — redirect unauthenticated users to sign-in
+- [x] Build `/onboarding` route: form to enter Replicate API key, server function to encrypt + save it to `users` table, redirect to dashboard on success
+- [x] Add check on dashboard load: if no key saved, redirect to `/onboarding`
 
 ---
 

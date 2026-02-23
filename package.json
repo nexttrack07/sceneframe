@@ -20,6 +20,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.995.0",
     "@clerk/clerk-react": "^5.49.0",
+    "@clerk/tanstack-react-start": "^0.29.5",
+    "@clerk/tanstack-start": "^0.11.5",
     "@faker-js/faker": "^10.0.0",
     "@neondatabase/serverless": "^1.0.0",
     "@sentry/tanstackstart-react": "^10.22.0",
@@ -54,6 +56,7 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.544.0",
     "pg": "^8.16.3",
+    "radix-ui": "^1.4.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "streamdown": "^1.6.5",
