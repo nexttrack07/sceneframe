@@ -76,23 +76,20 @@ export const generateScript = task({
     }
     const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek)
 
-    // --- 3. Call Replicate LLM ---
+    // --- 3. Call Replicate LLM (Claude 4.5 Haiku via streaming) ---
     const replicate = new Replicate({ auth: apiKey })
 
-    const output = await replicate.run(
-      'meta/llama-3.3-70b-instruct',
-      {
-        input: {
-          system_prompt: SYSTEM_PROMPT,
-          prompt: project.directorPrompt,
-          max_tokens: 1024,
-          temperature: 0.7,
-        },
+    const chunks: string[] = []
+    for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+      input: {
+        prompt: `${SYSTEM_PROMPT}\n\nDirector Prompt: ${project.directorPrompt}`,
+        max_tokens: 1024,
+        temperature: 0.7,
       },
-    )
-
-    // Replicate returns an array of string chunks — join them
-    const rawText = Array.isArray(output) ? output.join('') : String(output)
+    })) {
+      chunks.push(String(event))
+    }
+    const rawText = chunks.join('')
 
     // --- 4. Save raw output ---
     await db

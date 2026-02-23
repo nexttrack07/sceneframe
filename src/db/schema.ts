@@ -40,7 +40,7 @@ export const projects = pgTable(
       .notNull()
       .references(() => users.id),
     name: text('name').notNull(),
-    directorPrompt: text('director_prompt').notNull(),
+    directorPrompt: text('director_prompt').notNull().default(''),
     scriptRaw: text('script_raw'),
     scriptStatus: text('script_status').notNull().default('idle'),
     scriptJobId: text('script_job_id'),
@@ -140,6 +140,27 @@ export const assets = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// messages (Script Workshop chat history)
+// ---------------------------------------------------------------------------
+
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    role: text('role').notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_messages_project_id').on(table.projectId),
+    check('messages_role_check', sql`${table.role} IN ('system', 'user', 'assistant')`),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -154,3 +175,6 @@ export type NewScene = typeof scenes.$inferInsert
 
 export type Asset = typeof assets.$inferSelect
 export type NewAsset = typeof assets.$inferInsert
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
