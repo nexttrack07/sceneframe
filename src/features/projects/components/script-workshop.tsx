@@ -116,9 +116,9 @@ export function ScriptWorkshop({
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {chatMessages.length === 0 && (
           <div className="text-center py-12">
-            <Film size={32} className="text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 font-medium">Welcome to the Script Workshop</p>
-            <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
+            <Film size={32} className="text-muted-foreground/50 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">Welcome to the Script Workshop</p>
+            <p className="text-sm text-muted-foreground/70 mt-1 max-w-md mx-auto">
               Describe your video concept and I&apos;ll help you develop it into a set of scenes.
               Start with the big idea — we&apos;ll refine it together.
             </p>
@@ -131,11 +131,11 @@ export function ScriptWorkshop({
 
         {isSending && (
           <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-              <Film size={13} className="text-blue-600" />
+            <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+              <Film size={13} className="text-primary" />
             </div>
-            <div className="bg-gray-100 rounded-2xl rounded-tl-md px-4 py-3">
-              <Loader2 size={16} className="animate-spin text-gray-400" />
+            <div className="bg-muted rounded-2xl rounded-tl-md px-4 py-3">
+              <Loader2 size={16} className="animate-spin text-muted-foreground" />
             </div>
           </div>
         )}
@@ -143,8 +143,8 @@ export function ScriptWorkshop({
 
       {/* Approve bar */}
       {lastProposal && !isSending && (
-        <div className="px-6 py-3 border-t bg-blue-50 flex items-center justify-between">
-          <p className="text-sm text-blue-700">
+        <div className="px-6 py-3 border-t bg-primary/10 flex items-center justify-between">
+          <p className="text-sm text-primary">
             <strong>{lastProposal.length} scenes</strong> proposed. Happy with this breakdown?
           </p>
           <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ export function ScriptWorkshop({
               size="sm"
               onClick={handleApprove}
               disabled={isApproving}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-primary hover:bg-primary/90"
             >
               {isApproving ? (
                 <Loader2 size={13} className="animate-spin mr-1.5" />
@@ -177,14 +177,14 @@ export function ScriptWorkshop({
       )}
 
       {/* Input */}
-      <div className="px-6 py-4 border-t bg-white">
+      <div className="px-6 py-4 border-t bg-card">
         {error && (
-          <div className="flex items-center gap-2 mb-2 text-xs text-red-500">
+          <div className="flex items-center gap-2 mb-2 text-xs text-destructive">
             <span className="flex-1">{error}</span>
             <button
               type="button"
               onClick={() => setError(null)}
-              className="text-red-300 hover:text-red-500"
+              className="text-destructive/50 hover:text-destructive"
             >
               ✕
             </button>
@@ -233,13 +233,13 @@ function ChatBubble({ message }: { message: Message }) {
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
         className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-          isUser ? 'bg-gray-200' : 'bg-blue-100'
+          isUser ? 'bg-muted' : 'bg-primary/15'
         }`}
       >
         {isUser ? (
-          <span className="text-xs font-semibold text-gray-600">You</span>
+          <span className="text-xs font-semibold text-muted-foreground">You</span>
         ) : (
-          <Film size={13} className="text-blue-600" />
+          <Film size={13} className="text-primary" />
         )}
       </div>
       <div className="max-w-[75%] space-y-3">
@@ -247,8 +247,8 @@ function ChatBubble({ message }: { message: Message }) {
           <div
             className={`rounded-2xl px-4 py-3 ${
               isUser
-                ? 'bg-gray-900 text-white rounded-tr-md'
-                : 'bg-gray-100 text-gray-800 rounded-tl-md'
+                ? 'bg-foreground text-background rounded-tr-md'
+                : 'bg-muted text-foreground rounded-tl-md'
             }`}
           >
             <p className="text-sm whitespace-pre-wrap leading-relaxed">{displayText}</p>
@@ -259,13 +259,13 @@ function ChatBubble({ message }: { message: Message }) {
             {sceneProposal.map((scene, i) => (
               <div
                 key={`${scene.title}-${scene.description.slice(0, 30)}`}
-                className="bg-white border border-blue-200 rounded-lg p-3 shadow-sm"
+                className="bg-card border border-primary/30 rounded-lg p-3 shadow-sm"
               >
-                <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+                <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
                   Scene {i + 1}
                   {scene.title ? `: ${scene.title}` : ''}
                 </p>
-                <p className="text-sm text-gray-700 leading-relaxed">{scene.description}</p>
+                <p className="text-sm text-foreground leading-relaxed">{scene.description}</p>
               </div>
             ))}
           </div>

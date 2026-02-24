@@ -26,7 +26,7 @@ export function ResetDialog({
           size="sm"
           variant="ghost"
           disabled={isResetting}
-          className="text-gray-400 hover:text-red-600"
+          className="text-muted-foreground hover:text-destructive"
         >
           <RotateCcw size={13} className="mr-1.5" />
           {isResetting ? 'Resetting…' : 'Redo script'}
@@ -44,7 +44,7 @@ export function ResetDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            className="bg-destructive hover:bg-destructive/90 focus:ring-destructive"
           >
             Yes, start over
           </AlertDialogAction>

@@ -45,20 +45,20 @@ export function Storyboard({
       {/* Scene list */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
             Storyboard
           </h2>
           <ResetDialog isResetting={isResetting} onConfirm={handleReset} />
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+          <div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             <AlertCircle size={14} className="shrink-0" />
             <span>{error}</span>
             <button
               type="button"
               onClick={() => setError(null)}
-              className="ml-auto text-red-400 hover:text-red-600"
+              className="ml-auto text-destructive/50 hover:text-destructive"
             >
               ✕
             </button>
@@ -113,22 +113,22 @@ function StoryboardCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full text-left bg-white rounded-xl border-2 p-4 transition-all hover:shadow-md ${
-        isSelected ? 'border-blue-400 shadow-md' : 'border-gray-200 hover:border-gray-300'
+      className={`w-full text-left bg-card rounded-xl border-2 p-4 transition-all hover:shadow-md ${
+        isSelected ? 'border-primary shadow-md' : 'border-border hover:border-border/80'
       }`}
     >
       <div className="flex items-start gap-4">
         {/* Scene number */}
-        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-          <span className="text-sm font-bold text-gray-500">{index + 1}</span>
+        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+          <span className="text-sm font-bold text-muted-foreground">{index + 1}</span>
         </div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
           {scene.title && (
-            <p className="font-semibold text-gray-900 text-sm mb-0.5">{scene.title}</p>
+            <p className="font-semibold text-foreground text-sm mb-0.5">{scene.title}</p>
           )}
-          <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">
+          <p className="text-sm text-muted-foreground leading-relaxed line-clamp-2">
             {scene.description}
           </p>
 
@@ -139,14 +139,14 @@ function StoryboardCard({
               const Icon = stage.icon
               return (
                 <div key={stage.key} className="flex items-center gap-1">
-                  <Icon size={12} className={isDone ? 'text-blue-500' : 'text-gray-300'} />
+                  <Icon size={12} className={isDone ? 'text-primary' : 'text-muted-foreground/50'} />
                   <span
-                    className={`text-xs ${isDone ? 'text-blue-600 font-medium' : 'text-gray-400'}`}
+                    className={`text-xs ${isDone ? 'text-primary font-medium' : 'text-muted-foreground/70'}`}
                   >
                     {stage.label}
                   </span>
                   {i < PIPELINE_STAGES.length - 1 && (
-                    <ChevronRight size={10} className="text-gray-300 ml-1" />
+                    <ChevronRight size={10} className="text-muted-foreground/50 ml-1" />
                   )}
                 </div>
               )

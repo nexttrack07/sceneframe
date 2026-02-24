@@ -31,9 +31,9 @@ function ProjectPage() {
       <ProjectHeader>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
+            <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
             {!isWorkshopPhase && projectScenes.length > 0 && (
-              <p className="text-sm text-gray-500 mt-0.5">
+              <p className="text-sm text-muted-foreground mt-0.5">
                 {projectScenes.length} scene{projectScenes.length !== 1 ? 's' : ''}
               </p>
             )}
@@ -41,7 +41,7 @@ function ProjectPage() {
           {isWorkshopPhase ? (
             <Badge
               variant="outline"
-              className="gap-1.5 text-blue-600 border-blue-300 bg-blue-50 shrink-0"
+              className="gap-1.5 text-primary border-primary/40 bg-primary/10 shrink-0"
             >
               <Film size={11} />
               Script Workshop
@@ -49,7 +49,7 @@ function ProjectPage() {
           ) : (
             <Badge
               variant="outline"
-              className="gap-1.5 text-emerald-600 border-emerald-300 bg-emerald-50 shrink-0"
+              className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
             >
               <Check size={11} />
               Script approved
@@ -78,10 +78,10 @@ function ProjectPage() {
 
 function ProjectHeader({ children }: { children?: React.ReactNode }) {
   return (
-    <div className="px-6 py-4 border-b bg-white shrink-0">
+    <div className="px-6 py-4 border-b bg-card shrink-0">
       <Link
         to="/dashboard"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-2 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-2 transition-colors"
       >
         <ArrowLeft size={14} />
         All projects
@@ -99,10 +99,10 @@ function ProjectPending() {
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       <ProjectHeader>
-        <div className="h-6 w-48 bg-gray-200 rounded animate-pulse mt-1" />
+        <div className="h-6 w-48 bg-muted rounded animate-pulse mt-1" />
       </ProjectHeader>
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 size={24} className="animate-spin text-gray-400" />
+        <Loader2 size={24} className="animate-spin text-muted-foreground" />
       </div>
     </div>
   )
@@ -113,7 +113,7 @@ function ProjectError({ error, reset }: { error: Error; reset: () => void }) {
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       <ProjectHeader />
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-        <p className="text-sm text-red-600 text-center max-w-md">
+        <p className="text-sm text-destructive text-center max-w-md">
           {error.message || 'Something went wrong loading this project.'}
         </p>
         <div className="flex items-center gap-3">

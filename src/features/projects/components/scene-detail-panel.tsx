@@ -115,9 +115,9 @@ export function SceneDetailPanel({
   }
 
   return (
-    <div className="w-1/2 border-l bg-white flex flex-col shrink-0">
+    <div className="w-1/2 border-l bg-card flex flex-col shrink-0">
       <div className="px-5 py-4 border-b flex items-center justify-between">
-        <h3 className="font-semibold text-gray-900">Scene Details</h3>
+        <h3 className="font-semibold text-foreground">Scene Details</h3>
         <Button size="sm" variant="ghost" onClick={onClose}>
           ✕
         </Button>
@@ -128,7 +128,7 @@ export function SceneDetailPanel({
         <div className="space-y-1.5">
           <label
             htmlFor={titleId}
-            className="text-xs font-medium text-gray-500 uppercase tracking-wide"
+            className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
           >
             Title
           </label>
@@ -137,7 +137,7 @@ export function SceneDetailPanel({
             type="text"
             value={title}
             onChange={(e) => handleTitleChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             placeholder="Scene title"
           />
         </div>
@@ -147,7 +147,7 @@ export function SceneDetailPanel({
           <div className="flex items-center justify-between">
             <label
               htmlFor={descriptionId}
-              className="text-xs font-medium text-gray-500 uppercase tracking-wide"
+              className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
             >
               Description
             </label>
@@ -158,8 +158,8 @@ export function SceneDetailPanel({
                   onClick={() => setIsRefineOpen((prev) => !prev)}
                   className={`p-1.5 rounded-md transition-colors ${
                     isRefineOpen
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-gray-900 text-white hover:bg-gray-700'
+                      ? 'bg-foreground text-background'
+                      : 'bg-foreground text-background hover:bg-foreground/80'
                   }`}
                 >
                   <Sparkles size={13} />
@@ -176,21 +176,21 @@ export function SceneDetailPanel({
             onChange={(e) => handleDescriptionChange(e.target.value)}
             rows={6}
             disabled={isRegenerating}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent leading-relaxed disabled:opacity-50"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent leading-relaxed disabled:opacity-50"
             placeholder="Visual description for this scene..."
           />
 
           {/* AI refine panel */}
           {isRefineOpen && (
-            <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2">
-              <p className="text-xs text-blue-600 font-medium">What should change?</p>
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+              <p className="text-xs text-primary font-medium">What should change?</p>
               <Textarea
                 value={refineInstructions}
                 onChange={(e) => setRefineInstructions(e.target.value)}
                 placeholder="e.g. Make the lighting warmer, add a sunset in the background..."
                 rows={2}
                 disabled={isRegenerating}
-                className="resize-none text-sm bg-white"
+                className="resize-none text-sm bg-card"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
@@ -215,7 +215,7 @@ export function SceneDetailPanel({
                   size="sm"
                   onClick={handleRegenerate}
                   disabled={!refineInstructions.trim() || isRegenerating}
-                  className="bg-blue-600 hover:bg-blue-700 text-xs"
+                  className="bg-primary hover:bg-primary/90 text-xs"
                 >
                   {isRegenerating ? (
                     <Loader2 size={12} className="animate-spin mr-1.5" />
@@ -230,7 +230,7 @@ export function SceneDetailPanel({
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             <AlertCircle size={14} className="shrink-0" />
             <span>{error}</span>
           </div>
@@ -245,7 +245,7 @@ export function SceneDetailPanel({
 
         {/* Asset sections (placeholders for future epics) */}
         <div className="pt-4 border-t space-y-4">
-          <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide">Assets</h4>
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Assets</h4>
 
           {ASSET_SECTIONS.map((section) => (
             <AssetSection key={section.label} {...section} />
@@ -274,13 +274,13 @@ function AssetSection({
   return (
     <div className={`rounded-lg border p-3 ${status === 'locked' ? 'opacity-50' : ''}`}>
       <div className="flex items-center gap-2 mb-1">
-        <Icon size={14} className="text-gray-500" />
-        <span className="text-sm font-medium text-gray-700">{label}</span>
+        <Icon size={14} className="text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">{label}</span>
         <Badge variant="outline" className="ml-auto text-xs">
           {status === 'locked' ? 'Needs prior stage' : status === 'pending' ? 'Ready' : status}
         </Badge>
       </div>
-      <p className="text-xs text-gray-400">{description}</p>
+      <p className="text-xs text-muted-foreground/70">{description}</p>
       {status === 'pending' && (
         <Button size="sm" variant="outline" className="mt-2 w-full" disabled>
           Generate {label} (coming soon)

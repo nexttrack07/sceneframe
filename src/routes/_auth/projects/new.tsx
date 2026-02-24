@@ -62,15 +62,15 @@ function NewProjectPage() {
     <div className="max-w-lg mx-auto px-6 py-8">
       <Link
         to="/dashboard"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-6 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
       >
         <ArrowLeft size={15} />
         Back to projects
       </Link>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">New Project</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">New Project</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Give your project a name. You'll develop the script through a guided creative workshop.
         </p>
       </div>
