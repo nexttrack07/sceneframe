@@ -69,8 +69,8 @@ function DashboardPage() {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="w-14 h-14 rounded-full bg-indigo-50 flex items-center justify-center mb-4">
-        <Film size={24} className="text-indigo-500" />
+      <div className="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-4">
+        <Film size={24} className="text-blue-500" />
       </div>
       <h2 className="text-lg font-semibold text-gray-900 mb-1">No projects yet</h2>
       <p className="text-sm text-gray-500 max-w-xs mb-6">
@@ -111,10 +111,10 @@ function ProjectCard({ project }: { project: Project }) {
     <Link
       to="/projects/$projectId"
       params={{ projectId: project.id }}
-      className="group block bg-white rounded-xl border border-gray-200 p-5 hover:border-indigo-300 hover:shadow-sm transition-all"
+      className="group block bg-white rounded-xl border border-gray-200 p-5 hover:border-blue-300 hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-2 mb-3">
-        <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors line-clamp-1">
+        <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors line-clamp-1">
           {project.name}
         </h3>
         <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${statusColor[project.scriptStatus] ?? statusColor.idle}`}>

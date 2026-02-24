@@ -3,14 +3,9 @@ import {
   Scripts,
   createRootRouteWithContext,
 } from '@tanstack/react-router'
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
-import { TanStackDevtools } from '@tanstack/react-devtools'
 
 import ClerkProvider from '../integrations/clerk/provider'
-
-import AiDevtools from '../lib/ai-devtools'
-
-import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
+import { TooltipProvider } from '../components/ui/tooltip'
 
 import appCss from '../styles.css?url'
 
@@ -61,22 +56,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <ClerkProvider>
-          {children}
-          {import.meta.env.DEV && (
-            <TanStackDevtools
-              config={{
-                position: 'bottom-right',
-              }}
-              plugins={[
-                {
-                  name: 'Tanstack Router',
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-                AiDevtools,
-                TanStackQueryDevtools,
-              ]}
-            />
-          )}
+          <TooltipProvider delayDuration={300}>
+            {children}
+          </TooltipProvider>
         </ClerkProvider>
         <Scripts />
       </body>

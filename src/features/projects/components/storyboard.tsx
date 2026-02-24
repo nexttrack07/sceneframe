@@ -114,7 +114,7 @@ function StoryboardCard({
       type="button"
       onClick={onSelect}
       className={`w-full text-left bg-white rounded-xl border-2 p-4 transition-all hover:shadow-md ${
-        isSelected ? 'border-indigo-400 shadow-md' : 'border-gray-200 hover:border-gray-300'
+        isSelected ? 'border-blue-400 shadow-md' : 'border-gray-200 hover:border-gray-300'
       }`}
     >
       <div className="flex items-start gap-4">
@@ -139,9 +139,9 @@ function StoryboardCard({
               const Icon = stage.icon
               return (
                 <div key={stage.key} className="flex items-center gap-1">
-                  <Icon size={12} className={isDone ? 'text-indigo-500' : 'text-gray-300'} />
+                  <Icon size={12} className={isDone ? 'text-blue-500' : 'text-gray-300'} />
                   <span
-                    className={`text-xs ${isDone ? 'text-indigo-600 font-medium' : 'text-gray-400'}`}
+                    className={`text-xs ${isDone ? 'text-blue-600 font-medium' : 'text-gray-400'}`}
                   >
                     {stage.label}
                   </span>

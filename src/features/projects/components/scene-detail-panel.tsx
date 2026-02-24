@@ -1,10 +1,12 @@
 import { useId, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { AlertCircle, Loader2, Film, Image as ImageIcon, Video, Music } from 'lucide-react'
+import { AlertCircle, Loader2, Sparkles, Film, Image as ImageIcon, Video, Music } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { Scene } from '@/db/schema'
-import { updateScene } from '../project-actions'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { updateScene, regenerateSceneDescription } from '../project-actions'
 
 const ASSET_SECTIONS: {
   icon: typeof Film
@@ -49,6 +51,9 @@ export function SceneDetailPanel({
   const [isSaving, setIsSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isRefineOpen, setIsRefineOpen] = useState(false)
+  const [refineInstructions, setRefineInstructions] = useState('')
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
   function handleTitleChange(val: string) {
     setTitle(val)
@@ -86,6 +91,29 @@ export function SceneDetailPanel({
     }
   }
 
+  async function handleRegenerate() {
+    if (!refineInstructions.trim() || isRegenerating) return
+    setIsRegenerating(true)
+    setError(null)
+    try {
+      const result = await regenerateSceneDescription({
+        data: {
+          sceneId: scene.id,
+          instructions: refineInstructions,
+          currentDescription: description,
+        },
+      })
+      setDescription(result.description)
+      setIsDirty(true)
+      setRefineInstructions('')
+      setIsRefineOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to regenerate description')
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
   return (
     <div className="w-1/2 border-l bg-white flex flex-col shrink-0">
       <div className="px-5 py-4 border-b flex items-center justify-between">
@@ -109,27 +137,96 @@ export function SceneDetailPanel({
             type="text"
             value={title}
             onChange={(e) => handleTitleChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             placeholder="Scene title"
           />
         </div>
 
         {/* Description */}
         <div className="space-y-1.5">
-          <label
-            htmlFor={descriptionId}
-            className="text-xs font-medium text-gray-500 uppercase tracking-wide"
-          >
-            Description
-          </label>
+          <div className="flex items-center justify-between">
+            <label
+              htmlFor={descriptionId}
+              className="text-xs font-medium text-gray-500 uppercase tracking-wide"
+            >
+              Description
+            </label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setIsRefineOpen((prev) => !prev)}
+                  className={`p-1.5 rounded-md transition-colors ${
+                    isRefineOpen
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-gray-900 text-white hover:bg-gray-700'
+                  }`}
+                >
+                  <Sparkles size={13} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                <p>Refine with AI</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <textarea
             id={descriptionId}
             value={description}
             onChange={(e) => handleDescriptionChange(e.target.value)}
             rows={6}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent leading-relaxed"
+            disabled={isRegenerating}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent leading-relaxed disabled:opacity-50"
             placeholder="Visual description for this scene..."
           />
+
+          {/* AI refine panel */}
+          {isRefineOpen && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+              <p className="text-xs text-blue-600 font-medium">What should change?</p>
+              <Textarea
+                value={refineInstructions}
+                onChange={(e) => setRefineInstructions(e.target.value)}
+                placeholder="e.g. Make the lighting warmer, add a sunset in the background..."
+                rows={2}
+                disabled={isRegenerating}
+                className="resize-none text-sm bg-white"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleRegenerate()
+                  }
+                }}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsRefineOpen(false)
+                    setRefineInstructions('')
+                  }}
+                  disabled={isRegenerating}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleRegenerate}
+                  disabled={!refineInstructions.trim() || isRegenerating}
+                  className="bg-blue-600 hover:bg-blue-700 text-xs"
+                >
+                  {isRegenerating ? (
+                    <Loader2 size={12} className="animate-spin mr-1.5" />
+                  ) : (
+                    <Sparkles size={12} className="mr-1.5" />
+                  )}
+                  {isRegenerating ? 'Refining…' : 'Refine'}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (

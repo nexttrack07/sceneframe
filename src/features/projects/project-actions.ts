@@ -274,3 +274,79 @@ export const updateScene = createServerFn({ method: 'POST' })
       await db.update(scenes).set(updates).where(eq(scenes.id, sceneId))
     }
   })
+
+// ---------------------------------------------------------------------------
+// Regenerate a scene description via LLM
+// ---------------------------------------------------------------------------
+
+export const regenerateSceneDescription = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { sceneId: string; instructions: string; currentDescription: string }) => {
+      const trimmed = data.instructions.trim()
+      if (trimmed.length === 0) throw new Error('Instructions cannot be empty')
+      if (trimmed.length > MAX_MESSAGE_LENGTH)
+        throw new Error(`Instructions too long (max ${MAX_MESSAGE_LENGTH} characters)`)
+      return { sceneId: data.sceneId, instructions: trimmed, currentDescription: data.currentDescription }
+    },
+  )
+  .handler(async ({ data: { sceneId, instructions, currentDescription } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    })
+    if (!user?.providerKeyEnc || !user?.providerKeyDek) {
+      throw new Error('No Replicate API key found. Update it in onboarding.')
+    }
+    const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek)
+
+    const prompt = `You are refining a scene description for a video project called "${project.name}".
+
+CURRENT SCENE DESCRIPTION:
+${currentDescription}
+
+USER'S REQUESTED CHANGES:
+${instructions}
+
+Rewrite the scene description incorporating the user's changes. The description must be a detailed visual description suitable for image generation (2-4 sentences). Be specific about lighting, camera angle, mood, subjects, and environment. The description must stand alone — no references to other scenes.
+
+Return ONLY the new description text, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const newDescription = chunks.join('').trim()
+
+      if (!newDescription) {
+        throw new Error('AI returned an empty response — please try again')
+      }
+
+      return { description: newDescription }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })

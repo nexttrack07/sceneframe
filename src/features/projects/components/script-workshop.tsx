@@ -131,8 +131,8 @@ export function ScriptWorkshop({
 
         {isSending && (
           <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-              <Film size={13} className="text-indigo-600" />
+            <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+              <Film size={13} className="text-blue-600" />
             </div>
             <div className="bg-gray-100 rounded-2xl rounded-tl-md px-4 py-3">
               <Loader2 size={16} className="animate-spin text-gray-400" />
@@ -143,8 +143,8 @@ export function ScriptWorkshop({
 
       {/* Approve bar */}
       {lastProposal && !isSending && (
-        <div className="px-6 py-3 border-t bg-indigo-50 flex items-center justify-between">
-          <p className="text-sm text-indigo-700">
+        <div className="px-6 py-3 border-t bg-blue-50 flex items-center justify-between">
+          <p className="text-sm text-blue-700">
             <strong>{lastProposal.length} scenes</strong> proposed. Happy with this breakdown?
           </p>
           <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ export function ScriptWorkshop({
               size="sm"
               onClick={handleApprove}
               disabled={isApproving}
-              className="bg-indigo-600 hover:bg-indigo-700"
+              className="bg-blue-600 hover:bg-blue-700"
             >
               {isApproving ? (
                 <Loader2 size={13} className="animate-spin mr-1.5" />
@@ -233,13 +233,13 @@ function ChatBubble({ message }: { message: Message }) {
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
         className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-          isUser ? 'bg-gray-200' : 'bg-indigo-100'
+          isUser ? 'bg-gray-200' : 'bg-blue-100'
         }`}
       >
         {isUser ? (
           <span className="text-xs font-semibold text-gray-600">You</span>
         ) : (
-          <Film size={13} className="text-indigo-600" />
+          <Film size={13} className="text-blue-600" />
         )}
       </div>
       <div className="max-w-[75%] space-y-3">
@@ -259,9 +259,9 @@ function ChatBubble({ message }: { message: Message }) {
             {sceneProposal.map((scene, i) => (
               <div
                 key={`${scene.title}-${scene.description.slice(0, 30)}`}
-                className="bg-white border border-indigo-200 rounded-lg p-3 shadow-sm"
+                className="bg-white border border-blue-200 rounded-lg p-3 shadow-sm"
               >
-                <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-1">
+                <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
                   Scene {i + 1}
                   {scene.title ? `: ${scene.title}` : ''}
                 </p>

@@ -41,7 +41,7 @@ function ProjectPage() {
           {isWorkshopPhase ? (
             <Badge
               variant="outline"
-              className="gap-1.5 text-indigo-600 border-indigo-300 bg-indigo-50 shrink-0"
+              className="gap-1.5 text-blue-600 border-blue-300 bg-blue-50 shrink-0"
             >
               <Film size={11} />
               Script Workshop

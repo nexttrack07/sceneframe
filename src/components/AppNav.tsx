@@ -6,7 +6,7 @@ export default function AppNav() {
   return (
     <header className="h-14 border-b bg-white flex items-center px-6 gap-6 shrink-0">
       <Link to="/dashboard" className="flex items-center gap-2 font-semibold text-gray-900">
-        <Film size={20} className="text-indigo-600" />
+        <Film size={20} className="text-blue-600" />
         <span>SceneFrame</span>
       </Link>
 
