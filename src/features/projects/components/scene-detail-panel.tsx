@@ -87,7 +87,7 @@ export function SceneDetailPanel({
   }
 
   return (
-    <div className="w-[400px] border-l bg-white flex flex-col shrink-0">
+    <div className="w-1/2 border-l bg-white flex flex-col shrink-0">
       <div className="px-5 py-4 border-b flex items-center justify-between">
         <h3 className="font-semibold text-gray-900">Scene Details</h3>
         <Button size="sm" variant="ghost" onClick={onClose}>
