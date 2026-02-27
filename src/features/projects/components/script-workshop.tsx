@@ -1,10 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { Loader2, Send, Check, Film } from 'lucide-react'
+import { Loader2, Send, Check, Film, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import type { Message } from '@/db/schema'
-import { sendMessage, approveScenes } from '../project-actions'
+import { sendMessage, approveScenes, saveIntake, resetWorkshop } from '../project-actions'
+import type { IntakeAnswers } from '../project-actions'
+import { IntakeForm } from './intake-form'
 
 export function parseSceneProposal(
   content: string,
@@ -25,12 +38,30 @@ export function parseSceneProposal(
   }
 }
 
+function composeBrief(intake: IntakeAnswers): string {
+  const parts: string[] = []
+  parts.push(`I'd like to create a ${intake.length.toLowerCase()} ${intake.style.join(', ').toLowerCase()} video`)
+  if (intake.purpose) parts[0] += ` for ${intake.purpose.toLowerCase()}`
+  parts[0] += '.'
+
+  if (intake.mood.length > 0) {
+    parts.push(`The mood should be ${intake.mood.join(', ').toLowerCase()}.`)
+  }
+  if (intake.setting.length > 0) {
+    parts.push(`Setting: ${intake.setting.join(', ').toLowerCase()}.`)
+  }
+  parts.push(`Here's my concept: ${intake.concept}`)
+  return parts.join(' ')
+}
+
 export function ScriptWorkshop({
   projectId,
   existingMessages,
+  projectSettings,
 }: {
   projectId: string
   existingMessages: Message[]
+  projectSettings: IntakeAnswers | null
 }) {
   const router = useRouter()
   const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages)
@@ -40,6 +71,9 @@ export function ScriptWorkshop({
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const intakeComplete = Boolean(projectSettings?.concept)
+  const [showIntake, setShowIntake] = useState(!intakeComplete)
 
   const messageCount = chatMessages.length
   useEffect(() => {
@@ -58,35 +92,64 @@ export function ScriptWorkshop({
     return null
   }, [chatMessages])
 
-  async function handleSend() {
-    if (!input.trim() || isSending) return
-    setError(null)
-
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      projectId,
-      role: 'user',
-      content: input.trim(),
-      createdAt: new Date(),
-    }
-    setChatMessages((prev) => [...prev, userMsg])
-    setInput('')
-    setIsSending(true)
-
-    try {
-      const result = await sendMessage({ data: { projectId, content: userMsg.content } })
-      const assistantMsg: Message = {
+  const doSendMessage = useCallback(
+    async (content: string) => {
+      const userMsg: Message = {
         id: crypto.randomUUID(),
         projectId,
-        role: 'assistant',
-        content: result.content,
+        role: 'user',
+        content,
         createdAt: new Date(),
       }
-      setChatMessages((prev) => [...prev, assistantMsg])
+      setChatMessages((prev) => [...prev, userMsg])
+      setIsSending(true)
+      setError(null)
+
+      try {
+        const result = await sendMessage({ data: { projectId, content } })
+        const assistantMsg: Message = {
+          id: crypto.randomUUID(),
+          projectId,
+          role: 'assistant',
+          content: result.content,
+          createdAt: new Date(),
+        }
+        setChatMessages((prev) => [...prev, assistantMsg])
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to get response')
+      } finally {
+        setIsSending(false)
+      }
+    },
+    [projectId],
+  )
+
+  async function handleSend() {
+    if (!input.trim() || isSending) return
+    const content = input.trim()
+    setInput('')
+    await doSendMessage(content)
+  }
+
+  const handleIntakeComplete = useCallback(
+    async (intake: IntakeAnswers) => {
+      setError(null)
+      await saveIntake({ data: { projectId, intake } })
+      setShowIntake(false)
+      const brief = composeBrief(intake)
+      await doSendMessage(brief)
+    },
+    [projectId, doSendMessage],
+  )
+
+  async function handleEditBrief() {
+    setError(null)
+    try {
+      await resetWorkshop({ data: projectId })
+      setChatMessages([])
+      setShowIntake(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get response')
-    } finally {
-      setIsSending(false)
+      setError(err instanceof Error ? err.message : 'Failed to reset workshop')
     }
   }
 
@@ -110,8 +173,53 @@ export function ScriptWorkshop({
     }
   }
 
+  if (showIntake) {
+    return (
+      <IntakeForm
+        onComplete={handleIntakeComplete}
+        error={error}
+        onDismissError={() => setError(null)}
+      />
+    )
+  }
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {/* Chat header with Edit brief */}
+      {intakeComplete && chatMessages.length > 0 && (
+        <div className="px-6 py-2 border-b bg-card flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">Script Workshop</p>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Pencil size={12} />
+                Edit brief
+              </button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Re-do the intake?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will clear your current chat and scenes so you can start fresh with a new brief.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleEditBrief}
+                  className="bg-destructive hover:bg-destructive/90"
+                >
+                  Reset &amp; re-do
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      )}
+
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {chatMessages.length === 0 && (
@@ -143,36 +251,41 @@ export function ScriptWorkshop({
 
       {/* Approve bar */}
       {lastProposal && !isSending && (
-        <div className="px-6 py-3 border-t bg-primary/10 flex items-center justify-between">
-          <p className="text-sm text-primary">
-            <strong>{lastProposal.length} scenes</strong> proposed. Happy with this breakdown?
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setInput('Can you adjust...')
-                setTimeout(() => textareaRef.current?.focus(), 0)
-              }}
-              disabled={isApproving}
-            >
-              Request changes
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleApprove}
-              disabled={isApproving}
-              className="bg-primary hover:bg-primary/90"
-            >
-              {isApproving ? (
-                <Loader2 size={13} className="animate-spin mr-1.5" />
-              ) : (
-                <Check size={13} className="mr-1.5" />
-              )}
-              {isApproving ? 'Approving…' : 'Approve script'}
-            </Button>
+        <div className="border-t bg-primary/10">
+          <div className="px-6 py-3 flex items-center justify-between">
+            <p className="text-sm text-primary">
+              <strong>{lastProposal.length} scenes</strong> proposed. Happy with this breakdown?
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setInput('Can you adjust...')
+                  setTimeout(() => textareaRef.current?.focus(), 0)
+                }}
+                disabled={isApproving}
+              >
+                Request changes
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleApprove}
+                disabled={isApproving}
+                className="bg-primary hover:bg-primary/90"
+              >
+                {isApproving ? (
+                  <Loader2 size={13} className="animate-spin mr-1.5" />
+                ) : (
+                  <Check size={13} className="mr-1.5" />
+                )}
+                {isApproving ? 'Approving…' : 'Approve script'}
+              </Button>
+            </div>
           </div>
+          <p className="px-6 pb-3 text-xs text-muted-foreground">
+            Don&apos;t worry — you can still edit and refine each scene individually after approving.
+          </p>
         </div>
       )}
 
@@ -196,9 +309,7 @@ export function ScriptWorkshop({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              chatMessages.length === 0 ? 'Describe your video concept...' : 'Type a message...'
-            }
+            placeholder="Type a message..."
             rows={2}
             className="resize-none flex-1"
             disabled={isSending}

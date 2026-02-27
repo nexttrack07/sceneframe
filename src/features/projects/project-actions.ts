@@ -11,15 +11,40 @@ const MAX_MESSAGE_LENGTH = 5_000
 const MAX_HISTORY_MESSAGES = 30
 const REPLICATE_TIMEOUT_MS = 60_000
 
-function buildSystemPrompt(projectName: string) {
+export interface IntakeAnswers {
+  purpose: string
+  length: string
+  style: string[]
+  mood: string[]
+  setting: string[]
+  concept: string
+}
+
+function buildSystemPrompt(projectName: string, intake?: IntakeAnswers | null) {
+  const intakeBlock = intake
+    ? `
+CREATIVE BRIEF (from structured intake):
+- Purpose: ${intake.purpose}
+- Target length: ${intake.length}
+- Visual style: ${intake.style.join(', ')}
+- Mood / tone: ${intake.mood.join(', ')}
+- Setting: ${intake.setting.join(', ')}
+- Concept: ${intake.concept}
+`
+    : ''
+
+  const firstResponseRule = intake
+    ? `- The user has already provided a structured creative brief. Your FIRST response must summarize their brief back to them in a friendly, conversational way and confirm you understand their vision. Do NOT propose scenes yet in your first response — wait for the user to confirm or adjust.`
+    : `- If the user hasn't described their concept yet, ask what the video is about.`
+
   return `You are a creative director helping a user develop scenes for a short video project called "${projectName}".
 
-Your job is to understand what the user wants and help them craft 3-5 distinct visual scenes.
-
+Your job is to understand what the user wants and help them craft 3-8 distinct visual scenes.
+${intakeBlock}
 CONVERSATION RULES:
-- If the user hasn't described their concept yet, ask what the video is about.
+${firstResponseRule}
 - Ask clarifying questions about mood, tone, audience, and visual style — but keep it conversational, not interrogative. One or two questions at a time.
-- When you have enough context, propose a scene breakdown.
+- When you have enough context and the user is happy, propose a scene breakdown.
 - When proposing scenes, include a JSON block in your response with this exact format:
 
 \`\`\`scenes
@@ -65,10 +90,49 @@ export const loadProject = createServerFn()
     ])
 
     return {
-      project: { ...project, settings: (project.settings ?? {}) as Record<string, never> },
+      project: {
+        ...project,
+        settings: (project.settings ?? null) as IntakeAnswers | null,
+      },
       scenes: projectScenes,
       messages: projectMessages,
     }
+  })
+
+// ---------------------------------------------------------------------------
+// Save intake answers to project settings
+// ---------------------------------------------------------------------------
+
+export const saveIntake = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
+    const { intake } = data
+    if (!intake.purpose) throw new Error('Purpose is required')
+    if (!intake.length) throw new Error('Length is required')
+    if (!intake.style.length) throw new Error('At least one style is required')
+    if (!intake.mood.length) throw new Error('At least one mood is required')
+    if (!intake.setting.length) throw new Error('At least one setting is required')
+    if (!intake.concept?.trim() || intake.concept.trim().length < 10) {
+      throw new Error('Concept must be at least 10 characters')
+    }
+    return data
+  })
+  .handler(async ({ data: { projectId, intake } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    await db
+      .update(projects)
+      .set({ settings: intake })
+      .where(eq(projects.id, projectId))
   })
 
 // ---------------------------------------------------------------------------
@@ -113,7 +177,8 @@ export const sendMessage = createServerFn({ method: 'POST' })
     }
     const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek)
 
-    const systemPrompt = buildSystemPrompt(project.name)
+    const intake = project.settings as IntakeAnswers | null
+    const systemPrompt = buildSystemPrompt(project.name, intake)
     const llmMessages = recentHistory.map((m) =>
       m.role === 'user' ? `User: ${m.content}` : `Assistant: ${m.content}`,
     )
@@ -181,32 +246,30 @@ export const approveScenes = createServerFn({ method: 'POST' })
     })
     if (!project) throw new Error('Project not found')
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(scenes)
-        .set({ deletedAt: new Date() })
-        .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+    await db
+      .update(scenes)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
 
-      await tx.insert(scenes).values(
-        parsedScenes.map((scene, i) => ({
-          projectId,
-          order: i + 1,
-          title: scene.title || null,
-          description: scene.description,
-          stage: 'script' as const,
-        })),
-      )
+    await db.insert(scenes).values(
+      parsedScenes.map((scene, i) => ({
+        projectId,
+        order: i + 1,
+        title: scene.title || null,
+        description: scene.description,
+        stage: 'script' as const,
+      })),
+    )
 
-      const summary = parsedScenes.map((s) => s.title).join(' → ')
-      await tx
-        .update(projects)
-        .set({ scriptStatus: 'done', directorPrompt: summary })
-        .where(eq(projects.id, projectId))
-    })
+    const summary = parsedScenes.map((s) => s.title).join(' → ')
+    await db
+      .update(projects)
+      .set({ scriptStatus: 'done', directorPrompt: summary })
+      .where(eq(projects.id, projectId))
   })
 
 // ---------------------------------------------------------------------------
-// Reset workshop — clears scenes + messages (transactional)
+// Reset workshop — clears scenes, messages, and intake settings
 // ---------------------------------------------------------------------------
 
 export const resetWorkshop = createServerFn({ method: 'POST' })
@@ -224,20 +287,18 @@ export const resetWorkshop = createServerFn({ method: 'POST' })
     })
     if (!project) throw new Error('Project not found')
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(scenes)
-        .set({ deletedAt: new Date() })
-        .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+    await db
+      .update(scenes)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
 
-      // messages table has no deletedAt column — hard delete is intentional
-      await tx.delete(messages).where(eq(messages.projectId, projectId))
+    // messages table has no deletedAt column — hard delete is intentional
+    await db.delete(messages).where(eq(messages.projectId, projectId))
 
-      await tx
-        .update(projects)
-        .set({ scriptStatus: 'idle', directorPrompt: '', scriptRaw: null, scriptJobId: null })
-        .where(eq(projects.id, projectId))
-    })
+    await db
+      .update(projects)
+      .set({ scriptStatus: 'idle', directorPrompt: '', scriptRaw: null, scriptJobId: null, settings: null })
+      .where(eq(projects.id, projectId))
   })
 
 // ---------------------------------------------------------------------------

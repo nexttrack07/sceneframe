@@ -64,6 +64,7 @@ function ProjectPage() {
           key={project.id}
           projectId={project.id}
           existingMessages={projectMessages}
+          projectSettings={project.settings}
         />
       ) : (
         <Storyboard projectId={project.id} scenes={projectScenes} />
