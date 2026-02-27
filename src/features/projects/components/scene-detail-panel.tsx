@@ -6,7 +6,13 @@ import { Badge } from '@/components/ui/badge'
 import type { Scene } from '@/db/schema'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { updateScene, regenerateSceneDescription } from '../project-actions'
+import type { ScenePlanEntry, SceneVersionEntry } from '../project-actions'
+import {
+  regenerateSceneDescription,
+  restoreSceneVersion,
+  saveSceneAssetDecisionReasons,
+  updateScene,
+} from '../project-actions'
 
 const ASSET_SECTIONS: {
   icon: typeof Film
@@ -36,9 +42,15 @@ const ASSET_SECTIONS: {
 
 export function SceneDetailPanel({
   scene,
+  plan,
+  sceneVersions,
+  decisionReasons,
   onClose,
 }: {
   scene: Scene
+  plan?: ScenePlanEntry
+  sceneVersions: SceneVersionEntry[]
+  decisionReasons: string[]
   onClose: () => void
 }) {
   const router = useRouter()
@@ -54,6 +66,13 @@ export function SceneDetailPanel({
   const [isRefineOpen, setIsRefineOpen] = useState(false)
   const [refineInstructions, setRefineInstructions] = useState('')
   const [isRegenerating, setIsRegenerating] = useState(false)
+  const [isRestoring, setIsRestoring] = useState(false)
+  const [isSavingReasons, setIsSavingReasons] = useState(false)
+  const [selectedReasons, setSelectedReasons] = useState<string[]>(decisionReasons)
+
+  const practicalityWarnings = getPracticalityWarnings(description)
+  const availableReasons = ['off-style', 'wrong subject', 'bad composition', 'not clickable']
+  const showDecisionReasons = decisionReasons.length > 0 || scene.stage !== 'script'
 
   function handleTitleChange(val: string) {
     setTitle(val)
@@ -111,6 +130,38 @@ export function SceneDetailPanel({
       setError(err instanceof Error ? err.message : 'Failed to regenerate description')
     } finally {
       setIsRegenerating(false)
+    }
+  }
+
+  async function handleRestoreVersion(version: SceneVersionEntry) {
+    setIsRestoring(true)
+    setError(null)
+    try {
+      await restoreSceneVersion({
+        data: { sceneId: scene.id, description: version.description },
+      })
+      setDescription(version.description)
+      setIsDirty(false)
+      router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore version')
+    } finally {
+      setIsRestoring(false)
+    }
+  }
+
+  async function handleSaveReasons() {
+    setIsSavingReasons(true)
+    setError(null)
+    try {
+      await saveSceneAssetDecisionReasons({
+        data: { sceneId: scene.id, reasons: selectedReasons },
+      })
+      router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save decision reasons')
+    } finally {
+      setIsSavingReasons(false)
     }
   }
 
@@ -229,6 +280,107 @@ export function SceneDetailPanel({
           )}
         </div>
 
+        {/* Linkage + timing */}
+        {(plan?.beat || plan?.durationSec || plan?.hookRole) && (
+          <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Scene mapping
+            </p>
+            {plan?.beat ? <p className="text-sm text-foreground">Beat: {plan.beat}</p> : null}
+            {plan?.hookRole ? <p className="text-sm text-foreground">Role: {plan.hookRole}</p> : null}
+            {plan?.durationSec ? (
+              <p className="text-sm text-foreground">Estimated duration: {plan.durationSec}s</p>
+            ) : null}
+          </div>
+        )}
+
+        {/* Practicality checks */}
+        {practicalityWarnings.length > 0 && (
+          <div className="rounded-lg border border-warning/40 bg-warning/15 p-3 space-y-2">
+            <p className="text-xs font-medium text-warning uppercase tracking-wide">
+              Production practicality checks
+            </p>
+            <ul className="space-y-1">
+              {practicalityWarnings.map((warning) => (
+                <li key={warning} className="text-xs text-warning">
+                  • {warning}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Versioning */}
+        {sceneVersions.length > 0 && (
+          <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Version history
+            </p>
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {sceneVersions
+                .slice()
+                .reverse()
+                .map((version, idx) => (
+                  <div key={`${version.createdAt}-${idx}`} className="rounded border bg-card p-2 space-y-1">
+                    <p className="text-[11px] text-muted-foreground">
+                      {new Date(version.createdAt).toLocaleString()}
+                    </p>
+                    <p className="text-xs text-foreground line-clamp-3">{version.description}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isRestoring}
+                      onClick={() => handleRestoreVersion(version)}
+                    >
+                      Restore this version
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Asset decision reasons */}
+        {showDecisionReasons ? (
+          <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Asset decision reasons
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {availableReasons.map((reason) => {
+                const selected = selectedReasons.includes(reason)
+                return (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() =>
+                      setSelectedReasons((prev) =>
+                        selected ? prev.filter((r) => r !== reason) : [...prev, reason],
+                      )
+                    }
+                    className={`px-2 py-1 rounded border text-xs transition-colors ${
+                      selected
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                )
+              })}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSaveReasons}
+              disabled={isSavingReasons}
+            >
+              {isSavingReasons ? <Loader2 size={12} className="animate-spin mr-1.5" /> : null}
+              Save reason tags
+            </Button>
+          </div>
+        ) : null}
+
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             <AlertCircle size={14} className="shrink-0" />
@@ -254,6 +406,24 @@ export function SceneDetailPanel({
       </div>
     </div>
   )
+}
+
+function getPracticalityWarnings(text: string): string[] {
+  const lower = text.toLowerCase()
+  const warnings: string[] = []
+  if (lower.includes('crowd') || lower.includes('thousands')) {
+    warnings.push('Large crowd setup may be expensive or hard to generate consistently.')
+  }
+  if (lower.includes('explosion') || lower.includes('helicopter')) {
+    warnings.push('High-complexity cinematic elements may require simplification.')
+  }
+  if (!lower.includes('lighting') && !lower.includes('camera')) {
+    warnings.push('Add lighting/camera direction for stronger and more consistent outputs.')
+  }
+  if (lower.includes('multiple locations') || lower.includes('many locations')) {
+    warnings.push('Many locations can fragment pacing; consider narrowing locations per scene.')
+  }
+  return warnings
 }
 
 // ---------------------------------------------------------------------------

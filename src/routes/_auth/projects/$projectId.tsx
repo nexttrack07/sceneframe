@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Film, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { loadProject } from '@/features/projects/project-actions'
+import type { ScenePlanEntry } from '@/features/projects/project-actions'
 import { ScriptWorkshop } from '@/features/projects/components/script-workshop'
 import { Storyboard } from '@/features/projects/components/storyboard'
 
@@ -23,6 +24,14 @@ export const Route = createFileRoute('/_auth/projects/$projectId')({
 
 function ProjectPage() {
   const { project, scenes: projectScenes, messages: projectMessages } = Route.useLoaderData()
+  const scenePlan: ScenePlanEntry[] = (() => {
+    if (!project.scriptRaw) return []
+    try {
+      return JSON.parse(project.scriptRaw) as ScenePlanEntry[]
+    } catch {
+      return []
+    }
+  })()
 
   const isWorkshopPhase = project.scriptStatus !== 'done'
 
@@ -67,7 +76,12 @@ function ProjectPage() {
           projectSettings={project.settings}
         />
       ) : (
-        <Storyboard projectId={project.id} scenes={projectScenes} />
+        <Storyboard
+          projectId={project.id}
+          scenes={projectScenes}
+          projectSettings={project.settings}
+          scenePlan={scenePlan}
+        />
       )}
     </div>
   )

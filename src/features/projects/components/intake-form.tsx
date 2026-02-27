@@ -4,7 +4,45 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { IntakeAnswers } from '../project-actions'
 
+const PRESET_DEFAULTS: Record<
+  string,
+  { length: string; style: string[]; mood: string[] }
+> = {
+  Shorts: {
+    length: '30 seconds',
+    style: ['Social / UGC-style'],
+    mood: ['Energetic'],
+  },
+  'Long-form': {
+    length: '5+ minutes',
+    style: ['Documentary'],
+    mood: ['Calm / meditative'],
+  },
+  'Talking-head': {
+    length: '2-3 minutes',
+    style: ['Commercial / polished'],
+    mood: ['Uplifting'],
+  },
+  Faceless: {
+    length: '1 minute',
+    style: ['Animation / motion graphics'],
+    mood: ['Mysterious'],
+  },
+  Tutorial: {
+    length: '2-3 minutes',
+    style: ['Documentary'],
+    mood: ['Inspirational'],
+  },
+}
+
 const STEPS = [
+  {
+    key: 'channelPreset' as const,
+    question: 'What type of channel/video format is this?',
+    subtitle: 'Choose a preset to speed up the rest of the brief.',
+    type: 'single' as const,
+    options: ['Shorts', 'Long-form', 'Talking-head', 'Faceless', 'Tutorial'],
+  },
   {
     key: 'purpose' as const,
     question: "What's this video for?",
@@ -73,6 +111,34 @@ const STEPS = [
     ],
   },
   {
+    key: 'audience' as const,
+    question: 'Who is this for?',
+    subtitle: 'Describe the audience in plain language.',
+    type: 'text' as const,
+    options: [],
+  },
+  {
+    key: 'viewerAction' as const,
+    question: 'What should viewers do after watching?',
+    subtitle: 'Define the desired outcome (subscribe, buy, click, etc.).',
+    type: 'text' as const,
+    options: [],
+  },
+  {
+    key: 'workingTitle' as const,
+    question: 'Working title (optional)',
+    subtitle: 'If you already have one, capture it now.',
+    type: 'optional-text' as const,
+    options: [],
+  },
+  {
+    key: 'thumbnailPromise' as const,
+    question: 'Thumbnail promise (optional)',
+    subtitle: 'What visual promise should the thumbnail communicate?',
+    type: 'optional-text' as const,
+    options: [],
+  },
+  {
     key: 'concept' as const,
     question: 'Describe your video idea',
     subtitle: "The more detail the better — we'll refine it together.",
@@ -94,11 +160,16 @@ interface IntakeFormProps {
 export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [answers, setAnswers] = useState<Partial<IntakeAnswers>>({
+    channelPreset: '',
     purpose: '',
     length: '',
     style: [],
     mood: [],
     setting: [],
+    audience: '',
+    viewerAction: '',
+    workingTitle: '',
+    thumbnailPromise: '',
     concept: '',
   })
   const [isTransitioning, setIsTransitioning] = useState(false)
@@ -117,7 +188,19 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
   }, [currentStep])
 
   function handleSingleSelect(value: string) {
-    setAnswers((prev) => ({ ...prev, [step.key]: value }))
+    setAnswers((prev) => {
+      if (step.key === 'channelPreset') {
+        const preset = PRESET_DEFAULTS[value]
+        return {
+          ...prev,
+          channelPreset: value,
+          length: preset?.length ?? prev.length ?? '',
+          style: preset?.style ?? prev.style ?? [],
+          mood: preset?.mood ?? prev.mood ?? [],
+        }
+      }
+      return { ...prev, [step.key]: value }
+    })
     setTimeout(advanceStep, 300)
   }
 
@@ -143,11 +226,16 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
       setIsSubmitting(true)
       try {
         await onComplete({
+          channelPreset: answers.channelPreset ?? '',
           purpose: answers.purpose ?? '',
           length: answers.length ?? '',
           style: answers.style ?? [],
           mood: answers.mood ?? [],
           setting: answers.setting ?? [],
+          audience: answers.audience ?? '',
+          viewerAction: answers.viewerAction ?? '',
+          workingTitle: answers.workingTitle ?? '',
+          thumbnailPromise: answers.thumbnailPromise ?? '',
           concept: answers.concept ?? '',
         })
       } finally {
@@ -223,8 +311,29 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
             <Textarea
               value={(answers[step.key] as string) ?? ''}
               onChange={(e) => handleTextChange(e.target.value)}
-              placeholder="A cinematic tour of Tokyo's neon-lit streets at night..."
+              placeholder={
+                step.key === 'concept'
+                  ? "A cinematic tour of Tokyo's neon-lit streets at night..."
+                  : step.key === 'audience'
+                    ? 'Creators launching their first faceless channel...'
+                    : 'Subscribe for weekly breakdowns and click the template link...'
+              }
               rows={4}
+              className="resize-none text-base"
+              autoFocus
+            />
+          )}
+
+          {step.type === 'optional-text' && (
+            <Textarea
+              value={(answers[step.key] as string) ?? ''}
+              onChange={(e) => handleTextChange(e.target.value)}
+              placeholder={
+                step.key === 'workingTitle'
+                  ? 'How I grew a faceless channel in 30 days'
+                  : 'From zero to monetized in 90 days'
+              }
+              rows={3}
               className="resize-none text-base"
               autoFocus
             />
@@ -269,7 +378,10 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
 
 function isStepValid(key: StepKey, answers: Partial<IntakeAnswers>): boolean {
   const val = answers[key]
+  if (key === 'workingTitle' || key === 'thumbnailPromise') return true
   if (Array.isArray(val)) return val.length > 0
+  if (key === 'audience' || key === 'viewerAction')
+    return typeof val === 'string' && val.trim().length >= 5
   if (key === 'concept') return typeof val === 'string' && val.trim().length >= 10
   return typeof val === 'string' && val.length > 0
 }

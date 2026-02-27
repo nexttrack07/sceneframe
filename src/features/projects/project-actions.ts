@@ -12,23 +12,63 @@ const MAX_HISTORY_MESSAGES = 30
 const REPLICATE_TIMEOUT_MS = 60_000
 
 export interface IntakeAnswers {
+  channelPreset: string
   purpose: string
   length: string
   style: string[]
   mood: string[]
   setting: string[]
+  audience: string
+  viewerAction: string
+  workingTitle?: string
+  thumbnailPromise?: string
   concept: string
+}
+
+export interface ScenePlanEntry {
+  title: string
+  description: string
+  durationSec?: number
+  beat?: string
+  hookRole?: 'hook' | 'body' | 'cta'
+}
+
+export interface SceneVersionEntry {
+  description: string
+  createdAt: string
+}
+
+export interface ProjectSettings {
+  intake?: IntakeAnswers
+  hookConfirmed?: boolean
+  sceneVersions?: Record<string, SceneVersionEntry[]>
+  assetDecisionReasons?: Record<string, string[]>
+}
+
+function normalizeProjectSettings(raw: unknown): ProjectSettings | null {
+  if (!raw || typeof raw !== 'object') return null
+  const value = raw as Record<string, unknown>
+  // Backward compatibility for older shape where settings = intake object directly
+  if ('concept' in value && typeof value.concept === 'string') {
+    return { intake: value as unknown as IntakeAnswers, hookConfirmed: false }
+  }
+  return value as ProjectSettings
 }
 
 function buildSystemPrompt(projectName: string, intake?: IntakeAnswers | null) {
   const intakeBlock = intake
     ? `
 CREATIVE BRIEF (from structured intake):
+- Channel preset: ${intake.channelPreset}
 - Purpose: ${intake.purpose}
 - Target length: ${intake.length}
 - Visual style: ${intake.style.join(', ')}
 - Mood / tone: ${intake.mood.join(', ')}
 - Setting: ${intake.setting.join(', ')}
+- Audience: ${intake.audience}
+- Desired viewer action: ${intake.viewerAction}
+- Working title: ${intake.workingTitle || 'Not provided'}
+- Thumbnail promise: ${intake.thumbnailPromise || 'Not provided'}
 - Concept: ${intake.concept}
 `
     : ''
@@ -43,13 +83,20 @@ Your job is to understand what the user wants and help them craft 3-8 distinct v
 ${intakeBlock}
 CONVERSATION RULES:
 ${firstResponseRule}
+- In your first meaningful response after brief confirmation, propose an explicit opening hook that is optimized for the first 3-10 seconds.
 - Ask clarifying questions about mood, tone, audience, and visual style — but keep it conversational, not interrogative. One or two questions at a time.
 - When you have enough context and the user is happy, propose a scene breakdown.
 - When proposing scenes, include a JSON block in your response with this exact format:
 
 \`\`\`scenes
 [
-  { "title": "Short title", "description": "Detailed visual description for image generation (2-4 sentences). Be specific about lighting, camera angle, mood, subjects, and environment." },
+  {
+    "title": "Short title",
+    "description": "Detailed visual description for image generation (2-4 sentences). Be specific about lighting, camera angle, mood, subjects, and environment.",
+    "durationSec": 6,
+    "beat": "Hook / Problem / Proof / Payoff / CTA",
+    "hookRole": "hook|body|cta"
+  },
   ...
 ]
 \`\`\`
@@ -92,7 +139,7 @@ export const loadProject = createServerFn()
     return {
       project: {
         ...project,
-        settings: (project.settings ?? null) as IntakeAnswers | null,
+        settings: normalizeProjectSettings(project.settings),
       },
       scenes: projectScenes,
       messages: projectMessages,
@@ -106,11 +153,14 @@ export const loadProject = createServerFn()
 export const saveIntake = createServerFn({ method: 'POST' })
   .inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
     const { intake } = data
+    if (!intake.channelPreset) throw new Error('Channel preset is required')
     if (!intake.purpose) throw new Error('Purpose is required')
     if (!intake.length) throw new Error('Length is required')
     if (!intake.style.length) throw new Error('At least one style is required')
     if (!intake.mood.length) throw new Error('At least one mood is required')
     if (!intake.setting.length) throw new Error('At least one setting is required')
+    if (!intake.audience?.trim()) throw new Error('Audience is required')
+    if (!intake.viewerAction?.trim()) throw new Error('Viewer action is required')
     if (!intake.concept?.trim() || intake.concept.trim().length < 10) {
       throw new Error('Concept must be at least 10 characters')
     }
@@ -129,10 +179,34 @@ export const saveIntake = createServerFn({ method: 'POST' })
     })
     if (!project) throw new Error('Project not found')
 
-    await db
-      .update(projects)
-      .set({ settings: intake })
-      .where(eq(projects.id, projectId))
+    const existing = normalizeProjectSettings(project.settings)
+    const merged: ProjectSettings = {
+      ...existing,
+      intake,
+      hookConfirmed: false,
+    }
+
+    await db.update(projects).set({ settings: merged }).where(eq(projects.id, projectId))
+  })
+
+export const setHookConfirmed = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string; confirmed: boolean }) => data)
+  .handler(async ({ data: { projectId, confirmed } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    const existing = normalizeProjectSettings(project.settings)
+    const merged: ProjectSettings = { ...existing, hookConfirmed: confirmed }
+    await db.update(projects).set({ settings: merged }).where(eq(projects.id, projectId))
   })
 
 // ---------------------------------------------------------------------------
@@ -177,7 +251,7 @@ export const sendMessage = createServerFn({ method: 'POST' })
     }
     const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek)
 
-    const intake = project.settings as IntakeAnswers | null
+    const intake = normalizeProjectSettings(project.settings)?.intake ?? null
     const systemPrompt = buildSystemPrompt(project.name, intake)
     const llmMessages = recentHistory.map((m) =>
       m.role === 'user' ? `User: ${m.content}` : `Assistant: ${m.content}`,
@@ -218,7 +292,7 @@ export const sendMessage = createServerFn({ method: 'POST' })
 
 export const approveScenes = createServerFn({ method: 'POST' })
   .inputValidator(
-    (data: { projectId: string; parsedScenes: { title: string; description: string }[] }) => {
+    (data: { projectId: string; parsedScenes: ScenePlanEntry[] }) => {
       if (!Array.isArray(data.parsedScenes) || data.parsedScenes.length < 1) {
         throw new Error('At least one scene is required')
       }
@@ -264,7 +338,7 @@ export const approveScenes = createServerFn({ method: 'POST' })
     const summary = parsedScenes.map((s) => s.title).join(' → ')
     await db
       .update(projects)
-      .set({ scriptStatus: 'done', directorPrompt: summary })
+      .set({ scriptStatus: 'done', directorPrompt: summary, scriptRaw: JSON.stringify(parsedScenes) })
       .where(eq(projects.id, projectId))
   })
 
@@ -406,8 +480,152 @@ Return ONLY the new description text, nothing else.`
         throw new Error('AI returned an empty response — please try again')
       }
 
+      const settings = normalizeProjectSettings(project.settings) ?? {}
+      const sceneVersions = settings.sceneVersions ?? {}
+      const existing = sceneVersions[sceneId] ?? []
+      sceneVersions[sceneId] = [
+        ...existing,
+        { description: currentDescription, createdAt: new Date().toISOString() },
+        { description: newDescription, createdAt: new Date().toISOString() },
+      ].slice(-20)
+
+      await db
+        .update(projects)
+        .set({ settings: { ...settings, sceneVersions } })
+        .where(eq(projects.id, project.id))
+
       return { description: newDescription }
     } finally {
       clearTimeout(timeout)
+    }
+  })
+
+export const restoreSceneVersion = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sceneId: string; description: string }) => data)
+  .handler(async ({ data: { sceneId, description } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    await db.update(scenes).set({ description }).where(eq(scenes.id, sceneId))
+  })
+
+export const saveSceneAssetDecisionReasons = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sceneId: string; reasons: string[] }) => data)
+  .handler(async ({ data: { sceneId, reasons } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    const settings = normalizeProjectSettings(project.settings) ?? {}
+    const assetDecisionReasons = settings.assetDecisionReasons ?? {}
+    assetDecisionReasons[sceneId] = reasons
+
+    await db
+      .update(projects)
+      .set({ settings: { ...settings, assetDecisionReasons } })
+      .where(eq(projects.id, project.id))
+  })
+
+export const exportProjectHandoff = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string; format: 'json' | 'markdown' }) => data)
+  .handler(async ({ data: { projectId, format } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    const projectScenes = await db.query.scenes.findMany({
+      where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+      orderBy: asc(scenes.order),
+    })
+    const settings = normalizeProjectSettings(project.settings)
+    const plan: ScenePlanEntry[] = project.scriptRaw ? JSON.parse(project.scriptRaw) : []
+
+    if (format === 'json') {
+      return {
+        content: JSON.stringify(
+          {
+            project: { id: project.id, name: project.name },
+            intake: settings?.intake ?? null,
+            scenes: projectScenes.map((scene, i) => ({
+              id: scene.id,
+              order: i + 1,
+              title: scene.title,
+              description: scene.description,
+              beat: plan[i]?.beat ?? null,
+              durationSec: plan[i]?.durationSec ?? null,
+            })),
+          },
+          null,
+          2,
+        ),
+        filename: `${project.name.replace(/\s+/g, '-').toLowerCase()}-handoff.json`,
+        mimeType: 'application/json',
+      }
+    }
+
+    const markdown = [
+      `# ${project.name} - Production Handoff`,
+      '',
+      '## Creative Brief',
+      settings?.intake ? `- Channel preset: ${settings.intake.channelPreset}` : '- Brief not found',
+      settings?.intake ? `- Audience: ${settings.intake.audience}` : '',
+      settings?.intake ? `- Viewer action: ${settings.intake.viewerAction}` : '',
+      '',
+      '## Scene Plan',
+      ...projectScenes.map((scene, i) =>
+        [
+          `### Scene ${i + 1}${scene.title ? `: ${scene.title}` : ''}`,
+          plan[i]?.beat ? `- Beat: ${plan[i].beat}` : '',
+          plan[i]?.durationSec ? `- Duration: ${plan[i].durationSec}s` : '',
+          '',
+          scene.description,
+          '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ),
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    return {
+      content: markdown,
+      filename: `${project.name.replace(/\s+/g, '-').toLowerCase()}-handoff.md`,
+      mimeType: 'text/markdown',
     }
   })

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { Loader2, Send, Check, Film, Pencil } from 'lucide-react'
+import { Loader2, Send, Check, Film, Pencil, Timer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import {
   AlertDialog,
@@ -15,22 +16,41 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import type { Message } from '@/db/schema'
-import { sendMessage, approveScenes, saveIntake, resetWorkshop } from '../project-actions'
-import type { IntakeAnswers } from '../project-actions'
+import {
+  sendMessage,
+  approveScenes,
+  saveIntake,
+  resetWorkshop,
+  setHookConfirmed,
+} from '../project-actions'
+import type {
+  IntakeAnswers,
+  ProjectSettings,
+  ScenePlanEntry,
+} from '../project-actions'
 import { IntakeForm } from './intake-form'
 
 export function parseSceneProposal(
   content: string,
-): { title: string; description: string }[] | null {
+): ScenePlanEntry[] | null {
   const match = content.match(/```scenes\s*([\s\S]*?)```/)
   if (!match) return null
   try {
     const parsed = JSON.parse(match[1])
     if (!Array.isArray(parsed) || parsed.length < 1) return null
     return parsed
-      .map((s: { title?: string; description?: string }) => ({
+      .map((s: {
+        title?: string
+        description?: string
+        durationSec?: number
+        beat?: string
+        hookRole?: 'hook' | 'body' | 'cta'
+      }) => ({
         title: String(s.title ?? '').trim(),
         description: String(s.description ?? '').trim(),
+        durationSec: Number.isFinite(s.durationSec) ? Number(s.durationSec) : undefined,
+        beat: typeof s.beat === 'string' ? s.beat : undefined,
+        hookRole: s.hookRole,
       }))
       .filter((s: { description: string }) => s.description.length > 0)
   } catch {
@@ -40,7 +60,9 @@ export function parseSceneProposal(
 
 function composeBrief(intake: IntakeAnswers): string {
   const parts: string[] = []
-  parts.push(`I'd like to create a ${intake.length.toLowerCase()} ${intake.style.join(', ').toLowerCase()} video`)
+  parts.push(
+    `Channel preset: ${intake.channelPreset}. I'd like to create a ${intake.length.toLowerCase()} ${intake.style.join(', ').toLowerCase()} video`,
+  )
   if (intake.purpose) parts[0] += ` for ${intake.purpose.toLowerCase()}`
   parts[0] += '.'
 
@@ -50,8 +72,30 @@ function composeBrief(intake: IntakeAnswers): string {
   if (intake.setting.length > 0) {
     parts.push(`Setting: ${intake.setting.join(', ').toLowerCase()}.`)
   }
+  parts.push(`Audience: ${intake.audience}.`)
+  parts.push(`Desired viewer action: ${intake.viewerAction}.`)
+  if (intake.workingTitle?.trim()) parts.push(`Working title: ${intake.workingTitle.trim()}.`)
+  if (intake.thumbnailPromise?.trim())
+    parts.push(`Thumbnail promise: ${intake.thumbnailPromise.trim()}.`)
   parts.push(`Here's my concept: ${intake.concept}`)
   return parts.join(' ')
+}
+
+function targetDurationRange(length: string): { min: number; max: number } | null {
+  const map: Record<string, { min: number; max: number }> = {
+    '15 seconds': { min: 12, max: 18 },
+    '30 seconds': { min: 24, max: 36 },
+    '1 minute': { min: 50, max: 70 },
+    '2-3 minutes': { min: 120, max: 190 },
+    '5+ minutes': { min: 280, max: 520 },
+  }
+  return map[length] ?? null
+}
+
+function estimateDuration(scene: ScenePlanEntry): number {
+  if (scene.durationSec && Number.isFinite(scene.durationSec)) return Math.max(2, scene.durationSec)
+  const words = scene.description.trim().split(/\s+/).length
+  return Math.max(3, Math.min(18, Math.round(words / 3)))
 }
 
 export function ScriptWorkshop({
@@ -61,7 +105,7 @@ export function ScriptWorkshop({
 }: {
   projectId: string
   existingMessages: Message[]
-  projectSettings: IntakeAnswers | null
+  projectSettings: ProjectSettings | null
 }) {
   const router = useRouter()
   const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages)
@@ -72,8 +116,10 @@ export function ScriptWorkshop({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const intakeComplete = Boolean(projectSettings?.concept)
+  const intake = projectSettings?.intake ?? null
+  const intakeComplete = Boolean(intake?.concept)
   const [showIntake, setShowIntake] = useState(!intakeComplete)
+  const [hookConfirmed, setHookConfirmedState] = useState(Boolean(projectSettings?.hookConfirmed))
 
   const messageCount = chatMessages.length
   useEffect(() => {
@@ -91,6 +137,11 @@ export function ScriptWorkshop({
     }
     return null
   }, [chatMessages])
+  const totalDurationSec = useMemo(
+    () => (lastProposal ? lastProposal.reduce((sum, s) => sum + estimateDuration(s), 0) : 0),
+    [lastProposal],
+  )
+  const targetRange = useMemo(() => (intake ? targetDurationRange(intake.length) : null), [intake])
 
   const doSendMessage = useCallback(
     async (content: string) => {
@@ -131,10 +182,20 @@ export function ScriptWorkshop({
     await doSendMessage(content)
   }
 
+  async function handleConfirmHook() {
+    try {
+      await setHookConfirmed({ data: { projectId, confirmed: true } })
+      setHookConfirmedState(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to confirm hook')
+    }
+  }
+
   const handleIntakeComplete = useCallback(
     async (intake: IntakeAnswers) => {
       setError(null)
       await saveIntake({ data: { projectId, intake } })
+      setHookConfirmedState(false)
       setShowIntake(false)
       const brief = composeBrief(intake)
       await doSendMessage(brief)
@@ -148,6 +209,7 @@ export function ScriptWorkshop({
       await resetWorkshop({ data: projectId })
       setChatMessages([])
       setShowIntake(true)
+      setHookConfirmedState(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reset workshop')
     }
@@ -188,7 +250,11 @@ export function ScriptWorkshop({
       {/* Chat header with Edit brief */}
       {intakeComplete && chatMessages.length > 0 && (
         <div className="px-6 py-2 border-b bg-card flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">Script Workshop</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-xs text-muted-foreground">Script Workshop</p>
+            {intake?.audience && <Badge variant="outline">Audience: {intake.audience}</Badge>}
+            {intake?.viewerAction && <Badge variant="outline">Goal: {intake.viewerAction}</Badge>}
+          </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <button
@@ -252,6 +318,29 @@ export function ScriptWorkshop({
       {/* Approve bar */}
       {lastProposal && !isSending && (
         <div className="border-t bg-primary/10">
+          {!hookConfirmed && (
+            <div className="px-6 pt-3">
+              <div className="rounded-lg border border-warning/40 bg-warning/15 p-3 flex items-center justify-between gap-3">
+                <p className="text-xs text-warning">
+                  Confirm the opening hook before approving scenes.
+                </p>
+                <Button size="sm" onClick={handleConfirmHook}>
+                  Hook confirmed
+                </Button>
+              </div>
+            </div>
+          )}
+          {targetRange && (
+            <div className="px-6 pt-3">
+              <div className="rounded-lg border border-border bg-card p-2.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <Timer size={13} />
+                <span>
+                  Estimated runtime: <strong className="text-foreground">{totalDurationSec}s</strong>{' '}
+                  (target {targetRange.min}-{targetRange.max}s)
+                </span>
+              </div>
+            </div>
+          )}
           <div className="px-6 py-3 flex items-center justify-between">
             <p className="text-sm text-primary">
               <strong>{lastProposal.length} scenes</strong> proposed. Happy with this breakdown?
@@ -271,7 +360,7 @@ export function ScriptWorkshop({
               <Button
                 size="sm"
                 onClick={handleApprove}
-                disabled={isApproving}
+                disabled={isApproving || !hookConfirmed}
                 className="bg-primary hover:bg-primary/90"
               >
                 {isApproving ? (
@@ -376,6 +465,13 @@ function ChatBubble({ message }: { message: Message }) {
                   Scene {i + 1}
                   {scene.title ? `: ${scene.title}` : ''}
                 </p>
+                {(scene.beat || scene.durationSec || scene.hookRole) && (
+                  <p className="text-[11px] text-muted-foreground mb-1">
+                    {[scene.beat ? `Beat: ${scene.beat}` : null, scene.durationSec ? `${scene.durationSec}s` : null, scene.hookRole ? `Role: ${scene.hookRole}` : null]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </p>
+                )}
                 <p className="text-sm text-foreground leading-relaxed">{scene.description}</p>
               </div>
             ))}
