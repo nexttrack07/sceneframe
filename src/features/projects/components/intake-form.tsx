@@ -75,7 +75,7 @@ const STEPS = [
   {
     key: 'concept' as const,
     question: 'Describe your video idea',
-    subtitle: 'The more detail the better — we'll refine it together.',
+    subtitle: "The more detail the better — we'll refine it together.",
     type: 'text' as const,
     options: [],
   },

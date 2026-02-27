@@ -1,118 +1,222 @@
-import { createFileRoute } from '@tanstack/react-router'
-import {
-  Zap,
-  Server,
-  Route as RouteIcon,
-  Shield,
-  Waves,
-  Sparkles,
-} from 'lucide-react'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import { CheckCircle2, Clapperboard, Images, MessageSquareText } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 export const Route = createFileRoute('/')({ component: App })
 
 function App() {
-  const features = [
-    {
-      icon: <Zap className="w-12 h-12 text-cyan-400" />,
-      title: 'Powerful Server Functions',
-      description:
-        'Write server-side code that seamlessly integrates with your client components. Type-safe, secure, and simple.',
-    },
-    {
-      icon: <Server className="w-12 h-12 text-cyan-400" />,
-      title: 'Flexible Server Side Rendering',
-      description:
-        'Full-document SSR, streaming, and progressive enhancement out of the box. Control exactly what renders where.',
-    },
-    {
-      icon: <RouteIcon className="w-12 h-12 text-cyan-400" />,
-      title: 'API Routes',
-      description:
-        'Build type-safe API endpoints alongside your application. No separate backend needed.',
-    },
-    {
-      icon: <Shield className="w-12 h-12 text-cyan-400" />,
-      title: 'Strongly Typed Everything',
-      description:
-        'End-to-end type safety from server to client. Catch errors before they reach production.',
-    },
-    {
-      icon: <Waves className="w-12 h-12 text-cyan-400" />,
-      title: 'Full Streaming Support',
-      description:
-        'Stream data from server to client progressively. Perfect for AI applications and real-time updates.',
-    },
-    {
-      icon: <Sparkles className="w-12 h-12 text-cyan-400" />,
-      title: 'Next Generation Ready',
-      description:
-        'Built from the ground up for modern web applications. Deploy anywhere JavaScript runs.',
-    },
-  ]
-
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900">
-      <section className="relative py-20 px-6 text-center overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 via-blue-500/10 to-purple-500/10"></div>
-        <div className="relative max-w-5xl mx-auto">
-          <div className="flex items-center justify-center gap-6 mb-6">
-            <img
-              src="/tanstack-circle-logo.png"
-              alt="TanStack Logo"
-              className="w-24 h-24 md:w-32 md:h-32"
-            />
-            <h1 className="text-6xl md:text-7xl font-black text-white [letter-spacing:-0.08em]">
-              <span className="text-gray-300">TANSTACK</span>{' '}
-              <span className="bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                START
-              </span>
-            </h1>
-          </div>
-          <p className="text-2xl md:text-3xl text-gray-300 mb-4 font-light">
-            The framework for next generation AI applications
-          </p>
-          <p className="text-lg text-gray-400 max-w-3xl mx-auto mb-8">
-            Full-stack framework powered by TanStack Router for React and Solid.
-            Build modern applications with server functions, streaming, and type
-            safety.
-          </p>
-          <div className="flex flex-col items-center gap-4">
-            <a
-              href="https://tanstack.com/start"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-8 py-3 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold rounded-lg transition-colors shadow-lg shadow-cyan-500/50"
-            >
-              Documentation
-            </a>
-            <p className="text-gray-400 text-sm mt-2">
-              Begin your TanStack Start journey by editing{' '}
-              <code className="px-2 py-1 bg-slate-700 rounded text-cyan-400">
-                /src/routes/index.tsx
-              </code>
-            </p>
-          </div>
-        </div>
-      </section>
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
+        <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between">
+          <Link to="/" className="text-sm font-semibold text-foreground">
+            SceneFrame.ai
+          </Link>
 
-      <section className="py-16 px-6 max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {features.map((feature, index) => (
-            <div
-              key={index}
-              className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 hover:border-cyan-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-cyan-500/10"
-            >
-              <div className="mb-4">{feature.icon}</div>
-              <h3 className="text-xl font-semibold text-white mb-3">
-                {feature.title}
-              </h3>
-              <p className="text-gray-400 leading-relaxed">
-                {feature.description}
-              </p>
-            </div>
-          ))}
+          <nav className="hidden md:flex items-center gap-6 text-sm">
+            <a href="#how-it-works" className="text-muted-foreground hover:text-foreground transition-colors">
+              How it works
+            </a>
+            <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">
+              Features
+            </a>
+            <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">
+              Pricing
+            </a>
+          </nav>
+
+          <div className="flex items-center gap-2">
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/sign-in">Sign in</Link>
+            </Button>
+            <Button asChild size="sm" className="bg-primary hover:bg-primary/90">
+              <Link to="/sign-in">Get started</Link>
+            </Button>
+          </div>
         </div>
-      </section>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-6 py-16 md:py-20 space-y-16">
+        <section className="text-center space-y-6">
+          <p className="text-sm text-primary font-medium">SceneFrame.ai</p>
+          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-foreground">
+            Plan scenes and collect production-ready assets faster.
+          </h1>
+          <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
+            Replace scattered docs, endless prompt rewrites, and unclear scene direction with a
+            focused workflow: intake, guided workshop, and scene-by-scene asset planning.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button asChild className="bg-primary hover:bg-primary/90">
+              <Link to="/sign-in">Start building your next video</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/sign-in">View the workflow</Link>
+            </Button>
+          </div>
+          <ImagePlaceholder label="Hero product preview placeholder" />
+        </section>
+
+        <section className="space-y-6">
+          <h2 className="text-2xl font-bold text-foreground text-center">
+            The old workflow breaks creative momentum
+          </h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <InfoCard
+              title="Prompt guesswork"
+              description="Users shoulder too much responsibility to describe everything perfectly on the first try."
+            />
+            <InfoCard
+              title="Scene ambiguity"
+              description="Without structured intake, generated scenes miss the intended style, tone, or pacing."
+            />
+            <InfoCard
+              title="Asset chaos"
+              description="Accepted and rejected visuals become hard to track when scene details are not centralized."
+            />
+          </div>
+        </section>
+
+        <section id="how-it-works" className="space-y-6">
+          <h2 className="text-2xl font-bold text-foreground text-center">How it works</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <StepCard
+              icon={<MessageSquareText size={18} className="text-primary" />}
+              step="01"
+              title="Structured intake"
+              description="Collect purpose, length, style, mood, setting, and concept through a guided Typeform-style flow."
+            />
+            <StepCard
+              icon={<CheckCircle2 size={18} className="text-primary" />}
+              step="02"
+              title="Brief confirmation"
+              description="The assistant summarizes the creative brief first so the user confirms direction before scene proposals."
+            />
+            <StepCard
+              icon={<Clapperboard size={18} className="text-primary" />}
+              step="03"
+              title="Scene workshop"
+              description="Refine and approve scene breakdowns collaboratively with targeted feedback loops."
+            />
+            <StepCard
+              icon={<Images size={18} className="text-primary" />}
+              step="04"
+              title="Storyboard + assets"
+              description="Manage each scene as a workspace for generating, iterating, accepting, and replacing visual assets."
+            />
+          </div>
+          <ImagePlaceholder label="Workflow screenshot placeholder" />
+        </section>
+
+        <section id="features" className="space-y-10">
+          <FeatureRow
+            title="Guide creators without forcing technical prompts"
+            description="Intake captures the essentials up front so users do less prompt engineering and get better first-pass scene proposals."
+            imageLabel="Intake UI placeholder"
+          />
+          <FeatureRow
+            reverse
+            title="Keep every scene editable after approval"
+            description="Storyboard view gives each scene a durable home where descriptions and assets can be refined without restarting projects."
+            imageLabel="Storyboard UI placeholder"
+          />
+        </section>
+
+        <section id="pricing" className="space-y-6">
+          <h2 className="text-2xl font-bold text-foreground text-center">Simple BYOK pricing</h2>
+          <div className="max-w-md mx-auto rounded-xl border bg-card p-6 shadow-sm space-y-4">
+            <p className="text-sm text-primary font-medium">Current plan</p>
+            <p className="text-3xl font-bold text-foreground">$29/mo</p>
+            <p className="text-sm text-muted-foreground">
+              Bring your own AI keys and run a complete scene planning workflow without token
+              markup.
+            </p>
+            <ul className="space-y-2 text-sm text-foreground">
+              <li>Structured brief intake + workshop chat</li>
+              <li>Scene approvals and storyboard management</li>
+              <li>Asset organization per scene</li>
+            </ul>
+            <Button asChild className="w-full bg-primary hover:bg-primary/90">
+              <Link to="/sign-in">Get started</Link>
+            </Button>
+          </div>
+        </section>
+
+        <section className="text-center rounded-xl border bg-card p-8 md:p-10 space-y-4">
+          <h2 className="text-3xl font-bold text-foreground">
+            Stop guessing prompts. Start directing scenes.
+          </h2>
+          <p className="text-muted-foreground max-w-2xl mx-auto">
+            SceneFrame helps creators move from rough idea to production-ready scene assets with a
+            workflow that stays clear at every step.
+          </p>
+          <Button asChild size="lg" className="bg-primary hover:bg-primary/90">
+            <Link to="/sign-in">Create your first project</Link>
+          </Button>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function InfoCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-xl border bg-card p-5 shadow-sm transition-all duration-100 hover:bg-muted">
+      <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+      <p className="text-sm text-muted-foreground mt-2">{description}</p>
+    </div>
+  )
+}
+
+function StepCard({
+  icon,
+  step,
+  title,
+  description,
+}: {
+  icon: React.ReactNode
+  step: string
+  title: string
+  description: string
+}) {
+  return (
+    <div className="rounded-xl border bg-card p-5 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">{icon}</div>
+        <p className="text-xs text-muted-foreground font-medium">{step}</p>
+      </div>
+      <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </div>
+  )
+}
+
+function FeatureRow({
+  title,
+  description,
+  imageLabel,
+  reverse = false,
+}: {
+  title: string
+  description: string
+  imageLabel: string
+  reverse?: boolean
+}) {
+  return (
+    <div className={`grid gap-6 md:grid-cols-2 items-center ${reverse ? 'md:[&>*:first-child]:order-2' : ''}`}>
+      <div className="space-y-3">
+        <h3 className="text-2xl font-bold text-foreground">{title}</h3>
+        <p className="text-muted-foreground">{description}</p>
+      </div>
+      <ImagePlaceholder label={imageLabel} />
+    </div>
+  )
+}
+
+function ImagePlaceholder({ label }: { label: string }) {
+  return (
+    <div className="aspect-video rounded-xl border border-dashed bg-muted/50 flex items-center justify-center text-sm text-muted-foreground">
+      {label}
     </div>
   )
 }
