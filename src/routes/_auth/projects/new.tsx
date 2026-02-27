@@ -71,7 +71,7 @@ function NewProjectPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-foreground">New Project</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Give your project a name. You'll develop the script through a guided creative workshop.
+          Give your project a name. You&apos;ll build a Creative Brief, then refine scenes in Script Chat.
         </p>
       </div>
 

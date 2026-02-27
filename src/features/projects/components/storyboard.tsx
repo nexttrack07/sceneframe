@@ -62,7 +62,7 @@ export function Storyboard({
       await resetWorkshop({ data: projectId })
       router.invalidate()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset workshop')
+      setError(err instanceof Error ? err.message : 'Failed to restart brief and chat')
     } finally {
       setIsResetting(false)
     }

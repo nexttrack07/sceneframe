@@ -211,7 +211,7 @@ export function ScriptWorkshop({
       setShowIntake(true)
       setHookConfirmedState(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset workshop')
+      setError(err instanceof Error ? err.message : 'Failed to restart brief and chat')
     }
   }
 
@@ -247,11 +247,11 @@ export function ScriptWorkshop({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Chat header with Edit brief */}
+      {/* Chat header with Edit Creative Brief */}
       {intakeComplete && chatMessages.length > 0 && (
         <div className="px-6 py-2 border-b bg-card flex items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-xs text-muted-foreground">Script Workshop</p>
+            <p className="text-xs text-muted-foreground">Script Chat</p>
             {intake?.audience && <Badge variant="outline">Audience: {intake.audience}</Badge>}
             {intake?.viewerAction && <Badge variant="outline">Goal: {intake.viewerAction}</Badge>}
           </div>
@@ -262,14 +262,15 @@ export function ScriptWorkshop({
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
               >
                 <Pencil size={12} />
-                Edit brief
+                Edit Creative Brief
               </button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Re-do the intake?</AlertDialogTitle>
+                <AlertDialogTitle>Re-do Creative Brief?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will clear your current chat and scenes so you can start fresh with a new brief.
+                  This will clear your current Script Chat and scenes so you can start fresh with a
+                  new Creative Brief.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -291,7 +292,7 @@ export function ScriptWorkshop({
         {chatMessages.length === 0 && (
           <div className="text-center py-12">
             <Film size={32} className="text-muted-foreground/50 mx-auto mb-3" />
-            <p className="text-muted-foreground font-medium">Welcome to the Script Workshop</p>
+            <p className="text-muted-foreground font-medium">Welcome to Script Chat</p>
             <p className="text-sm text-muted-foreground/70 mt-1 max-w-md mx-auto">
               Describe your video concept and I&apos;ll help you develop it into a set of scenes.
               Start with the big idea — we&apos;ll refine it together.

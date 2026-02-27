@@ -44,7 +44,7 @@ function App() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
             Replace scattered docs, endless prompt rewrites, and unclear scene direction with a
-            focused workflow: intake, guided workshop, and scene-by-scene asset planning.
+            focused workflow: creative brief, script chat, and scene-by-scene asset planning.
           </p>
           <div className="flex items-center justify-center gap-3">
             <Button asChild className="bg-primary hover:bg-primary/90">
@@ -95,7 +95,7 @@ function App() {
             <StepCard
               icon={<Clapperboard size={18} className="text-primary" />}
               step="03"
-              title="Scene workshop"
+              title="Script chat"
               description="Refine and approve scene breakdowns collaboratively with targeted feedback loops."
             />
             <StepCard
@@ -132,7 +132,7 @@ function App() {
               markup.
             </p>
             <ul className="space-y-2 text-sm text-foreground">
-              <li>Structured brief intake + workshop chat</li>
+              <li>Structured brief intake + script chat</li>
               <li>Scene approvals and storyboard management</li>
               <li>Asset organization per scene</li>
             </ul>

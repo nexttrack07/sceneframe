@@ -37,7 +37,7 @@ export function ResetDialog({
           <AlertDialogTitle>Redo script from scratch?</AlertDialogTitle>
           <AlertDialogDescription>
             This will clear all scenes and chat history for this project. You&apos;ll start the
-            Script Workshop over from the beginning. This action cannot be undone.
+            Creative Brief and Script Chat flow over from the beginning. This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
