@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import {
   AlertCircle,
@@ -11,7 +11,7 @@ import {
   Timer,
 } from 'lucide-react'
 import type { Scene } from '@/db/schema'
-import type { ProjectSettings, ScenePlanEntry } from '../project-actions'
+import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry } from '../project-actions'
 import { exportProjectHandoff, resetWorkshop } from '../project-actions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -28,11 +28,13 @@ const PIPELINE_STAGES = [
 export function Storyboard({
   projectId,
   scenes: storyScenes,
+  assets: sceneAssets,
   projectSettings,
   scenePlan,
 }: {
   projectId: string
   scenes: Scene[]
+  assets: SceneAssetSummary[]
   projectSettings: ProjectSettings | null
   scenePlan: ScenePlanEntry[]
 }) {
@@ -47,6 +49,15 @@ export function Storyboard({
   const reasonMap = projectSettings?.assetDecisionReasons ?? {}
   const uniqueReasons = Array.from(new Set(Object.values(reasonMap).flat()))
   const planBySceneId = new Map(storyScenes.map((scene, i) => [scene.id, scenePlan[i]]))
+  const assetsBySceneId = useMemo(() => {
+    const grouped = new Map<string, SceneAssetSummary[]>()
+    for (const asset of sceneAssets) {
+      const existing = grouped.get(asset.sceneId) ?? []
+      existing.push(asset)
+      grouped.set(asset.sceneId, existing)
+    }
+    return grouped
+  }, [sceneAssets])
 
   const filteredScenes =
     reasonFilter === 'all'
@@ -175,6 +186,7 @@ export function Storyboard({
               index={i}
               plan={planBySceneId.get(scene.id)}
               reasons={reasonMap[scene.id] ?? []}
+              imageAssets={assetsBySceneId.get(scene.id) ?? []}
               isSelected={scene.id === selectedSceneId}
               onSelect={() =>
                 setSelectedSceneId(scene.id === selectedSceneId ? null : scene.id)
@@ -192,6 +204,7 @@ export function Storyboard({
           plan={planBySceneId.get(selectedScene.id)}
           sceneVersions={projectSettings?.sceneVersions?.[selectedScene.id] ?? []}
           decisionReasons={reasonMap[selectedScene.id] ?? []}
+          sceneAssets={assetsBySceneId.get(selectedScene.id) ?? []}
           onClose={() => setSelectedSceneId(null)}
         />
       )}
@@ -208,6 +221,7 @@ function StoryboardCard({
   index,
   plan,
   reasons,
+  imageAssets,
   isSelected,
   onSelect,
 }: {
@@ -215,10 +229,19 @@ function StoryboardCard({
   index: number
   plan?: ScenePlanEntry
   reasons: string[]
+  imageAssets: SceneAssetSummary[]
   isSelected: boolean
   onSelect: () => void
 }) {
   const currentStageIndex = PIPELINE_STAGES.findIndex((s) => s.key === scene.stage)
+  const selectedStart = imageAssets.some((asset) => asset.type === 'start_image' && asset.isSelected)
+  const selectedEnd = imageAssets.some((asset) => asset.type === 'end_image' && asset.isSelected)
+  const imageStatusLabel = selectedStart && selectedEnd
+    ? 'Ready for video'
+    : imageAssets.length > 0
+      ? 'Has candidates'
+      : 'Needs images'
+  const imageStatusTone = selectedStart && selectedEnd ? 'text-success' : 'text-muted-foreground'
 
   return (
     <button
@@ -248,6 +271,9 @@ function StoryboardCard({
           {plan?.durationSec ? (
             <p className="text-xs text-muted-foreground mt-1">Estimated: {plan.durationSec}s</p>
           ) : null}
+          <p className={`text-xs mt-1 ${imageStatusTone}`}>
+            Images: {imageStatusLabel}
+          </p>
           {reasons.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
               {reasons.map((r) => (

@@ -1,56 +1,33 @@
 import { useId, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { AlertCircle, Loader2, Sparkles, Film, Image as ImageIcon, Video, Music } from 'lucide-react'
+import { AlertCircle, Loader2, Sparkles, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import type { Scene } from '@/db/schema'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { ScenePlanEntry, SceneVersionEntry } from '../project-actions'
+import type { SceneAssetSummary, ScenePlanEntry, SceneVersionEntry } from '../project-actions'
 import {
+  generateSceneImages,
   regenerateSceneDescription,
   restoreSceneVersion,
   saveSceneAssetDecisionReasons,
+  selectAsset,
   updateScene,
 } from '../project-actions'
-
-const ASSET_SECTIONS: {
-  icon: typeof Film
-  label: string
-  status: 'pending' | 'locked'
-  description: string
-}[] = [
-  {
-    icon: ImageIcon,
-    label: 'Images',
-    status: 'pending',
-    description: 'Generate start and end frame images from this scene description.',
-  },
-  {
-    icon: Video,
-    label: 'Video',
-    status: 'locked',
-    description: 'Generate video requires images first.',
-  },
-  {
-    icon: Music,
-    label: 'Audio',
-    status: 'locked',
-    description: 'Generate audio for this scene.',
-  },
-]
 
 export function SceneDetailPanel({
   scene,
   plan,
   sceneVersions,
   decisionReasons,
+  sceneAssets,
   onClose,
 }: {
   scene: Scene
   plan?: ScenePlanEntry
   sceneVersions: SceneVersionEntry[]
   decisionReasons: string[]
+  sceneAssets: SceneAssetSummary[]
   onClose: () => void
 }) {
   const router = useRouter()
@@ -69,10 +46,21 @@ export function SceneDetailPanel({
   const [isRestoring, setIsRestoring] = useState(false)
   const [isSavingReasons, setIsSavingReasons] = useState(false)
   const [selectedReasons, setSelectedReasons] = useState<string[]>(decisionReasons)
+  const [startPrompt, setStartPrompt] = useState(
+    `Start frame: ${scene.description}\nFocus on the opening moment of this scene.`,
+  )
+  const [endPrompt, setEndPrompt] = useState(
+    `End frame: ${scene.description}\nFocus on the closing moment of this scene.`,
+  )
+  const [isGeneratingStart, setIsGeneratingStart] = useState(false)
+  const [isGeneratingEnd, setIsGeneratingEnd] = useState(false)
+  const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
 
   const practicalityWarnings = getPracticalityWarnings(description)
   const availableReasons = ['off-style', 'wrong subject', 'bad composition', 'not clickable']
   const showDecisionReasons = decisionReasons.length > 0 || scene.stage !== 'script'
+  const startAssets = sceneAssets.filter((asset) => asset.type === 'start_image')
+  const endAssets = sceneAssets.filter((asset) => asset.type === 'end_image')
 
   function handleTitleChange(val: string) {
     setTitle(val)
@@ -162,6 +150,41 @@ export function SceneDetailPanel({
       setError(err instanceof Error ? err.message : 'Failed to save decision reasons')
     } finally {
       setIsSavingReasons(false)
+    }
+  }
+
+  async function handleGenerateLane(lane: 'start' | 'end') {
+    const promptOverride = lane === 'start' ? startPrompt.trim() : endPrompt.trim()
+    if (lane === 'start') setIsGeneratingStart(true)
+    if (lane === 'end') setIsGeneratingEnd(true)
+    setError(null)
+    try {
+      await generateSceneImages({
+        data: {
+          sceneId: scene.id,
+          lane,
+          promptOverride: promptOverride || undefined,
+        },
+      })
+      await router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate images')
+    } finally {
+      if (lane === 'start') setIsGeneratingStart(false)
+      if (lane === 'end') setIsGeneratingEnd(false)
+    }
+  }
+
+  async function handleSelectAsset(assetId: string) {
+    setIsSelectingAssetId(assetId)
+    setError(null)
+    try {
+      await selectAsset({ data: { assetId } })
+      await router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to select image')
+    } finally {
+      setIsSelectingAssetId(null)
     }
   }
 
@@ -395,13 +418,33 @@ export function SceneDetailPanel({
           </Button>
         )}
 
-        {/* Asset sections (placeholders for future epics) */}
+        {/* Images */}
         <div className="pt-4 border-t space-y-4">
-          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Assets</h4>
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Scene images
+          </h4>
 
-          {ASSET_SECTIONS.map((section) => (
-            <AssetSection key={section.label} {...section} />
-          ))}
+          <ImageLaneCard
+            title="Start frames"
+            prompt={startPrompt}
+            onPromptChange={setStartPrompt}
+            isGenerating={isGeneratingStart}
+            onGenerate={() => handleGenerateLane('start')}
+            assets={startAssets}
+            selectingAssetId={isSelectingAssetId}
+            onSelectAsset={handleSelectAsset}
+          />
+
+          <ImageLaneCard
+            title="End frames"
+            prompt={endPrompt}
+            onPromptChange={setEndPrompt}
+            isGenerating={isGeneratingEnd}
+            onGenerate={() => handleGenerateLane('end')}
+            assets={endAssets}
+            selectingAssetId={isSelectingAssetId}
+            onSelectAsset={handleSelectAsset}
+          />
         </div>
       </div>
     </div>
@@ -426,35 +469,76 @@ function getPracticalityWarnings(text: string): string[] {
   return warnings
 }
 
-// ---------------------------------------------------------------------------
-// Asset section placeholder
-// ---------------------------------------------------------------------------
-
-function AssetSection({
-  icon: Icon,
-  label,
-  status,
-  description,
+function ImageLaneCard({
+  title,
+  prompt,
+  onPromptChange,
+  isGenerating,
+  onGenerate,
+  assets,
+  selectingAssetId,
+  onSelectAsset,
 }: {
-  icon: typeof Film
-  label: string
-  status: 'pending' | 'generating' | 'done' | 'locked'
-  description: string
+  title: string
+  prompt: string
+  onPromptChange: (value: string) => void
+  isGenerating: boolean
+  onGenerate: () => void
+  assets: SceneAssetSummary[]
+  selectingAssetId: string | null
+  onSelectAsset: (assetId: string) => void
 }) {
   return (
-    <div className={`rounded-lg border p-3 ${status === 'locked' ? 'opacity-50' : ''}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <Icon size={14} className="text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        <Badge variant="outline" className="ml-auto text-xs">
-          {status === 'locked' ? 'Needs prior stage' : status === 'pending' ? 'Ready' : status}
-        </Badge>
-      </div>
-      <p className="text-xs text-muted-foreground/70">{description}</p>
-      {status === 'pending' && (
-        <Button size="sm" variant="outline" className="mt-2 w-full" disabled>
-          Generate {label} (coming soon)
+    <div className="rounded-lg border p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ImageIcon size={14} className="text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">{title}</span>
+        </div>
+        <Button size="sm" onClick={onGenerate} disabled={isGenerating}>
+          {isGenerating ? <Loader2 size={12} className="animate-spin mr-1.5" /> : null}
+          {isGenerating ? 'Generating…' : 'Generate'}
         </Button>
+      </div>
+      <Textarea
+        value={prompt}
+        onChange={(e) => onPromptChange(e.target.value)}
+        rows={3}
+        className="text-sm bg-background"
+        placeholder="Optional prompt override"
+      />
+      {assets.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No candidates yet.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {assets.map((asset) => (
+            <div key={asset.id} className="rounded-md border p-2 space-y-2 bg-background">
+              {asset.url ? (
+                <img
+                  src={asset.url}
+                  alt={title}
+                  className={`w-full h-24 object-cover rounded ${
+                    asset.isSelected ? 'ring-2 ring-primary' : ''
+                  }`}
+                />
+              ) : (
+                <div className="w-full h-24 rounded bg-muted" />
+              )}
+              <Button
+                size="sm"
+                variant={asset.isSelected ? 'default' : 'outline'}
+                className="w-full"
+                disabled={asset.isSelected || selectingAssetId === asset.id || asset.status !== 'done'}
+                onClick={() => onSelectAsset(asset.id)}
+              >
+                {selectingAssetId === asset.id ? (
+                  <Loader2 size={12} className="animate-spin mr-1.5" />
+                ) : null}
+                {asset.isSelected ? 'Selected' : 'Select'}
+              </Button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

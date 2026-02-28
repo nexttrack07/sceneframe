@@ -2,10 +2,12 @@ import { createServerFn } from '@tanstack/react-start'
 import { redirect } from '@tanstack/react-router'
 import { auth } from '@clerk/tanstack-react-start/server'
 import { db } from '@/db/index'
-import { projects, scenes, messages, users } from '@/db/schema'
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { assets, projects, scenes, messages, users } from '@/db/schema'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import Replicate from 'replicate'
 import { decryptUserApiKey } from '@/lib/encryption.server'
+import { uploadFromUrl } from '@/lib/r2.server'
+import { randomUUID } from 'node:crypto'
 
 const MAX_MESSAGE_LENGTH = 5_000
 const MAX_HISTORY_MESSAGES = 30
@@ -43,6 +45,46 @@ export interface ProjectSettings {
   hookConfirmed?: boolean
   sceneVersions?: Record<string, SceneVersionEntry[]>
   assetDecisionReasons?: Record<string, string[]>
+  imageDefaults?: ImageDefaults
+  consistencyLock?: ConsistencyLock
+}
+
+export interface ImageDefaults {
+  model: string
+  aspectRatio: '1:1' | '16:9' | '9:16' | '4:5'
+  qualityPreset: 'fast' | 'balanced' | 'high'
+  batchCount: number
+}
+
+export interface ConsistencyLock {
+  enabled: boolean
+  strength: 'low' | 'medium' | 'high'
+  referenceUrls: string[]
+}
+
+export interface SceneAssetSummary {
+  id: string
+  sceneId: string
+  type: 'start_image' | 'end_image'
+  status: string
+  url: string | null
+  prompt: string | null
+  model: string | null
+  isSelected: boolean
+  createdAt: string
+}
+
+const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
+  model: 'black-forest-labs/flux-schnell',
+  aspectRatio: '16:9',
+  qualityPreset: 'balanced',
+  batchCount: 2,
+}
+
+const DEFAULT_CONSISTENCY_LOCK: ConsistencyLock = {
+  enabled: false,
+  strength: 'medium',
+  referenceUrls: [],
 }
 
 function normalizeProjectSettings(raw: unknown): ProjectSettings | null {
@@ -53,6 +95,125 @@ function normalizeProjectSettings(raw: unknown): ProjectSettings | null {
     return { intake: value as unknown as IntakeAnswers, hookConfirmed: false }
   }
   return value as ProjectSettings
+}
+
+function normalizeImageDefaults(value: unknown): ImageDefaults {
+  if (!value || typeof value !== 'object') return DEFAULT_IMAGE_DEFAULTS
+  const raw = value as Partial<ImageDefaults>
+  const batchCount = Math.max(1, Math.min(4, Number(raw.batchCount ?? 2)))
+
+  return {
+    model:
+      typeof raw.model === 'string' && raw.model.trim()
+        ? raw.model
+        : DEFAULT_IMAGE_DEFAULTS.model,
+    aspectRatio:
+      raw.aspectRatio === '1:1' ||
+      raw.aspectRatio === '16:9' ||
+      raw.aspectRatio === '9:16' ||
+      raw.aspectRatio === '4:5'
+        ? raw.aspectRatio
+        : DEFAULT_IMAGE_DEFAULTS.aspectRatio,
+    qualityPreset:
+      raw.qualityPreset === 'fast' ||
+      raw.qualityPreset === 'balanced' ||
+      raw.qualityPreset === 'high'
+        ? raw.qualityPreset
+        : DEFAULT_IMAGE_DEFAULTS.qualityPreset,
+    batchCount,
+  }
+}
+
+function normalizeConsistencyLock(value: unknown): ConsistencyLock {
+  if (!value || typeof value !== 'object') return DEFAULT_CONSISTENCY_LOCK
+  const raw = value as Partial<ConsistencyLock>
+  const referenceUrls = Array.isArray(raw.referenceUrls)
+    ? raw.referenceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+    : []
+
+  return {
+    enabled: Boolean(raw.enabled),
+    strength:
+      raw.strength === 'low' || raw.strength === 'medium' || raw.strength === 'high'
+        ? raw.strength
+        : DEFAULT_CONSISTENCY_LOCK.strength,
+    referenceUrls,
+  }
+}
+
+function qualityPresetToSteps(quality: ImageDefaults['qualityPreset']): number {
+  if (quality === 'fast') return 20
+  if (quality === 'high') return 40
+  return 30
+}
+
+function parseReplicateImageUrls(output: unknown): string[] {
+  const urls: string[] = []
+  const walk = (value: unknown) => {
+    if (!value) return
+    if (typeof value === 'string') {
+      if (value.startsWith('http://') || value.startsWith('https://')) urls.push(value)
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach(walk)
+      return
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      walk(record.url)
+      walk(record.output)
+      walk(record.images)
+      walk(record.data)
+    }
+  }
+  walk(output)
+  return Array.from(new Set(urls))
+}
+
+function buildLanePrompt(
+  sceneDescription: string,
+  lane: 'start' | 'end',
+  intake: IntakeAnswers | undefined,
+  consistencyLock: ConsistencyLock,
+): string {
+  const laneDirection =
+    lane === 'start'
+      ? 'Generate the START frame of this scene (opening moment).'
+      : 'Generate the END frame of this scene (closing moment).'
+
+  const intakeHints = intake
+    ? [
+        `Video purpose: ${intake.purpose}`,
+        `Visual style: ${intake.style.join(', ')}`,
+        `Mood: ${intake.mood.join(', ')}`,
+        `Setting: ${intake.setting.join(', ')}`,
+        `Target audience: ${intake.audience}`,
+        intake.workingTitle ? `Working title: ${intake.workingTitle}` : null,
+        intake.thumbnailPromise ? `Thumbnail promise: ${intake.thumbnailPromise}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : 'No structured creative brief provided.'
+
+  const consistencyHints =
+    consistencyLock.enabled && consistencyLock.referenceUrls.length > 0
+      ? `Consistency lock is ENABLED (${consistencyLock.strength} strength). Keep subject identity, style, and tone aligned with these references:\n${consistencyLock.referenceUrls
+          .map((url) => `- ${url}`)
+          .join('\n')}`
+      : 'Consistency lock is disabled.'
+
+  return `${laneDirection}
+
+Scene description:
+${sceneDescription}
+
+Creative brief hints:
+${intakeHints}
+
+${consistencyHints}
+
+Return a single high-quality still frame with clear cinematic composition, clean lighting, and strong readability.`
 }
 
 function buildSystemPrompt(projectName: string, intake?: IntakeAnswers | null) {
@@ -136,6 +297,19 @@ export const loadProject = createServerFn()
       }),
     ])
 
+    const sceneIds = projectScenes.map((scene) => scene.id)
+    const projectAssets =
+      sceneIds.length === 0
+        ? []
+        : await db.query.assets.findMany({
+            where: and(
+              inArray(assets.sceneId, sceneIds),
+              eq(assets.stage, 'images'),
+              isNull(assets.deletedAt),
+            ),
+            orderBy: asc(assets.createdAt),
+          })
+
     return {
       project: {
         ...project,
@@ -143,6 +317,25 @@ export const loadProject = createServerFn()
       },
       scenes: projectScenes,
       messages: projectMessages,
+      assets: projectAssets
+        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' } =>
+          asset.type === 'start_image' || asset.type === 'end_image',
+        )
+        .filter(
+          (asset): asset is typeof asset & { status: 'generating' | 'done' | 'error' } =>
+            asset.status === 'generating' || asset.status === 'done' || asset.status === 'error',
+        )
+        .map((asset) => ({
+          id: asset.id,
+          sceneId: asset.sceneId,
+          type: asset.type,
+          status: asset.status,
+          url: asset.url,
+          prompt: asset.prompt,
+          model: asset.model,
+          isSelected: asset.isSelected,
+          createdAt: asset.createdAt.toISOString(),
+        })),
     }
   })
 
@@ -551,6 +744,187 @@ export const saveSceneAssetDecisionReasons = createServerFn({ method: 'POST' })
       .update(projects)
       .set({ settings: { ...settings, assetDecisionReasons } })
       .where(eq(projects.id, project.id))
+  })
+
+export const saveImageDefaults = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string; defaults: ImageDefaults }) => ({
+    projectId: data.projectId,
+    defaults: normalizeImageDefaults(data.defaults),
+  }))
+  .handler(async ({ data: { projectId, defaults } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    const existing = normalizeProjectSettings(project.settings) ?? {}
+    await db
+      .update(projects)
+      .set({ settings: { ...existing, imageDefaults: defaults } })
+      .where(eq(projects.id, projectId))
+  })
+
+export const saveConsistencyLock = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string; lock: ConsistencyLock }) => ({
+    projectId: data.projectId,
+    lock: normalizeConsistencyLock(data.lock),
+  }))
+  .handler(async ({ data: { projectId, lock } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    const existing = normalizeProjectSettings(project.settings) ?? {}
+    await db
+      .update(projects)
+      .set({ settings: { ...existing, consistencyLock: lock } })
+      .where(eq(projects.id, projectId))
+  })
+
+export const generateSceneImages = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sceneId: string; lane: 'start' | 'end'; promptOverride?: string }) => {
+    const lane = data.lane === 'end' ? 'end' : 'start'
+    return {
+      sceneId: data.sceneId,
+      lane,
+      promptOverride: data.promptOverride?.trim() || undefined,
+    }
+  })
+  .handler(async ({ data: { sceneId, lane, promptOverride } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    })
+    if (!user?.providerKeyEnc || !user?.providerKeyDek) {
+      throw new Error('No Replicate API key found. Update it in onboarding.')
+    }
+
+    const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek)
+    const settings = normalizeProjectSettings(project.settings) ?? {}
+    const imageDefaults = normalizeImageDefaults(settings.imageDefaults)
+    const consistencyLock = normalizeConsistencyLock(settings.consistencyLock)
+    const finalPrompt =
+      promptOverride ?? buildLanePrompt(scene.description, lane, settings.intake, consistencyLock)
+
+    const replicate = new Replicate({ auth: apiKey })
+    const output = await replicate.run(imageDefaults.model, {
+      input: {
+        prompt: finalPrompt,
+        aspect_ratio: imageDefaults.aspectRatio,
+        num_outputs: imageDefaults.batchCount,
+        output_format: 'webp',
+        num_inference_steps: qualityPresetToSteps(imageDefaults.qualityPreset),
+      },
+    })
+
+    const generatedUrls = parseReplicateImageUrls(output)
+    if (generatedUrls.length === 0) {
+      throw new Error('Image generation returned no outputs')
+    }
+
+    const batchId = randomUUID()
+    const type = lane === 'start' ? 'start_image' : 'end_image'
+
+    for (let i = 0; i < generatedUrls.length; i += 1) {
+      const sourceUrl = generatedUrls[i]
+      const storageKey = `projects/${project.id}/scenes/${scene.id}/images/${batchId}/${type}-${i + 1}.webp`
+      const storedUrl = await uploadFromUrl(sourceUrl, storageKey, 'image/webp')
+
+      await db.insert(assets).values({
+        sceneId: scene.id,
+        type,
+        stage: 'images',
+        prompt: finalPrompt,
+        model: imageDefaults.model,
+        modelSettings: {
+          aspectRatio: imageDefaults.aspectRatio,
+          qualityPreset: imageDefaults.qualityPreset,
+          batchCount: imageDefaults.batchCount,
+          consistencyLock,
+        },
+        url: storedUrl,
+        storageKey,
+        status: 'done',
+        isSelected: false,
+        batchId,
+      })
+    }
+
+    if (scene.stage === 'script') {
+      await db.update(scenes).set({ stage: 'images' }).where(eq(scenes.id, scene.id))
+    }
+
+    return { generatedCount: generatedUrls.length }
+  })
+
+export const selectAsset = createServerFn({ method: 'POST' })
+  .inputValidator((data: { assetId: string }) => data)
+  .handler(async ({ data: { assetId } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const asset = await db.query.assets.findFirst({
+      where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
+    })
+    if (!asset) throw new Error('Asset not found')
+    if (asset.type !== 'start_image' && asset.type !== 'end_image') {
+      throw new Error('Only image assets can be selected here')
+    }
+    if (asset.status !== 'done') {
+      throw new Error('Only completed assets can be selected')
+    }
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, asset.sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    await db
+      .update(assets)
+      .set({ isSelected: false })
+      .where(and(eq(assets.sceneId, scene.id), eq(assets.type, asset.type), isNull(assets.deletedAt)))
+
+    await db.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
   })
 
 export const exportProjectHandoff = createServerFn({ method: 'POST' })

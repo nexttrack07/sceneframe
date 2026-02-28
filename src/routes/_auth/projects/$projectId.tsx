@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { loadProject } from '@/features/projects/project-actions'
 import type { ScenePlanEntry } from '@/features/projects/project-actions'
+import { GlobalImageSettingsDialog } from '@/features/projects/components/global-image-settings-dialog'
 import { ScriptWorkshop } from '@/features/projects/components/script-workshop'
 import { Storyboard } from '@/features/projects/components/storyboard'
 
@@ -23,7 +24,12 @@ export const Route = createFileRoute('/_auth/projects/$projectId')({
 // ---------------------------------------------------------------------------
 
 function ProjectPage() {
-  const { project, scenes: projectScenes, messages: projectMessages } = Route.useLoaderData()
+  const {
+    project,
+    scenes: projectScenes,
+    messages: projectMessages,
+    assets: projectAssets,
+  } = Route.useLoaderData()
   const scenePlan: ScenePlanEntry[] = (() => {
     if (!project.scriptRaw) return []
     try {
@@ -47,23 +53,28 @@ function ProjectPage() {
               </p>
             )}
           </div>
-          {isWorkshopPhase ? (
-            <Badge
-              variant="outline"
-              className="gap-1.5 text-primary border-primary/40 bg-primary/10 shrink-0"
-            >
-              <Film size={11} />
-              Script Workshop
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
-            >
-              <Check size={11} />
-              Script approved
-            </Badge>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {isWorkshopPhase ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 text-primary border-primary/40 bg-primary/10 shrink-0"
+              >
+                <Film size={11} />
+                Script Workshop
+              </Badge>
+            ) : (
+              <>
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
+                >
+                  <Check size={11} />
+                  Script approved
+                </Badge>
+                <GlobalImageSettingsDialog projectId={project.id} projectSettings={project.settings} />
+              </>
+            )}
+          </div>
         </div>
       </ProjectHeader>
 
@@ -79,6 +90,7 @@ function ProjectPage() {
         <Storyboard
           projectId={project.id}
           scenes={projectScenes}
+          assets={projectAssets}
           projectSettings={project.settings}
           scenePlan={scenePlan}
         />
