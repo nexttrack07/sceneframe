@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
-  model: 'black-forest-labs/flux-schnell',
+  model: 'google/nano-banana-pro',
   aspectRatio: '16:9',
   qualityPreset: 'balanced',
   batchCount: 2,

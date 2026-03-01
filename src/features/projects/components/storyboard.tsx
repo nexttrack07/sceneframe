@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import {
   AlertCircle,
@@ -58,6 +58,15 @@ export function Storyboard({
     }
     return grouped
   }, [sceneAssets])
+  const hasGeneratingAssets = sceneAssets.some((asset) => asset.status === 'generating')
+
+  useEffect(() => {
+    if (!hasGeneratingAssets) return
+    const interval = setInterval(() => {
+      void router.invalidate()
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [hasGeneratingAssets, router])
 
   const filteredScenes =
     reasonFilter === 'all'
@@ -236,11 +245,14 @@ function StoryboardCard({
   const currentStageIndex = PIPELINE_STAGES.findIndex((s) => s.key === scene.stage)
   const selectedStart = imageAssets.some((asset) => asset.type === 'start_image' && asset.isSelected)
   const selectedEnd = imageAssets.some((asset) => asset.type === 'end_image' && asset.isSelected)
-  const imageStatusLabel = selectedStart && selectedEnd
-    ? 'Ready for video'
-    : imageAssets.length > 0
-      ? 'Has candidates'
-      : 'Needs images'
+  const hasGenerating = imageAssets.some((asset) => asset.status === 'generating')
+  const imageStatusLabel = hasGenerating
+    ? 'Generating…'
+    : selectedStart && selectedEnd
+      ? 'Ready for video'
+      : imageAssets.length > 0
+        ? 'Has candidates'
+        : 'Needs images'
   const imageStatusTone = selectedStart && selectedEnd ? 'text-success' : 'text-muted-foreground'
 
   return (

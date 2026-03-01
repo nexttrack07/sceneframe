@@ -68,6 +68,7 @@ export interface SceneAssetSummary {
   type: 'start_image' | 'end_image'
   status: string
   url: string | null
+  errorMessage: string | null
   prompt: string | null
   model: string | null
   isSelected: boolean
@@ -75,7 +76,7 @@ export interface SceneAssetSummary {
 }
 
 const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
-  model: 'black-forest-labs/flux-schnell',
+  model: 'google/nano-banana-pro',
   aspectRatio: '16:9',
   qualityPreset: 'balanced',
   batchCount: 2,
@@ -161,14 +162,42 @@ function parseReplicateImageUrls(output: unknown): string[] {
     }
     if (typeof value === 'object') {
       const record = value as Record<string, unknown>
+      if (typeof record.toString === 'function') {
+        const stringValue = String(record.toString())
+        if (stringValue.startsWith('http://') || stringValue.startsWith('https://')) {
+          urls.push(stringValue)
+        }
+      }
+      if (typeof record.url === 'function') {
+        try {
+          const maybeUrl = (record.url as () => unknown).call(record)
+          walk(maybeUrl)
+        } catch {
+          // Ignore malformed file-like objects and keep walking.
+        }
+      }
       walk(record.url)
       walk(record.output)
       walk(record.images)
       walk(record.data)
+      walk(record.image)
+      walk(record.files)
+      walk(record.file)
+      walk(record.urls)
     }
   }
   walk(output)
   return Array.from(new Set(urls))
+}
+
+function summarizeReplicateOutput(output: unknown): string {
+  if (output == null) return 'null'
+  if (typeof output === 'string') return 'string'
+  if (Array.isArray(output)) return `array(${output.length})`
+  if (typeof output === 'object') {
+    return `object keys=[${Object.keys(output as Record<string, unknown>).join(', ')}]`
+  }
+  return typeof output
 }
 
 function buildLanePrompt(
@@ -331,6 +360,7 @@ export const loadProject = createServerFn()
           type: asset.type,
           status: asset.status,
           url: asset.url,
+          errorMessage: asset.errorMessage,
           prompt: asset.prompt,
           model: asset.model,
           isSelected: asset.isSelected,
@@ -836,56 +866,100 @@ export const generateSceneImages = createServerFn({ method: 'POST' })
     const consistencyLock = normalizeConsistencyLock(settings.consistencyLock)
     const finalPrompt =
       promptOverride ?? buildLanePrompt(scene.description, lane, settings.intake, consistencyLock)
-
-    const replicate = new Replicate({ auth: apiKey })
-    const output = await replicate.run(imageDefaults.model, {
-      input: {
-        prompt: finalPrompt,
-        aspect_ratio: imageDefaults.aspectRatio,
-        num_outputs: imageDefaults.batchCount,
-        output_format: 'webp',
-        num_inference_steps: qualityPresetToSteps(imageDefaults.qualityPreset),
-      },
-    })
-
-    const generatedUrls = parseReplicateImageUrls(output)
-    if (generatedUrls.length === 0) {
-      throw new Error('Image generation returned no outputs')
-    }
+    const isNanoBanana = imageDefaults.model === 'google/nano-banana-pro'
+    const outputExtension = isNanoBanana ? 'png' : 'webp'
+    const outputContentType = isNanoBanana ? 'image/png' : 'image/webp'
 
     const batchId = randomUUID()
     const type = lane === 'start' ? 'start_image' : 'end_image'
+    const generationCount = Math.max(1, Math.min(4, imageDefaults.batchCount))
 
-    for (let i = 0; i < generatedUrls.length; i += 1) {
-      const sourceUrl = generatedUrls[i]
-      const storageKey = `projects/${project.id}/scenes/${scene.id}/images/${batchId}/${type}-${i + 1}.webp`
-      const storedUrl = await uploadFromUrl(sourceUrl, storageKey, 'image/webp')
-
-      await db.insert(assets).values({
-        sceneId: scene.id,
-        type,
-        stage: 'images',
-        prompt: finalPrompt,
-        model: imageDefaults.model,
-        modelSettings: {
-          aspectRatio: imageDefaults.aspectRatio,
-          qualityPreset: imageDefaults.qualityPreset,
-          batchCount: imageDefaults.batchCount,
-          consistencyLock,
-        },
-        url: storedUrl,
-        storageKey,
-        status: 'done',
-        isSelected: false,
-        batchId,
-      })
-    }
+    const placeholders = await db
+      .insert(assets)
+      .values(
+        Array.from({ length: generationCount }).map(() => ({
+          sceneId: scene.id,
+          type,
+          stage: 'images' as const,
+          prompt: finalPrompt,
+          model: imageDefaults.model,
+          modelSettings: {
+            aspectRatio: imageDefaults.aspectRatio,
+            qualityPreset: imageDefaults.qualityPreset,
+            batchCount: generationCount,
+            outputFormat: outputExtension,
+            consistencyLock,
+          },
+          status: 'generating' as const,
+          isSelected: false,
+          batchId,
+          generationId: batchId,
+        })),
+      )
+      .returning({ id: assets.id })
 
     if (scene.stage === 'script') {
       await db.update(scenes).set({ stage: 'images' }).where(eq(scenes.id, scene.id))
     }
 
-    return { generatedCount: generatedUrls.length }
+    const queuedAssetIds = placeholders.map((row) => row.id)
+    const replicate = new Replicate({ auth: apiKey })
+    let completedCount = 0
+    let failedCount = 0
+
+    for (let i = 0; i < queuedAssetIds.length; i += 1) {
+      const assetId = queuedAssetIds[i]
+      try {
+        const output = await replicate.run(imageDefaults.model, {
+          input: isNanoBanana
+            ? {
+                prompt: finalPrompt,
+                aspect_ratio: imageDefaults.aspectRatio,
+                output_format: 'png',
+              }
+            : {
+                prompt: finalPrompt,
+                aspect_ratio: imageDefaults.aspectRatio,
+                num_outputs: 1,
+                output_format: 'webp',
+                num_inference_steps: qualityPresetToSteps(imageDefaults.qualityPreset),
+              },
+        })
+
+        const urls = parseReplicateImageUrls(output)
+        const sourceUrl = urls[0]
+
+        if (!sourceUrl) {
+          throw new Error(`No output URL found (${summarizeReplicateOutput(output)}).`)
+        }
+
+        const storageKey = `projects/${project.id}/scenes/${scene.id}/images/${batchId}/${type}-${i + 1}.${outputExtension}`
+        const storedUrl = await uploadFromUrl(sourceUrl, storageKey, outputContentType)
+
+        await db
+          .update(assets)
+          .set({
+            url: storedUrl,
+            storageKey,
+            status: 'done',
+            errorMessage: null,
+          })
+          .where(eq(assets.id, assetId))
+        completedCount += 1
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Image generation failed'
+        await db
+          .update(assets)
+          .set({
+            status: 'error',
+            errorMessage,
+          })
+          .where(eq(assets.id, assetId))
+        failedCount += 1
+      }
+    }
+
+    return { queuedCount: queuedAssetIds.length, completedCount, failedCount, batchId }
   })
 
 export const selectAsset = createServerFn({ method: 'POST' })

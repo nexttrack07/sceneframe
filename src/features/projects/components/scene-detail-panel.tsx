@@ -510,33 +510,69 @@ function ImageLaneCard({
       {assets.length === 0 ? (
         <p className="text-xs text-muted-foreground">No candidates yet.</p>
       ) : (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-1.5">
           {assets.map((asset) => (
-            <div key={asset.id} className="rounded-md border p-2 space-y-2 bg-background">
+            <button
+              key={asset.id}
+              type="button"
+              onClick={() => {
+                if (asset.status !== 'done' || asset.isSelected || selectingAssetId === asset.id) return
+                onSelectAsset(asset.id)
+              }}
+              aria-pressed={asset.isSelected}
+              disabled={asset.status !== 'done' || selectingAssetId === asset.id}
+              className={`relative rounded overflow-hidden bg-muted transition disabled:opacity-100 ${
+                asset.status === 'done' ? 'cursor-pointer' : 'cursor-default'
+              } ${asset.isSelected ? 'ring-2 ring-primary ring-offset-1' : 'hover:ring-1 hover:ring-primary/40'}`}
+            >
+              {/* Image or placeholder */}
               {asset.url ? (
                 <img
                   src={asset.url}
                   alt={title}
-                  className={`w-full h-24 object-cover rounded ${
-                    asset.isSelected ? 'ring-2 ring-primary' : ''
-                  }`}
+                  className="w-full aspect-video object-cover block"
                 />
               ) : (
-                <div className="w-full h-24 rounded bg-muted" />
+                <div
+                  className={`w-full aspect-video ${
+                    asset.status === 'error'
+                      ? 'bg-destructive/10'
+                      : 'bg-muted animate-pulse'
+                  }`}
+                />
               )}
-              <Button
-                size="sm"
-                variant={asset.isSelected ? 'default' : 'outline'}
-                className="w-full"
-                disabled={asset.isSelected || selectingAssetId === asset.id || asset.status !== 'done'}
-                onClick={() => onSelectAsset(asset.id)}
-              >
-                {selectingAssetId === asset.id ? (
-                  <Loader2 size={12} className="animate-spin mr-1.5" />
+
+              {/* Overlay badge — status or selection */}
+              <div className="absolute top-1 right-1">
+                {asset.isSelected ? (
+                  <span className="bg-primary text-primary-foreground text-[10px] font-medium px-1.5 py-0.5 rounded">
+                    ✓
+                  </span>
+                ) : asset.status === 'generating' ? (
+                  <Loader2 size={12} className="text-white drop-shadow animate-spin" />
+                ) : asset.status === 'error' ? (
+                  <span className="bg-destructive text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
+                    Error
+                  </span>
                 ) : null}
-                {asset.isSelected ? 'Selected' : 'Select'}
-              </Button>
-            </div>
+              </div>
+
+              {/* Error message */}
+              {asset.status === 'error' && asset.errorMessage ? (
+                <div className="absolute inset-0 flex items-center justify-center p-1.5">
+                  <p className="text-[10px] leading-tight text-destructive text-center line-clamp-4 bg-background/80 rounded p-1">
+                    {asset.errorMessage}
+                  </p>
+                </div>
+              ) : null}
+
+              {/* Selecting spinner */}
+              {selectingAssetId === asset.id ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/50">
+                  <Loader2 size={16} className="animate-spin text-primary" />
+                </div>
+              ) : null}
+            </button>
           ))}
         </div>
       )}
