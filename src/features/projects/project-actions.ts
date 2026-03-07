@@ -1077,3 +1077,106 @@ export const exportProjectHandoff = createServerFn({ method: 'POST' })
       mimeType: 'text/markdown',
     }
   })
+
+// ---------------------------------------------------------------------------
+// Reorder a scene (fractional ordering)
+// ---------------------------------------------------------------------------
+
+export const reorderScene = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sceneId: string; newOrder: number }) => {
+    if (typeof data.newOrder !== 'number' || !Number.isFinite(data.newOrder)) {
+      throw new Error('newOrder must be a finite number')
+    }
+    return data
+  })
+  .handler(async ({ data: { sceneId, newOrder } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    await db.update(scenes).set({ order: newOrder }).where(eq(scenes.id, sceneId))
+  })
+
+// ---------------------------------------------------------------------------
+// Add a new scene after a given order position
+// ---------------------------------------------------------------------------
+
+export const addScene = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { projectId: string; title?: string; description: string; afterOrder: number }) => {
+      if (!data.description?.trim()) throw new Error('Description is required')
+      if (typeof data.afterOrder !== 'number' || !Number.isFinite(data.afterOrder)) {
+        throw new Error('afterOrder must be a finite number')
+      }
+      return data
+    },
+  )
+  .handler(async ({ data: { projectId, title, description, afterOrder } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Project not found')
+
+    const newOrder = afterOrder + 0.5
+
+    await db.insert(scenes).values({
+      projectId,
+      order: newOrder,
+      title: title || null,
+      description,
+      stage: 'script' as const,
+    })
+  })
+
+// ---------------------------------------------------------------------------
+// Soft-delete a scene and its assets
+// ---------------------------------------------------------------------------
+
+export const deleteScene = createServerFn({ method: 'POST' })
+  .inputValidator((data: { sceneId: string }) => data)
+  .handler(async ({ data: { sceneId } }) => {
+    const { userId } = await auth()
+    if (!userId) throw new Error('Unauthenticated')
+
+    const scene = await db.query.scenes.findFirst({
+      where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+    })
+    if (!scene) throw new Error('Scene not found')
+
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, scene.projectId),
+        eq(projects.userId, userId),
+        isNull(projects.deletedAt),
+      ),
+    })
+    if (!project) throw new Error('Unauthorized')
+
+    const now = new Date()
+
+    await db.update(assets).set({ deletedAt: now }).where(
+      and(eq(assets.sceneId, sceneId), isNull(assets.deletedAt)),
+    )
+
+    await db.update(scenes).set({ deletedAt: now }).where(eq(scenes.id, sceneId))
+  })
