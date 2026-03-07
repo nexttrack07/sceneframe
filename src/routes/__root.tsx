@@ -6,6 +6,7 @@ import {
 
 import ClerkProvider from '../integrations/clerk/provider'
 import { TooltipProvider } from '../components/ui/tooltip'
+import { ToastProvider } from '../components/ui/toast'
 
 import appCss from '../styles.css?url'
 
@@ -57,7 +58,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body>
         <ClerkProvider>
           <TooltipProvider delayDuration={300}>
-            {children}
+            <ToastProvider>
+              {children}
+            </ToastProvider>
           </TooltipProvider>
         </ClerkProvider>
         <Scripts />

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
-import type { SceneAssetSummary } from '../project-actions'
+import type { SceneAssetSummary } from '../project-types'
 
 export function ImageLightbox({
   assets,
@@ -13,25 +13,23 @@ export function ImageLightbox({
 }) {
   const [index, setIndex] = useState(initialIndex)
   const asset = assets[index]
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') setIndex((i) => (i > 0 ? i - 1 : assets.length - 1))
+      if (e.key === 'ArrowRight') setIndex((i) => (i < assets.length - 1 ? i + 1 : 0))
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [assets.length, onClose])
+
   if (!asset) return null
-
-  function handlePrev() {
-    setIndex((i) => (i > 0 ? i - 1 : assets.length - 1))
-  }
-
-  function handleNext() {
-    setIndex((i) => (i < assets.length - 1 ? i + 1 : 0))
-  }
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
       onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
-        if (e.key === 'ArrowLeft') handlePrev()
-        if (e.key === 'ArrowRight') handleNext()
-      }}
     >
       {/* Close button */}
       <button
@@ -49,7 +47,7 @@ export function ImageLightbox({
             type="button"
             onClick={(e) => {
               e.stopPropagation()
-              handlePrev()
+              setIndex((i) => (i > 0 ? i - 1 : assets.length - 1))
             }}
             className="absolute left-4 text-white/70 hover:text-white transition-colors z-10"
           >
@@ -59,7 +57,7 @@ export function ImageLightbox({
             type="button"
             onClick={(e) => {
               e.stopPropagation()
-              handleNext()
+              setIndex((i) => (i < assets.length - 1 ? i + 1 : 0))
             }}
             className="absolute right-4 text-white/70 hover:text-white transition-colors z-10"
           >

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { SlidersHorizontal } from 'lucide-react'
-import type { ConsistencyLock, ImageDefaults, ProjectSettings } from '../project-actions'
-import { saveConsistencyLock, saveImageDefaults } from '../project-actions'
+import type { ConsistencyLock, ImageDefaults, ProjectSettings } from '../project-types'
+import { saveImageSettings } from '../project-mutations'
+import { DEFAULT_IMAGE_DEFAULTS, DEFAULT_CONSISTENCY_LOCK } from '../project-constants'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -12,19 +13,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-
-const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
-  model: 'google/nano-banana-pro',
-  aspectRatio: '16:9',
-  qualityPreset: 'balanced',
-  batchCount: 2,
-}
-
-const DEFAULT_CONSISTENCY_LOCK: ConsistencyLock = {
-  enabled: false,
-  strength: 'medium',
-  referenceUrls: [],
-}
 
 export function GlobalImageSettingsDialog({
   projectId,
@@ -67,10 +55,7 @@ export function GlobalImageSettingsDialog({
         ...consistencyLock,
         referenceUrls,
       }
-      await Promise.all([
-        saveImageDefaults({ data: { projectId, defaults: sanitizedDefaults } }),
-        saveConsistencyLock({ data: { projectId, lock: sanitizedLock } }),
-      ])
+      await saveImageSettings({ data: { projectId, defaults: sanitizedDefaults, lock: sanitizedLock } })
       await router.invalidate()
       setOpen(false)
     } catch (err) {

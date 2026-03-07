@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { ArrowLeft, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { IntakeAnswers } from '../project-actions'
+import type { IntakeAnswers } from '../project-types'
 
 const PRESET_DEFAULTS: Record<
   string,

@@ -5,14 +5,16 @@ import AppNav from '@/components/AppNav'
 
 const checkAuth = createServerFn().handler(async () => {
   const { userId } = await auth()
-  if (!userId) {
-    throw redirect({ to: '/sign-in' })
-  }
   return { userId }
 })
 
 export const Route = createFileRoute('/_auth')({
-  beforeLoad: () => checkAuth(),
+  beforeLoad: async () => {
+    const { userId } = await checkAuth()
+    if (!userId) {
+      throw redirect({ to: '/sign-in' })
+    }
+  },
   component: AuthLayout,
 })
 

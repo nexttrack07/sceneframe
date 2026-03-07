@@ -14,6 +14,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
+import type { ProjectSettings } from '@/features/projects/project-types'
 
 // ---------------------------------------------------------------------------
 // users
@@ -42,9 +43,9 @@ export const projects = pgTable(
     name: text('name').notNull(),
     directorPrompt: text('director_prompt').notNull().default(''),
     scriptRaw: text('script_raw'),
-    scriptStatus: text('script_status').notNull().default('idle'),
+    scriptStatus: text('script_status').notNull().default('idle').$type<'idle' | 'generating' | 'done' | 'error'>(),
     scriptJobId: text('script_job_id'),
-    settings: jsonb('settings'),
+    settings: jsonb('settings').$type<ProjectSettings | null>(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
@@ -70,7 +71,7 @@ export const scenes = pgTable(
     order: doublePrecision('order').notNull(),
     title: text('title'),
     description: text('description').notNull(),
-    stage: text('stage').notNull().default('script'),
+    stage: text('stage').notNull().default('script').$type<'script' | 'images' | 'video' | 'audio'>(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
@@ -96,8 +97,8 @@ export const assets = pgTable(
     sceneId: uuid('scene_id')
       .notNull()
       .references(() => scenes.id),
-    type: text('type').notNull(),
-    stage: text('stage').notNull(),
+    type: text('type').notNull().$type<'start_image' | 'end_image' | 'video' | 'voiceover' | 'background_music'>(),
+    stage: text('stage').notNull().$type<'images' | 'video' | 'audio'>(),
     prompt: text('prompt'),
     model: text('model'),
     modelSettings: jsonb('model_settings'),
@@ -109,7 +110,7 @@ export const assets = pgTable(
     height: integer('height'),
     durationMs: integer('duration_ms'),
     fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
-    status: text('status').notNull().default('generating'),
+    status: text('status').notNull().default('generating').$type<'generating' | 'done' | 'error'>(),
     isSelected: boolean('is_selected').notNull().default(false),
     batchId: uuid('batch_id'),
     errorMessage: text('error_message'),
@@ -150,7 +151,7 @@ export const messages = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id),
-    role: text('role').notNull(),
+    role: text('role').notNull().$type<'system' | 'user' | 'assistant'>(),
     content: text('content').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
