@@ -1,9 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
 import { assets, projects, scenes, messages, shots } from '@/db/schema'
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
 import Replicate from 'replicate'
 import { assertProjectOwner } from '@/lib/assert-project-owner.server'
+import { deleteObject } from '@/lib/r2.server'
 import { normalizeProjectSettings } from './project-normalize'
 import { getUserApiKey, buildSystemPrompt, buildShotBreakdownPrompt, parseShotBreakdownResponse } from './replicate-helpers.server'
 import type { IntakeAnswers, ScenePlanEntry, ShotPlanEntry, ProjectSettings } from './project-types'
@@ -16,13 +17,6 @@ export const saveIntake = createServerFn({ method: 'POST' })
   .inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
     const { intake } = data
     if (!intake.channelPreset) throw new Error('Channel preset is required')
-    if (!intake.purpose) throw new Error('Purpose is required')
-    if (!intake.length) throw new Error('Length is required')
-    if (!intake.style.length) throw new Error('At least one style is required')
-    if (!intake.mood.length) throw new Error('At least one mood is required')
-    if (!intake.setting.length) throw new Error('At least one setting is required')
-    if (!intake.audience?.trim()) throw new Error('Audience is required')
-    if (!intake.viewerAction?.trim()) throw new Error('Viewer action is required')
     if (!intake.concept?.trim() || intake.concept.trim().length < 10) {
       throw new Error('Concept must be at least 10 characters')
     }
@@ -35,19 +29,8 @@ export const saveIntake = createServerFn({ method: 'POST' })
     const merged: ProjectSettings = {
       ...existing,
       intake,
-      hookConfirmed: false,
     }
 
-    await db.update(projects).set({ settings: merged }).where(eq(projects.id, projectId))
-  })
-
-export const setHookConfirmed = createServerFn({ method: 'POST' })
-  .inputValidator((data: { projectId: string; confirmed: boolean }) => data)
-  .handler(async ({ data: { projectId, confirmed } }) => {
-    const { project } = await assertProjectOwner(projectId, 'error')
-
-    const existing = normalizeProjectSettings(project.settings)
-    const merged: ProjectSettings = { ...existing, hookConfirmed: confirmed }
     await db.update(projects).set({ settings: merged }).where(eq(projects.id, projectId))
   })
 
@@ -135,7 +118,7 @@ export const approveScenes = createServerFn({ method: 'POST' })
     try {
       const apiKey = await getUserApiKey(userId)
       const prompt = buildShotBreakdownPrompt(
-        parsedScenes.map((s) => ({ title: s.title || '', description: s.description })),
+        parsedScenes.map((s) => ({ title: s.title || '', description: s.description, durationSec: s.durationSec })),
         targetDurationSec,
       )
 
@@ -259,13 +242,68 @@ export const approveScenes = createServerFn({ method: 'POST' })
     })
   })
 
+export const deleteProject = createServerFn({ method: 'POST' })
+  .inputValidator((data: { projectId: string }) => data)
+  .handler(async ({ data: { projectId } }) => {
+    await assertProjectOwner(projectId, 'error')
+
+    // Collect all storageKeys for R2 cleanup
+    const sceneRows = await db
+      .select({ id: scenes.id })
+      .from(scenes)
+      .where(eq(scenes.projectId, projectId))
+
+    const sceneIds = sceneRows.map((r) => r.id)
+
+    let storageKeys: string[] = []
+    if (sceneIds.length > 0) {
+      const assetRows = await db
+        .select({ storageKey: assets.storageKey })
+        .from(assets)
+        .where(and(inArray(assets.sceneId, sceneIds), isNotNull(assets.storageKey)))
+      storageKeys = assetRows
+        .map((r) => r.storageKey)
+        .filter((k): k is string => k !== null)
+    }
+
+    // Delete from R2 (fire and forget errors — DB cleanup proceeds regardless)
+    await Promise.allSettled(storageKeys.map((key) => deleteObject(key)))
+
+    // Hard-delete everything from DB in dependency order
+    await db.transaction(async (tx) => {
+      if (sceneIds.length > 0) {
+        await tx.delete(assets).where(inArray(assets.sceneId, sceneIds))
+        const shotRows = await tx
+          .select({ id: shots.id })
+          .from(shots)
+          .where(inArray(shots.sceneId, sceneIds))
+        if (shotRows.length > 0) {
+          await tx.delete(shots).where(inArray(shots.id, shotRows.map((r) => r.id)))
+        }
+        await tx.delete(scenes).where(inArray(scenes.id, sceneIds))
+      }
+      await tx.delete(messages).where(eq(messages.projectId, projectId))
+      await tx.delete(projects).where(eq(projects.id, projectId))
+    })
+  })
+
 function buildFallbackShotPlan(parsedScenes: ScenePlanEntry[]): ShotPlanEntry[] {
-  return parsedScenes.map((scene, i) => ({
-    sceneIndex: i,
-    description: scene.description,
-    shotType: 'visual' as const,
-    durationSec: 5,
-  }))
+  const result: ShotPlanEntry[] = []
+  for (let i = 0; i < parsedScenes.length; i++) {
+    const scene = parsedScenes[i]
+    const sceneDuration = scene.durationSec ?? 30
+    const shotCount = Math.max(1, Math.ceil(sceneDuration / 5))
+    const shotDuration = Math.round(sceneDuration / shotCount)
+    for (let j = 0; j < shotCount; j++) {
+      result.push({
+        sceneIndex: i,
+        description: j === 0 ? scene.description : `${scene.description} (continuation ${j + 1})`,
+        shotType: 'visual' as const,
+        durationSec: shotDuration,
+      })
+    }
+  }
+  return result
 }
 
 export const resetWorkshop = createServerFn({ method: 'POST' })

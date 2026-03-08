@@ -30,20 +30,19 @@ export function parseSceneProposal(
 
 export function composeBrief(intake: IntakeAnswers): string {
   const parts: string[] = []
-  parts.push(
-    `Channel preset: ${intake.channelPreset}. I'd like to create a ${intake.length.toLowerCase()} ${intake.style.join(', ').toLowerCase()} video`,
-  )
-  if (intake.purpose) parts[0] += ` for ${intake.purpose.toLowerCase()}`
-  parts[0] += '.'
+  const lengthLabel = intake.targetDurationSec
+    ? `${Math.round((intake.targetDurationSec / 60) * 10) / 10}-minute`
+    : intake.length.toLowerCase()
 
-  if (intake.mood.length > 0) {
-    parts.push(`The mood should be ${intake.mood.join(', ').toLowerCase()}.`)
-  }
-  if (intake.setting.length > 0) {
-    parts.push(`Setting: ${intake.setting.join(', ').toLowerCase()}.`)
-  }
-  parts.push(`Audience: ${intake.audience}.`)
-  parts.push(`Desired viewer action: ${intake.viewerAction}.`)
+  parts.push(`I'd like to create a ${lengthLabel} video.`)
+
+  if (intake.channelPreset) parts.push(`Format: ${intake.channelPreset}.`)
+  if (intake.purpose) parts.push(`Purpose: ${intake.purpose}.`)
+  if (intake.style?.length) parts.push(`Visual style: ${intake.style.join(', ')}.`)
+  if (intake.mood?.length) parts.push(`Mood: ${intake.mood.join(', ')}.`)
+  if (intake.setting?.length) parts.push(`Setting: ${intake.setting.join(', ')}.`)
+  if (intake.audience) parts.push(`Audience: ${intake.audience}.`)
+  if (intake.viewerAction) parts.push(`Desired viewer action: ${intake.viewerAction}.`)
   if (intake.workingTitle?.trim()) parts.push(`Working title: ${intake.workingTitle.trim()}.`)
   if (intake.thumbnailPromise?.trim())
     parts.push(`Thumbnail promise: ${intake.thumbnailPromise.trim()}.`)
@@ -51,15 +50,24 @@ export function composeBrief(intake: IntakeAnswers): string {
   return parts.join(' ')
 }
 
-export function targetDurationRange(length: string): { min: number; max: number } | null {
-  const map: Record<string, { min: number; max: number }> = {
-    '15 seconds': { min: 12, max: 18 },
-    '30 seconds': { min: 24, max: 36 },
-    '1 minute': { min: 50, max: 70 },
-    '2-3 minutes': { min: 120, max: 190 },
-    '5+ minutes': { min: 280, max: 520 },
+export function targetDurationRange(targetSec: number): { min: number; max: number } {
+  return { min: Math.round(targetSec * 0.85), max: Math.round(targetSec * 1.15) }
+}
+
+export function parseQuickReplies(content: string): string[] | null {
+  const match = content.match(/```suggestions\s*([\s\S]*?)```/)
+  if (!match) return null
+  try {
+    const parsed = JSON.parse(match[1].trim())
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    return parsed.filter((s): s is string => typeof s === 'string').slice(0, 4)
+  } catch {
+    return null
   }
-  return map[length] ?? null
+}
+
+export function stripSuggestions(content: string): string {
+  return content.replace(/```suggestions[\s\S]*?```/g, '').trim()
 }
 
 export function estimateDuration(scene: ScenePlanEntry): number {

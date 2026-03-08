@@ -24,8 +24,8 @@ export const loadProject = createServerFn({ method: 'GET' })
 
     const sceneIds = projectScenes.map((scene) => scene.id)
 
-    // Load shots by sceneIds
-    const projectShots =
+    // Load shots by sceneIds, then sort by (scene order, shot order within scene)
+    const rawShots =
       sceneIds.length === 0
         ? []
         : await db.query.shots.findMany({
@@ -33,8 +33,13 @@ export const loadProject = createServerFn({ method: 'GET' })
               inArray(shots.sceneId, sceneIds),
               isNull(shots.deletedAt),
             ),
-            orderBy: asc(shots.order),
           })
+    const projectShots = rawShots.slice().sort((a, b) => {
+      const sceneA = sceneIds.indexOf(a.sceneId)
+      const sceneB = sceneIds.indexOf(b.sceneId)
+      if (sceneA !== sceneB) return sceneA - sceneB
+      return a.order - b.order
+    })
 
     const shotIds = projectShots.map((shot) => shot.id)
 

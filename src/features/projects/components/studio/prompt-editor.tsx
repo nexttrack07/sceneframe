@@ -17,7 +17,7 @@ export function PromptEditor({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-muted-foreground">Prompt</label>
+        <label className="text-xs font-medium text-muted-foreground">Image Prompt</label>
         {onGeneratePrompt && (
           <Tooltip>
             <TooltipTrigger asChild>

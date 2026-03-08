@@ -1,12 +1,12 @@
 export interface IntakeAnswers {
   channelPreset: string
-  purpose: string
+  purpose?: string
   length: string
-  style: string[]
-  mood: string[]
-  setting: string[]
-  audience: string
-  viewerAction: string
+  style?: string[]
+  mood?: string[]
+  setting?: string[]
+  audience?: string
+  viewerAction?: string
   workingTitle?: string
   thumbnailPromise?: string
   concept: string
@@ -39,7 +39,6 @@ export interface ImageDefaults {
 
 export interface ProjectSettings {
   intake?: IntakeAnswers
-  hookConfirmed?: boolean
 }
 
 export interface SceneAssetSummary {

@@ -3,7 +3,7 @@ import { db } from '@/db/index'
 import { assets, scenes, shots } from '@/db/schema'
 import { and, asc, eq, inArray, isNull, desc } from 'drizzle-orm'
 import Replicate from 'replicate'
-import { uploadFromUrl } from '@/lib/r2.server'
+import { uploadFromUrl, deleteObject } from '@/lib/r2.server'
 import { randomUUID } from 'node:crypto'
 import { assertProjectOwner, assertSceneOwner, assertAssetOwner, assertShotOwner, assertAssetOwnerViaShot } from '@/lib/assert-project-owner.server'
 import { normalizeProjectSettings, normalizeImageDefaults } from './project-normalize'
@@ -354,9 +354,11 @@ export const addScene = createServerFn({ method: 'POST' })
 export const deleteAsset = createServerFn({ method: 'POST' })
   .inputValidator((data: { assetId: string }) => data)
   .handler(async ({ data: { assetId } }) => {
-    await assertAssetOwner(assetId)
-    const now = new Date()
-    await db.update(assets).set({ deletedAt: now }).where(eq(assets.id, assetId))
+    const { asset } = await assertAssetOwner(assetId)
+    if (asset.storageKey) {
+      await deleteObject(asset.storageKey).catch(() => {})
+    }
+    await db.update(assets).set({ deletedAt: new Date() }).where(eq(assets.id, assetId))
   })
 
 export const deleteScene = createServerFn({ method: 'POST' })
@@ -373,6 +375,24 @@ export const deleteScene = createServerFn({ method: 'POST' })
         .from(shots)
         .where(and(eq(shots.sceneId, sceneId), isNull(shots.deletedAt)))
     ).map((r) => r.id)
+
+    // Collect storageKeys for R2 cleanup
+    const assetRows: { storageKey: string | null }[] = []
+    if (childShotIds.length > 0) {
+      const shotAssets = await db
+        .select({ storageKey: assets.storageKey })
+        .from(assets)
+        .where(and(inArray(assets.shotId, childShotIds), isNull(assets.deletedAt)))
+      assetRows.push(...shotAssets)
+    }
+    const sceneAssets = await db
+      .select({ storageKey: assets.storageKey })
+      .from(assets)
+      .where(and(eq(assets.sceneId, sceneId), isNull(assets.shotId), isNull(assets.deletedAt)))
+    assetRows.push(...sceneAssets)
+
+    const storageKeys = assetRows.map((r) => r.storageKey).filter((k): k is string => k !== null)
+    await Promise.allSettled(storageKeys.map((key) => deleteObject(key)))
 
     // Soft-delete assets belonging to child shots
     if (childShotIds.length > 0) {
@@ -482,6 +502,14 @@ export const deleteShot = createServerFn({ method: 'POST' })
     const { scene } = await assertShotOwner(shotId)
 
     const now = new Date()
+
+    // Collect storageKeys for R2 cleanup
+    const shotAssets = await db
+      .select({ storageKey: assets.storageKey })
+      .from(assets)
+      .where(and(eq(assets.shotId, shotId), isNull(assets.deletedAt)))
+    const storageKeys = shotAssets.map((r) => r.storageKey).filter((k): k is string => k !== null)
+    await Promise.allSettled(storageKeys.map((key) => deleteObject(key)))
 
     // Soft-delete shot's assets
     await db

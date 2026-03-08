@@ -7,6 +7,7 @@ export function GalleryImageCard({
   deletingAssetId,
   onSelect,
   onExpand,
+  onLightbox,
   onDelete,
 }: {
   asset: SceneAssetSummary
@@ -14,6 +15,7 @@ export function GalleryImageCard({
   deletingAssetId: string | null
   onSelect: () => void
   onExpand: () => void
+  onLightbox: () => void
   onDelete: () => void
 }) {
   const isDeleting = deletingAssetId === asset.id
@@ -59,7 +61,7 @@ export function GalleryImageCard({
             type="button"
             onClick={(e) => {
               e.stopPropagation()
-              onExpand()
+              onLightbox()
             }}
             className="bg-white/90 text-black p-1.5 rounded-md hover:bg-white transition-colors"
           >

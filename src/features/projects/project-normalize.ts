@@ -6,7 +6,7 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings | null {
   const value = raw as Record<string, unknown>
   // Backward compatibility for older shape where settings = intake object directly
   if ('concept' in value && typeof value.concept === 'string') {
-    return { intake: value as unknown as IntakeAnswers, hookConfirmed: false }
+    return { intake: value as unknown as IntakeAnswers }
   }
   return value as ProjectSettings
 }

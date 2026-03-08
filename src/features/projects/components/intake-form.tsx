@@ -1,53 +1,61 @@
 import { useState, useCallback } from 'react'
-import { ArrowLeft, Check, Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { IntakeAnswers } from '../project-types'
 
 const DURATION_PRESETS = [
+  { label: '15s', seconds: 15 },
   { label: '30s', seconds: 30 },
   { label: '1 min', seconds: 60 },
   { label: '2 min', seconds: 120 },
   { label: '5 min', seconds: 300 },
-  { label: '8 min', seconds: 480 },
+  { label: '10 min', seconds: 600 },
   { label: '15 min', seconds: 900 },
+  { label: '20 min', seconds: 1200 },
+  { label: '30 min', seconds: 1800 },
 ] as const
 
-function deriveDurationFromLength(length: string): number {
-  if (length === '30 seconds') return 30
-  if (length === '1-2 minutes') return 90
-  if (length === '3-5 minutes') return 240
-  if (length === '5+ minutes') return 480
-  return 300
+function deriveLengthLabel(seconds: number): string {
+  if (seconds <= 20) return '15 seconds'
+  if (seconds <= 45) return '30 seconds'
+  if (seconds < 90) return '1 minute'
+  if (seconds < 180) return '2 minutes'
+  if (seconds < 420) return '5 minutes'
+  if (seconds < 660) return '8 minutes'
+  if (seconds < 900) return '10 minutes'
+  if (seconds < 1200) return '15 minutes'
+  if (seconds < 1800) return '20 minutes'
+  return '30+ minutes'
 }
 
 const PRESET_DEFAULTS: Record<
   string,
-  { length: string; style: string[]; mood: string[] }
+  { targetDurationSec: number; style: string[]; mood: string[] }
 > = {
   Shorts: {
-    length: '30 seconds',
+    targetDurationSec: 30,
     style: ['Social / UGC-style'],
     mood: ['Energetic'],
   },
   'Long-form': {
-    length: '5+ minutes',
+    targetDurationSec: 600,
     style: ['Documentary'],
     mood: ['Calm / meditative'],
   },
   'Talking-head': {
-    length: '2-3 minutes',
+    targetDurationSec: 180,
     style: ['Commercial / polished'],
     mood: ['Uplifting'],
   },
   Faceless: {
-    length: '1 minute',
+    targetDurationSec: 60,
     style: ['Animation / motion graphics'],
     mood: ['Mysterious'],
   },
   Tutorial: {
-    length: '2-3 minutes',
+    targetDurationSec: 300,
     style: ['Documentary'],
     mood: ['Inspirational'],
   },
@@ -62,105 +70,10 @@ const STEPS = [
     options: ['Shorts', 'Long-form', 'Talking-head', 'Faceless', 'Tutorial'],
   },
   {
-    key: 'purpose' as const,
-    question: "What's this video for?",
-    subtitle: 'Pick the one that best describes your goal.',
-    type: 'single' as const,
-    options: [
-      'Brand / marketing',
-      'Social media content',
-      'Personal project',
-      'Portfolio / demo reel',
-      'Educational / tutorial',
-      'Entertainment',
-    ],
-  },
-  {
-    key: 'length' as const,
-    question: 'How long should the video be?',
-    subtitle: 'This helps determine how many scenes to create.',
-    type: 'single' as const,
-    options: ['15 seconds', '30 seconds', '1 minute', '2-3 minutes', '5+ minutes'],
-  },
-  {
     key: 'targetDurationSec' as const,
-    question: 'Target Video Duration',
-    subtitle: 'Exact duration for shot planning. This determines how many 5-second shots will be generated.',
+    question: 'How long should the video be?',
+    subtitle: 'Pick a preset or enter a custom duration. This determines how many shots will be planned.',
     type: 'duration' as const,
-    options: [],
-  },
-  {
-    key: 'style' as const,
-    question: 'What visual style are you going for?',
-    subtitle: 'Select all that apply.',
-    type: 'multi' as const,
-    options: [
-      'Cinematic',
-      'Documentary',
-      'Animation / motion graphics',
-      'Social / UGC-style',
-      'Commercial / polished',
-      'Music video',
-      'Experimental / abstract',
-    ],
-  },
-  {
-    key: 'mood' as const,
-    question: 'What mood or tone?',
-    subtitle: 'Select all that apply.',
-    type: 'multi' as const,
-    options: [
-      'Dramatic',
-      'Uplifting',
-      'Mysterious',
-      'Humorous',
-      'Calm / meditative',
-      'Energetic',
-      'Dark / moody',
-      'Nostalgic',
-      'Inspirational',
-    ],
-  },
-  {
-    key: 'setting' as const,
-    question: 'Where does this take place?',
-    subtitle: 'Select all that apply.',
-    type: 'multi' as const,
-    options: [
-      'Urban / city',
-      'Nature / outdoors',
-      'Indoor / studio',
-      'Abstract / surreal',
-      'Multiple locations',
-      'Not sure yet',
-    ],
-  },
-  {
-    key: 'audience' as const,
-    question: 'Who is this for?',
-    subtitle: 'Describe the audience in plain language.',
-    type: 'text' as const,
-    options: [],
-  },
-  {
-    key: 'viewerAction' as const,
-    question: 'What should viewers do after watching?',
-    subtitle: 'Define the desired outcome (subscribe, buy, click, etc.).',
-    type: 'text' as const,
-    options: [],
-  },
-  {
-    key: 'workingTitle' as const,
-    question: 'Working title (optional)',
-    subtitle: 'If you already have one, capture it now.',
-    type: 'optional-text' as const,
-    options: [],
-  },
-  {
-    key: 'thumbnailPromise' as const,
-    question: 'Thumbnail promise (optional)',
-    subtitle: 'What visual promise should the thumbnail communicate?',
-    type: 'optional-text' as const,
     options: [],
   },
   {
@@ -187,7 +100,6 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
   const [answers, setAnswers] = useState<Partial<IntakeAnswers>>({
     channelPreset: '',
     purpose: '',
-    length: '',
     targetDurationSec: 300,
     style: [],
     mood: [],
@@ -197,6 +109,7 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
     workingTitle: '',
     thumbnailPromise: '',
     concept: '',
+    length: '',
   })
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -217,36 +130,17 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
     setAnswers((prev) => {
       if (step.key === 'channelPreset') {
         const preset = PRESET_DEFAULTS[value]
-        const newLength = preset?.length ?? prev.length ?? ''
         return {
           ...prev,
           channelPreset: value,
-          length: newLength,
-          targetDurationSec: deriveDurationFromLength(newLength),
+          targetDurationSec: preset?.targetDurationSec ?? prev.targetDurationSec ?? 300,
           style: preset?.style ?? prev.style ?? [],
           mood: preset?.mood ?? prev.mood ?? [],
-        }
-      }
-      if (step.key === 'length') {
-        return {
-          ...prev,
-          length: value,
-          targetDurationSec: deriveDurationFromLength(value),
         }
       }
       return { ...prev, [step.key]: value }
     })
     setTimeout(advanceStep, 300)
-  }
-
-  function handleMultiToggle(value: string) {
-    setAnswers((prev) => {
-      const current = (prev[step.key as keyof IntakeAnswers] as string[] | undefined) ?? []
-      const next = current.includes(value)
-        ? current.filter((v) => v !== value)
-        : [...current, value]
-      return { ...prev, [step.key]: next }
-    })
   }
 
   function handleTextChange(value: string) {
@@ -260,11 +154,12 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
     } else {
       setIsSubmitting(true)
       try {
+        const durationSec = answers.targetDurationSec ?? 300
         await onComplete({
           channelPreset: answers.channelPreset ?? '',
           purpose: answers.purpose ?? '',
-          length: answers.length ?? '',
-          targetDurationSec: answers.targetDurationSec ?? 300,
+          length: deriveLengthLabel(durationSec),
+          targetDurationSec: durationSec,
           style: answers.style ?? [],
           mood: answers.mood ?? [],
           setting: answers.setting ?? [],
@@ -335,41 +230,12 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
             />
           )}
 
-          {step.type === 'multi' && (
-            <MultiSelect
-              options={step.options}
-              selected={(answers[step.key as keyof IntakeAnswers] as string[] | undefined) ?? []}
-              onToggle={handleMultiToggle}
-            />
-          )}
-
           {step.type === 'text' && (
             <Textarea
               value={(answers[step.key] as string) ?? ''}
               onChange={(e) => handleTextChange(e.target.value)}
-              placeholder={
-                step.key === 'concept'
-                  ? "A cinematic tour of Tokyo's neon-lit streets at night..."
-                  : step.key === 'audience'
-                    ? 'Creators launching their first faceless channel...'
-                    : 'Subscribe for weekly breakdowns and click the template link...'
-              }
+              placeholder="A cinematic tour of Tokyo's neon-lit streets at night..."
               rows={4}
-              className="resize-none text-base"
-              autoFocus
-            />
-          )}
-
-          {step.type === 'optional-text' && (
-            <Textarea
-              value={(answers[step.key] as string) ?? ''}
-              onChange={(e) => handleTextChange(e.target.value)}
-              placeholder={
-                step.key === 'workingTitle'
-                  ? 'How I grew a faceless channel in 30 days'
-                  : 'From zero to monetized in 90 days'
-              }
-              rows={3}
               className="resize-none text-base"
               autoFocus
             />
@@ -422,15 +288,17 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
 function isStepValid(key: StepKey, answers: Partial<IntakeAnswers>): boolean {
   if (key === 'targetDurationSec') {
     const val = answers.targetDurationSec
-    return typeof val === 'number' && val >= 15 && val <= 900
+    return typeof val === 'number' && val >= 15 && val <= 3600
   }
-  const val = answers[key]
-  if (key === 'workingTitle' || key === 'thumbnailPromise') return true
-  if (Array.isArray(val)) return val.length > 0
-  if (key === 'audience' || key === 'viewerAction')
-    return typeof val === 'string' && val.trim().length >= 5
-  if (key === 'concept') return typeof val === 'string' && val.trim().length >= 10
-  return typeof val === 'string' && val.length > 0
+  if (key === 'concept') {
+    const val = answers.concept
+    return typeof val === 'string' && val.trim().length >= 10
+  }
+  if (key === 'channelPreset') {
+    const val = answers.channelPreset
+    return typeof val === 'string' && val.length > 0
+  }
+  return false
 }
 
 function DurationInput({
@@ -441,6 +309,8 @@ function DurationInput({
   onChange: (val: number) => void
 }) {
   const shotCount = Math.ceil(value / 5)
+  const displayMinutes = +(value / 60).toFixed(2)
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-2">
@@ -459,22 +329,28 @@ function DurationInput({
           </button>
         ))}
       </div>
-      <div className="flex items-center gap-3">
-        <Input
-          type="number"
-          min={15}
-          max={900}
-          value={value}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10)
-            if (!isNaN(n)) onChange(Math.min(900, Math.max(15, n)))
-          }}
-          className="text-base"
-        />
-        <span className="text-sm text-muted-foreground whitespace-nowrap">seconds</span>
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">Custom duration</p>
+        <div className="flex items-center gap-3">
+          <Input
+            type="number"
+            min={0.25}
+            max={60}
+            step={0.5}
+            value={displayMinutes}
+            onChange={(e) => {
+              const mins = parseFloat(e.target.value)
+              if (!isNaN(mins) && mins > 0) {
+                onChange(Math.round(Math.min(3600, Math.max(15, mins * 60))))
+              }
+            }}
+            className="text-base"
+          />
+          <span className="text-sm text-muted-foreground whitespace-nowrap">minutes</span>
+        </div>
       </div>
       <p className="text-sm text-muted-foreground">
-        ~{shotCount} shot{shotCount !== 1 ? 's' : ''} will be generated
+        ~{shotCount} shot{shotCount !== 1 ? 's' : ''} at 5s each
       </p>
     </div>
   )
@@ -509,40 +385,4 @@ function SingleSelect({
   )
 }
 
-function MultiSelect({
-  options,
-  selected,
-  onToggle,
-}: {
-  options: readonly string[]
-  selected: string[]
-  onToggle: (value: string) => void
-}) {
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {options.map((opt) => {
-        const isSelected = selected.includes(opt)
-        return (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onToggle(opt)}
-            className={`relative text-left px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-              isSelected
-                ? 'border-primary bg-primary/10 text-primary'
-                : 'border-border bg-card text-foreground hover:border-primary/40'
-            }`}
-          >
-            {isSelected && (
-              <Check
-                size={14}
-                className="absolute top-2 right-2 text-primary"
-              />
-            )}
-            {opt}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+

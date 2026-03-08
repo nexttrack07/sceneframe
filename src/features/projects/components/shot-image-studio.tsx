@@ -44,10 +44,10 @@ export function ShotImageStudio({
 
   // Load prompts — shot has a single imagePrompt field
   const [startPrompt, setStartPrompt] = useState(
-    shot.imagePrompt ?? makeDefaultShotPrompt(shot.description, 'start'),
+    shot.imagePrompt ?? '',
   )
   const [endPrompt, setEndPrompt] = useState(
-    makeDefaultShotPrompt(shot.description, 'end'),
+    '',
   )
 
   // Default settings from most recent asset's modelSettings, fallback to app defaults
@@ -69,6 +69,8 @@ export function ShotImageStudio({
   const [error, setError] = useState<string | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
+  const hasSelectedImage = shotAssets.some((a) => a.type === 'start_image' && a.isSelected && a.status === 'done')
+
   const prompt = activeLane === 'start' ? startPrompt : endPrompt
   const setPrompt = activeLane === 'start' ? setStartPrompt : setEndPrompt
 
@@ -76,8 +78,8 @@ export function ShotImageStudio({
   useEffect(() => {
     setActiveLane('start')
     setShowEndFrame(false)
-    setStartPrompt(shot.imagePrompt ?? makeDefaultShotPrompt(shot.description, 'start'))
-    setEndPrompt(makeDefaultShotPrompt(shot.description, 'end'))
+    setStartPrompt(shot.imagePrompt ?? '')
+    setEndPrompt('')
     setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
     setExpandedImageId(null)
     setIsGenerating(false)
@@ -266,6 +268,7 @@ export function ShotImageStudio({
           isGenerating={isGenerating}
           onGenerate={handleGenerate}
           onDescriptionSaved={handleDescriptionSaved}
+          hasSelectedImage={hasSelectedImage}
         />
 
         <StudioGallery

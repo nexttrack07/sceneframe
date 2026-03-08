@@ -112,37 +112,6 @@ export function ShotContextSection({
             />
           </div>
 
-          {/* Shot type toggle */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              Shot type
-            </label>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => handleShotTypeChange('talking')}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  shotType === 'talking'
-                    ? 'bg-blue-500/15 text-blue-600 ring-1 ring-blue-500/30'
-                    : 'bg-muted/50 text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                TALKING
-              </button>
-              <button
-                type="button"
-                onClick={() => handleShotTypeChange('visual')}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  shotType === 'visual'
-                    ? 'bg-purple-500/15 text-purple-600 ring-1 ring-purple-500/30'
-                    : 'bg-muted/50 text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                VISUAL
-              </button>
-            </div>
-          </div>
-
           {/* Duration editor */}
           <div className="space-y-1.5">
             <label

@@ -1,13 +1,52 @@
 import { Film } from 'lucide-react'
 import type { Message } from '@/db/schema'
-import { parseSceneProposal } from '../lib/script-helpers'
+import { parseSceneProposal, stripSuggestions } from '../lib/script-helpers'
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split('\n')
+  return lines.map((line, lineIdx) => {
+    const parts: React.ReactNode[] = []
+    let remaining = line
+    let key = 0
+
+    while (remaining.length > 0) {
+      const boldMatch = remaining.match(/\*\*(.+?)\*\*/)
+      const italicMatch = remaining.match(/\*(.+?)\*/)
+
+      const boldIdx = boldMatch ? remaining.indexOf(boldMatch[0]) : Infinity
+      const italicIdx = italicMatch ? remaining.indexOf(italicMatch[0]) : Infinity
+
+      if (boldIdx === Infinity && italicIdx === Infinity) {
+        parts.push(remaining)
+        break
+      }
+
+      if (boldIdx <= italicIdx && boldMatch) {
+        if (boldIdx > 0) parts.push(remaining.slice(0, boldIdx))
+        parts.push(<strong key={key++}>{boldMatch[1]}</strong>)
+        remaining = remaining.slice(boldIdx + boldMatch[0].length)
+      } else if (italicMatch) {
+        if (italicIdx > 0) parts.push(remaining.slice(0, italicIdx))
+        parts.push(<em key={key++}>{italicMatch[1]}</em>)
+        remaining = remaining.slice(italicIdx + italicMatch[0].length)
+      }
+    }
+
+    return (
+      <span key={lineIdx}>
+        {parts}
+        {lineIdx < lines.length - 1 && '\n'}
+      </span>
+    )
+  })
+}
 
 export function ChatBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user'
 
   const sceneProposal = !isUser ? parseSceneProposal(message.content) : null
   const displayText = !isUser
-    ? message.content.replace(/```scenes\s*[\s\S]*?```/, '').trim()
+    ? stripSuggestions(message.content.replace(/```scenes\s*[\s\S]*?```/, '').trim())
     : message.content
 
   return (
@@ -32,7 +71,7 @@ export function ChatBubble({ message }: { message: Message }) {
                 : 'bg-muted text-foreground rounded-tl-md'
             }`}
           >
-            <p className="text-sm whitespace-pre-wrap leading-relaxed">{displayText}</p>
+            <p className="text-sm whitespace-pre-wrap leading-relaxed">{renderMarkdown(displayText)}</p>
           </div>
         )}
         {sceneProposal && (

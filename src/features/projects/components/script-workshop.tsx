@@ -21,7 +21,6 @@ import {
   approveScenes,
   saveIntake,
   resetWorkshop,
-  setHookConfirmed,
 } from '../project-mutations'
 import type {
   IntakeAnswers,
@@ -31,6 +30,7 @@ import { IntakeForm } from './intake-form'
 import { ChatBubble } from './chat-bubble'
 import {
   parseSceneProposal,
+  parseQuickReplies,
   composeBrief,
   targetDurationRange,
   estimateDuration,
@@ -57,7 +57,6 @@ export function ScriptWorkshop({
   const intake = projectSettings?.intake ?? null
   const intakeComplete = Boolean(intake?.concept)
   const [showIntake, setShowIntake] = useState(!intakeComplete)
-  const [hookConfirmed, setHookConfirmedState] = useState(Boolean(projectSettings?.hookConfirmed))
 
   const messageCount = chatMessages.length
   useEffect(() => {
@@ -75,11 +74,21 @@ export function ScriptWorkshop({
     }
     return null
   }, [chatMessages])
+
+  const quickReplies = useMemo(() => {
+    if (lastProposal) return null // hide chips when scenes are proposed
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].role === 'assistant') {
+        return parseQuickReplies(chatMessages[i].content)
+      }
+    }
+    return null
+  }, [chatMessages, lastProposal])
   const totalDurationSec = useMemo(
     () => (lastProposal ? lastProposal.reduce((sum, s) => sum + estimateDuration(s), 0) : 0),
     [lastProposal],
   )
-  const targetRange = useMemo(() => (intake ? targetDurationRange(intake.length) : null), [intake])
+  const targetRange = useMemo(() => (intake ? targetDurationRange(intake.targetDurationSec ?? 300) : null), [intake])
 
   const doSendMessage = useCallback(
     async (content: string) => {
@@ -120,20 +129,10 @@ export function ScriptWorkshop({
     await doSendMessage(content)
   }
 
-  async function handleConfirmHook() {
-    try {
-      await setHookConfirmed({ data: { projectId, confirmed: true } })
-      setHookConfirmedState(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to confirm hook')
-    }
-  }
-
   const handleIntakeComplete = useCallback(
     async (intake: IntakeAnswers) => {
       setError(null)
       await saveIntake({ data: { projectId, intake } })
-      setHookConfirmedState(false)
       setShowIntake(false)
       const brief = composeBrief(intake)
       await doSendMessage(brief)
@@ -147,7 +146,6 @@ export function ScriptWorkshop({
       await resetWorkshop({ data: projectId })
       setChatMessages([])
       setShowIntake(true)
-      setHookConfirmedState(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to restart brief and chat')
     }
@@ -157,7 +155,7 @@ export function ScriptWorkshop({
     if (!lastProposal || isApproving) return
     setIsApproving(true)
     try {
-      await approveScenes({ data: { projectId, parsedScenes: lastProposal } })
+      await approveScenes({ data: { projectId, parsedScenes: lastProposal, targetDurationSec: intake?.targetDurationSec ?? 300 } })
       router.invalidate()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve scenes')
@@ -257,18 +255,6 @@ export function ScriptWorkshop({
       {/* Approve bar */}
       {lastProposal && !isSending && (
         <div className="border-t bg-primary/10">
-          {!hookConfirmed && (
-            <div className="px-6 pt-3">
-              <div className="rounded-lg border border-warning/40 bg-warning/15 p-3 flex items-center justify-between gap-3">
-                <p className="text-xs text-warning">
-                  Confirm the opening hook before approving scenes.
-                </p>
-                <Button size="sm" onClick={handleConfirmHook}>
-                  Hook confirmed
-                </Button>
-              </div>
-            </div>
-          )}
           {targetRange && (
             <div className="px-6 pt-3">
               <div className="rounded-lg border border-border bg-card p-2.5 flex items-center gap-2 text-xs text-muted-foreground">
@@ -299,7 +285,7 @@ export function ScriptWorkshop({
               <Button
                 size="sm"
                 onClick={handleApprove}
-                disabled={isApproving || !hookConfirmed}
+                disabled={isApproving}
                 className="bg-primary hover:bg-primary/90"
               >
                 {isApproving ? (
@@ -314,6 +300,25 @@ export function ScriptWorkshop({
           <p className="px-6 pb-3 text-xs text-muted-foreground">
             Don&apos;t worry — you can still edit and refine each scene individually after approving.
           </p>
+        </div>
+      )}
+
+      {/* Quick reply chips */}
+      {quickReplies && !isSending && (
+        <div className="px-6 py-2 flex flex-wrap gap-2 border-t bg-card/50">
+          {quickReplies.map((reply) => (
+            <button
+              key={reply}
+              type="button"
+              onClick={() => {
+                setInput(reply)
+                setTimeout(() => textareaRef.current?.focus(), 0)
+              }}
+              className="px-3 py-1.5 text-xs rounded-full border border-border bg-background hover:border-primary hover:text-primary transition-colors"
+            >
+              {reply}
+            </button>
+          ))}
         </div>
       )}
 

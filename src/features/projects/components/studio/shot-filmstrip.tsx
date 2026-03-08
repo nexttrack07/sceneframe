@@ -35,7 +35,7 @@ export function ShotFilmstrip({
   return (
     <div
       ref={scrollRef}
-      className="flex items-center gap-1 overflow-x-auto scrollbar-none py-1"
+      className="flex items-center gap-1 overflow-x-auto scrollbar-none py-1 px-1"
     >
       {shots.map((shot, i) => {
         const isCurrent = shot.id === currentShotId

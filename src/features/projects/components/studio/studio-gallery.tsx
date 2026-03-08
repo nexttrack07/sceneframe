@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Clock, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Clock, Film, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SceneAssetSummary } from '../../project-types'
 import { GalleryImageCard } from './gallery-image-card'
@@ -29,6 +29,7 @@ export function StudioGallery({
   onLightboxChange?: (open: boolean) => void
 }) {
   const [showLightbox, setShowLightbox] = useState(false)
+  const [lightboxStartIndex, setLightboxStartIndex] = useState(0)
 
   const laneType = activeLane === 'start' ? 'start_image' : 'end_image'
   const laneAssets = useMemo(
@@ -46,9 +47,11 @@ export function StudioGallery({
     : null
 
   const doneAssets = laneAssets.filter((a) => a.status === 'done' && a.url)
-  const lightboxIndex = selectedAsset ? doneAssets.findIndex((a) => a.id === selectedAsset.id) : -1
 
-  function openLightbox() {
+  function openLightboxForAsset(assetId: string) {
+    const idx = doneAssets.findIndex((a) => a.id === assetId)
+    if (idx === -1) return
+    setLightboxStartIndex(idx)
     setShowLightbox(true)
     onLightboxChange?.(true)
   }
@@ -74,20 +77,36 @@ export function StudioGallery({
 
   return (
     <div className="flex-1 flex min-h-0">
-      {/* Image grid */}
-      <div className={`flex-1 overflow-y-auto p-4 ${selectedAsset ? '' : ''}`}>
-        <div className="grid grid-cols-3 gap-2">
-          {sortedAssets.map((asset) => (
-            <GalleryImageCard
-              key={asset.id}
-              asset={asset}
-              selectingAssetId={selectingAssetId}
-              deletingAssetId={deletingAssetId}
-              onSelect={() => onSelectAsset(asset.id)}
-              onDelete={() => onDeleteAsset(asset.id)}
-              onExpand={() => onExpandImage(asset.id === expandedImageId ? null : asset.id)}
-            />
-          ))}
+      {/* Image + Video sections */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {/* Images section */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Images</p>
+          <div className="grid grid-cols-3 gap-2">
+            {sortedAssets.map((asset) => (
+              <GalleryImageCard
+                key={asset.id}
+                asset={asset}
+                selectingAssetId={selectingAssetId}
+                deletingAssetId={deletingAssetId}
+                onSelect={() => onSelectAsset(asset.id)}
+                onDelete={() => onDeleteAsset(asset.id)}
+                onExpand={() => onExpandImage(asset.id === expandedImageId ? null : asset.id)}
+                onLightbox={() => openLightboxForAsset(asset.id)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Videos section */}
+        <div className="h-[200px] shrink-0 border-t p-4 bg-muted/20">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Videos</p>
+          <div className="h-full flex flex-col items-center justify-center gap-2 border border-dashed border-border/60 rounded-lg">
+            <Film size={20} className="text-muted-foreground/40" />
+            <p className="text-xs text-muted-foreground text-center max-w-[200px]">
+              Videos will appear here after generating from selected images
+            </p>
+          </div>
         </div>
       </div>
 
@@ -110,7 +129,7 @@ export function StudioGallery({
                 src={selectedAsset.url}
                 alt="Selected image"
                 className="w-full rounded-lg object-contain cursor-pointer hover:opacity-90 transition-opacity"
-                onClick={lightboxIndex >= 0 ? openLightbox : undefined}
+                onClick={() => openLightboxForAsset(selectedAsset.id)}
               />
             )}
 
@@ -131,8 +150,8 @@ export function StudioGallery({
                 <RefreshCw size={12} />
                 Regenerate
               </Button>
-              {lightboxIndex >= 0 && (
-                <Button size="sm" variant="outline" onClick={openLightbox} className="gap-1.5">
+              {selectedAsset.status === 'done' && selectedAsset.url && (
+                <Button size="sm" variant="outline" onClick={() => openLightboxForAsset(selectedAsset.id)} className="gap-1.5">
                   <Maximize2 size={12} />
                 </Button>
               )}
@@ -204,10 +223,10 @@ export function StudioGallery({
       )}
 
       {/* Lightbox */}
-      {showLightbox && lightboxIndex >= 0 && (
+      {showLightbox && (
         <ImageLightbox
           assets={doneAssets}
-          initialIndex={lightboxIndex}
+          initialIndex={lightboxStartIndex}
           onClose={closeLightbox}
         />
       )}

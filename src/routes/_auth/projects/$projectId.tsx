@@ -1,11 +1,23 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { ArrowLeft, Check, Film, Loader2 } from 'lucide-react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { ArrowLeft, Check, Film, Loader2, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { loadProject } from '@/features/projects/project-queries'
 import type { ScenePlanEntry } from '@/features/projects/project-types'
 import { ScriptWorkshop } from '@/features/projects/components/script-workshop'
 import { Storyboard } from '@/features/projects/components/storyboard'
+import { deleteProject } from '@/features/projects/project-mutations'
 
 // ---------------------------------------------------------------------------
 // Route
@@ -40,6 +52,7 @@ function ProjectPage() {
   })()
 
   const isWorkshopPhase = project.scriptStatus !== 'done'
+  const navigate = useNavigate()
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
@@ -73,6 +86,13 @@ function ProjectPage() {
                 Script approved
               </Badge>
             )}
+            <DeleteProjectDialog
+              projectName={project.name}
+              onConfirm={async () => {
+                await deleteProject({ data: { projectId: project.id } })
+                navigate({ to: '/dashboard' })
+              }}
+            />
           </div>
         </div>
       </ProjectHeader>
@@ -153,5 +173,93 @@ function ProjectError({ error, reset }: { error: Error; reset: () => void }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Delete project dialog
+// ---------------------------------------------------------------------------
+
+function DeleteProjectDialog({
+  projectName,
+  onConfirm,
+}: {
+  projectName: string
+  onConfirm: () => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const canConfirm = inputValue === projectName
+
+  async function handleConfirm() {
+    if (!canConfirm || isDeleting) return
+    setIsDeleting(true)
+    setError(null)
+    try {
+      await onConfirm()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete project')
+      setIsDeleting(false)
+    }
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setInputValue(''); setError(null) } }}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+        >
+          <Trash2 size={14} />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete project</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3">
+              <p>
+                This will permanently delete <strong>{projectName}</strong> and all its scenes, shots, and generated images.{' '}
+                <span className="text-destructive font-medium">This action is irreversible.</span>
+              </p>
+              <p className="text-sm">
+                Type <strong>{projectName}</strong> to confirm:
+              </p>
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={projectName}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') handleConfirm() }}
+              />
+              {error && <p className="text-xs text-destructive">{error}</p>}
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+            disabled={!canConfirm || isDeleting}
+          >
+            {isDeleting ? (
+              <>
+                <Loader2 size={13} className="animate-spin mr-1.5" />
+                Deleting…
+              </>
+            ) : (
+              'Delete project'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
