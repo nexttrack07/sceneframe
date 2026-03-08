@@ -2,7 +2,7 @@ import { db } from '@/db/index'
 import { users } from '@/db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptUserApiKey } from '@/lib/encryption.server'
-import type { IntakeAnswers, ConsistencyLock, ImageDefaults } from './project-types'
+import type { IntakeAnswers, ImageDefaults, ShotPlanEntry, ShotType } from './project-types'
 
 export async function getUserApiKey(userId: string) {
   const user = await db.query.users.findFirst({
@@ -70,7 +70,6 @@ export function buildLanePrompt(
   sceneDescription: string,
   lane: 'start' | 'end',
   intake: IntakeAnswers | undefined,
-  consistencyLock: ConsistencyLock,
 ): string {
   const laneDirection =
     lane === 'start'
@@ -91,13 +90,6 @@ export function buildLanePrompt(
         .join('\n')
     : 'No structured creative brief provided.'
 
-  const consistencyHints =
-    consistencyLock.enabled && consistencyLock.referenceUrls.length > 0
-      ? `Consistency lock is ENABLED (${consistencyLock.strength} strength). Keep subject identity, style, and tone aligned with these references:\n${consistencyLock.referenceUrls
-          .map((url) => `- ${url}`)
-          .join('\n')}`
-      : 'Consistency lock is disabled.'
-
   return `${laneDirection}
 
 Scene description:
@@ -105,8 +97,6 @@ ${sceneDescription}
 
 Creative brief hints:
 ${intakeHints}
-
-${consistencyHints}
 
 Return a single high-quality still frame with clear cinematic composition, clean lighting, and strong readability.`
 }
@@ -166,4 +156,88 @@ export function qualityPresetToSteps(quality: ImageDefaults['qualityPreset']): n
   if (quality === 'fast') return 20
   if (quality === 'high') return 40
   return 30
+}
+
+export function buildShotBreakdownPrompt(
+  scenes: { title: string; description: string }[],
+  targetDurationSec: number,
+): string {
+  const sceneList = scenes
+    .map(
+      (s, i) =>
+        `Scene ${i} (title: "${s.title || `Scene ${i + 1}`}"): ${s.description}`,
+    )
+    .join('\n')
+
+  return `You are a video production assistant. Break the following scenes into 5-second shots for a video with a target duration of ${targetDurationSec} seconds.
+
+SCENES:
+${sceneList}
+
+RULES:
+- Distribute shots across scenes proportionally based on scene importance and description length.
+- Each shot must be exactly 5 seconds (durationSec: 5) unless you have a strong reason to vary (min 1, max 10).
+- shotType is either "talking" (person speaking to camera) or "visual" (b-roll, graphics, environment).
+- Each shot description must be a single, self-contained visual prompt (1-2 sentences).
+- Total duration should be close to ${targetDurationSec} seconds.
+- sceneIndex is zero-based matching the scene list above.
+
+Return a JSON block with this exact format:
+
+\`\`\`json
+{
+  "shots": [
+    { "sceneIndex": 0, "description": "...", "shotType": "visual", "durationSec": 5 }
+  ]
+}
+\`\`\`
+
+Return ONLY the JSON block, nothing else.`
+}
+
+export function parseShotBreakdownResponse(
+  response: string,
+  sceneCount: number,
+): ShotPlanEntry[] | null {
+  try {
+    // Extract JSON from fenced code block
+    const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+    const jsonStr = fenceMatch ? fenceMatch[1] : response
+
+    const parsed = JSON.parse(jsonStr.trim())
+    const rawShots = Array.isArray(parsed) ? parsed : parsed?.shots
+    if (!Array.isArray(rawShots) || rawShots.length === 0) return null
+
+    const validShotTypes: ShotType[] = ['talking', 'visual']
+
+    const result: ShotPlanEntry[] = rawShots
+      .filter(
+        (s: unknown): s is Record<string, unknown> =>
+          typeof s === 'object' && s !== null,
+      )
+      .filter((s) => {
+        const idx = Number(s.sceneIndex)
+        return Number.isFinite(idx) && idx >= 0 && idx < sceneCount
+      })
+      .filter((s) => typeof s.description === 'string' && (s.description as string).trim().length > 0)
+      .map((s) => {
+        const rawType = String(s.shotType ?? 'visual')
+        const shotType: ShotType = validShotTypes.includes(rawType as ShotType)
+          ? (rawType as ShotType)
+          : 'visual'
+        const rawDuration = Number(s.durationSec ?? 5)
+        const durationSec = rawDuration >= 1 && rawDuration <= 10 ? rawDuration : 5
+
+        return {
+          sceneIndex: Number(s.sceneIndex),
+          description: (s.description as string).trim(),
+          shotType,
+          durationSec,
+        }
+      })
+
+    return result.length > 0 ? result : null
+  } catch {
+    return null
+  }
 }

@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
-import { assets, scenes, messages } from '@/db/schema'
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
+import { assets, scenes, shots, messages } from '@/db/schema'
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
 import { assertProjectOwner } from '@/lib/assert-project-owner.server'
 import { normalizeProjectSettings } from './project-normalize'
 import type { ScenePlanEntry } from './project-types'
@@ -23,14 +23,35 @@ export const loadProject = createServerFn({ method: 'GET' })
     ])
 
     const sceneIds = projectScenes.map((scene) => scene.id)
+
+    // Load shots by sceneIds
+    const projectShots =
+      sceneIds.length === 0
+        ? []
+        : await db.query.shots.findMany({
+            where: and(
+              inArray(shots.sceneId, sceneIds),
+              isNull(shots.deletedAt),
+            ),
+            orderBy: asc(shots.order),
+          })
+
+    const shotIds = projectShots.map((shot) => shot.id)
+
+    // Load assets: by shotIds (shot-level) PLUS legacy assets with no shotId (scene-level)
     const projectAssets =
       sceneIds.length === 0
         ? []
         : await db.query.assets.findMany({
             where: and(
-              inArray(assets.sceneId, sceneIds),
               eq(assets.stage, 'images'),
               isNull(assets.deletedAt),
+              shotIds.length > 0
+                ? or(
+                    inArray(assets.shotId, shotIds),
+                    and(inArray(assets.sceneId, sceneIds), isNull(assets.shotId)),
+                  )
+                : inArray(assets.sceneId, sceneIds),
             ),
             orderBy: asc(assets.createdAt),
           })
@@ -41,6 +62,7 @@ export const loadProject = createServerFn({ method: 'GET' })
         settings: normalizeProjectSettings(project.settings),
       },
       scenes: projectScenes,
+      shots: projectShots,
       messages: projectMessages,
       assets: projectAssets
         .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' } =>
@@ -53,6 +75,7 @@ export const loadProject = createServerFn({ method: 'GET' })
         .map((asset) => ({
           id: asset.id,
           sceneId: asset.sceneId,
+          shotId: asset.shotId,
           type: asset.type,
           status: asset.status,
           url: asset.url,

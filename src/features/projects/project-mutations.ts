@@ -1,12 +1,12 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
-import { projects, scenes, messages } from '@/db/schema'
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { assets, projects, scenes, messages, shots } from '@/db/schema'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import Replicate from 'replicate'
 import { assertProjectOwner } from '@/lib/assert-project-owner.server'
-import { normalizeProjectSettings, normalizeImageDefaults, normalizeConsistencyLock } from './project-normalize'
-import { getUserApiKey, buildSystemPrompt } from './replicate-helpers.server'
-import type { IntakeAnswers, ScenePlanEntry, ProjectSettings, ImageDefaults, ConsistencyLock } from './project-types'
+import { normalizeProjectSettings } from './project-normalize'
+import { getUserApiKey, buildSystemPrompt, buildShotBreakdownPrompt, parseShotBreakdownResponse } from './replicate-helpers.server'
+import type { IntakeAnswers, ScenePlanEntry, ShotPlanEntry, ProjectSettings } from './project-types'
 
 const MAX_MESSAGE_LENGTH = 5_000
 const MAX_HISTORY_MESSAGES = 30
@@ -109,7 +109,7 @@ export const sendMessage = createServerFn({ method: 'POST' })
 
 export const approveScenes = createServerFn({ method: 'POST' })
   .inputValidator(
-    (data: { projectId: string; parsedScenes: ScenePlanEntry[] }) => {
+    (data: { projectId: string; parsedScenes: ScenePlanEntry[]; targetDurationSec?: number }) => {
       if (!Array.isArray(data.parsedScenes) || data.parsedScenes.length < 1) {
         throw new Error('At least one scene is required')
       }
@@ -124,25 +124,133 @@ export const approveScenes = createServerFn({ method: 'POST' })
       return data
     },
   )
-  .handler(async ({ data: { projectId, parsedScenes } }) => {
-    await assertProjectOwner(projectId, 'error')
+  .handler(async ({ data: { projectId, parsedScenes, targetDurationSec = 300 } }) => {
+    const { userId } = await assertProjectOwner(projectId, 'error')
 
+    // ---------------------------------------------------------------
+    // 1. OUTSIDE transaction: call AI to generate shot breakdown
+    // ---------------------------------------------------------------
+    let shotPlan: ShotPlanEntry[]
+
+    try {
+      const apiKey = await getUserApiKey(userId)
+      const prompt = buildShotBreakdownPrompt(
+        parsedScenes.map((s) => ({ title: s.title || '', description: s.description })),
+        targetDurationSec,
+      )
+
+      const replicate = new Replicate({ auth: apiKey })
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+
+      try {
+        const chunks: string[] = []
+        for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+          input: { prompt, max_tokens: 4096, temperature: 0.5 },
+          signal: controller.signal,
+        })) {
+          chunks.push(String(event))
+        }
+        const aiResponse = chunks.join('')
+        const parsed = parseShotBreakdownResponse(aiResponse, parsedScenes.length)
+        shotPlan = parsed ?? buildFallbackShotPlan(parsedScenes)
+      } finally {
+        clearTimeout(timeout)
+      }
+    } catch {
+      // AI failed entirely — fall back to 1 shot per scene
+      shotPlan = buildFallbackShotPlan(parsedScenes)
+    }
+
+    // ---------------------------------------------------------------
+    // 2. Compute cumulative timestamps
+    // ---------------------------------------------------------------
+    let cursor = 0
+    const timestampedShots = shotPlan.map((shot) => {
+      const start = cursor
+      cursor += shot.durationSec
+      return { ...shot, timestampStart: start, timestampEnd: cursor }
+    })
+
+    // ---------------------------------------------------------------
+    // 3. INSIDE a single transaction: persist everything
+    // ---------------------------------------------------------------
     await db.transaction(async (tx) => {
+      // Soft-delete existing shots (via scene IDs)
+      const existingSceneIds = (
+        await tx
+          .select({ id: scenes.id })
+          .from(scenes)
+          .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+      ).map((r) => r.id)
+
+      if (existingSceneIds.length > 0) {
+        await tx
+          .update(shots)
+          .set({ deletedAt: new Date() })
+          .where(and(inArray(shots.sceneId, existingSceneIds), isNull(shots.deletedAt)))
+      }
+
+      // Soft-delete existing scenes
       await tx
         .update(scenes)
         .set({ deletedAt: new Date() })
         .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
 
-      await tx.insert(scenes).values(
-        parsedScenes.map((scene, i) => ({
-          projectId,
-          order: i + 1,
-          title: scene.title || null,
-          description: scene.description,
-          stage: 'script' as const,
-        })),
-      )
+      // Insert new scene rows
+      const insertedScenes = await tx
+        .insert(scenes)
+        .values(
+          parsedScenes.map((scene, i) => ({
+            projectId,
+            order: i + 1,
+            title: scene.title || null,
+            description: scene.description,
+            stage: 'script' as const,
+          })),
+        )
+        .returning({ id: scenes.id })
 
+      // Insert new shot rows
+      // Group shots by sceneIndex, then assign order within each scene
+      const shotsByScene = new Map<number, typeof timestampedShots>()
+      for (const shot of timestampedShots) {
+        const existing = shotsByScene.get(shot.sceneIndex) ?? []
+        existing.push(shot)
+        shotsByScene.set(shot.sceneIndex, existing)
+      }
+
+      const shotValues: Array<{
+        sceneId: string
+        order: number
+        description: string
+        shotType: 'talking' | 'visual'
+        durationSec: number
+        timestampStart: number
+        timestampEnd: number
+      }> = []
+
+      for (const [sceneIndex, sceneShots] of shotsByScene) {
+        const sceneRow = insertedScenes[sceneIndex]
+        if (!sceneRow) continue
+        sceneShots.forEach((shot, i) => {
+          shotValues.push({
+            sceneId: sceneRow.id,
+            order: i + 1,
+            description: shot.description,
+            shotType: shot.shotType,
+            durationSec: shot.durationSec,
+            timestampStart: shot.timestampStart,
+            timestampEnd: shot.timestampEnd,
+          })
+        })
+      }
+
+      if (shotValues.length > 0) {
+        await tx.insert(shots).values(shotValues)
+      }
+
+      // Update project
       const summary = parsedScenes.map((s) => s.title).join(' → ')
       await tx
         .update(projects)
@@ -151,67 +259,54 @@ export const approveScenes = createServerFn({ method: 'POST' })
     })
   })
 
+function buildFallbackShotPlan(parsedScenes: ScenePlanEntry[]): ShotPlanEntry[] {
+  return parsedScenes.map((scene, i) => ({
+    sceneIndex: i,
+    description: scene.description,
+    shotType: 'visual' as const,
+    durationSec: 5,
+  }))
+}
+
 export const resetWorkshop = createServerFn({ method: 'POST' })
   .inputValidator((projectId: string) => projectId)
   .handler(async ({ data: projectId }) => {
     await assertProjectOwner(projectId, 'error')
 
-    await db
-      .update(scenes)
-      .set({ deletedAt: new Date() })
-      .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+    await db.transaction(async (tx) => {
+      // Soft-delete shots via scene IDs before soft-deleting scenes
+      const sceneIds = (
+        await tx
+          .select({ id: scenes.id })
+          .from(scenes)
+          .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+      ).map((r) => r.id)
 
-    // messages table has no deletedAt column — hard delete is intentional
-    await db.delete(messages).where(eq(messages.projectId, projectId))
+      if (sceneIds.length > 0) {
+        await tx
+          .update(shots)
+          .set({ deletedAt: new Date() })
+          .where(and(inArray(shots.sceneId, sceneIds), isNull(shots.deletedAt)))
 
-    await db
-      .update(projects)
-      .set({ scriptStatus: 'idle', directorPrompt: '', scriptRaw: null, scriptJobId: null, settings: null })
-      .where(eq(projects.id, projectId))
+        // Soft-delete assets for those scenes/shots
+        await tx
+          .update(assets)
+          .set({ deletedAt: new Date() })
+          .where(and(inArray(assets.sceneId, sceneIds), isNull(assets.deletedAt)))
+      }
+
+      await tx
+        .update(scenes)
+        .set({ deletedAt: new Date() })
+        .where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
+
+      // messages table has no deletedAt column — hard delete is intentional
+      await tx.delete(messages).where(eq(messages.projectId, projectId))
+
+      await tx
+        .update(projects)
+        .set({ scriptStatus: 'idle', directorPrompt: '', scriptRaw: null, scriptJobId: null, settings: null })
+        .where(eq(projects.id, projectId))
+    })
   })
 
-export const saveImageDefaults = createServerFn({ method: 'POST' })
-  .inputValidator((data: { projectId: string; defaults: ImageDefaults }) => ({
-    projectId: data.projectId,
-    defaults: normalizeImageDefaults(data.defaults),
-  }))
-  .handler(async ({ data: { projectId, defaults } }) => {
-    const { project } = await assertProjectOwner(projectId, 'error')
-
-    const existing = normalizeProjectSettings(project.settings) ?? {}
-    await db
-      .update(projects)
-      .set({ settings: { ...existing, imageDefaults: defaults } })
-      .where(eq(projects.id, projectId))
-  })
-
-export const saveConsistencyLock = createServerFn({ method: 'POST' })
-  .inputValidator((data: { projectId: string; lock: ConsistencyLock }) => ({
-    projectId: data.projectId,
-    lock: normalizeConsistencyLock(data.lock),
-  }))
-  .handler(async ({ data: { projectId, lock } }) => {
-    const { project } = await assertProjectOwner(projectId, 'error')
-
-    const existing = normalizeProjectSettings(project.settings) ?? {}
-    await db
-      .update(projects)
-      .set({ settings: { ...existing, consistencyLock: lock } })
-      .where(eq(projects.id, projectId))
-  })
-
-export const saveImageSettings = createServerFn({ method: 'POST' })
-  .inputValidator((data: { projectId: string; defaults: ImageDefaults; lock: ConsistencyLock }) => ({
-    projectId: data.projectId,
-    defaults: normalizeImageDefaults(data.defaults),
-    lock: normalizeConsistencyLock(data.lock),
-  }))
-  .handler(async ({ data: { projectId, defaults, lock } }) => {
-    const { project } = await assertProjectOwner(projectId, 'error')
-
-    const existing = normalizeProjectSettings(project.settings) ?? {}
-    await db
-      .update(projects)
-      .set({ settings: { ...existing, imageDefaults: defaults, consistencyLock: lock } })
-      .where(eq(projects.id, projectId))
-  })

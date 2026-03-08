@@ -71,6 +71,8 @@ export const scenes = pgTable(
     order: doublePrecision('order').notNull(),
     title: text('title'),
     description: text('description').notNull(),
+    startFramePrompt: text('start_frame_prompt'),
+    endFramePrompt: text('end_frame_prompt'),
     stage: text('stage').notNull().default('script').$type<'script' | 'images' | 'video' | 'audio'>(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -87,6 +89,38 @@ export const scenes = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// shots
+// ---------------------------------------------------------------------------
+
+export const shots = pgTable(
+  'shots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sceneId: uuid('scene_id')
+      .notNull()
+      .references(() => scenes.id),
+    order: doublePrecision('order').notNull(),
+    description: text('description').notNull(),
+    shotType: text('shot_type').notNull().$type<'talking' | 'visual'>(),
+    durationSec: integer('duration_sec').notNull().default(5),
+    timestampStart: doublePrecision('timestamp_start'),
+    timestampEnd: doublePrecision('timestamp_end'),
+    imagePrompt: text('image_prompt'),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index('idx_shots_scene_id').on(table.sceneId),
+    index('idx_shots_deleted').on(table.deletedAt),
+    index('idx_shots_scene_order').on(table.sceneId, table.order),
+    check('shots_shot_type_check', sql`${table.shotType} IN ('talking', 'visual')`),
+    check('shots_duration_check', sql`${table.durationSec} BETWEEN 1 AND 10`),
+    check('shots_description_check', sql`trim(${table.description}) != ''`),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // assets
 // ---------------------------------------------------------------------------
 
@@ -97,6 +131,7 @@ export const assets = pgTable(
     sceneId: uuid('scene_id')
       .notNull()
       .references(() => scenes.id),
+    shotId: uuid('shot_id').references(() => shots.id),
     type: text('type').notNull().$type<'start_image' | 'end_image' | 'video' | 'voiceover' | 'background_music'>(),
     stage: text('stage').notNull().$type<'images' | 'video' | 'audio'>(),
     prompt: text('prompt'),
@@ -129,6 +164,11 @@ export const assets = pgTable(
     uniqueIndex('idx_assets_selected')
       .on(table.sceneId, table.type)
       .where(sql`${table.isSelected} = true`),
+    index('idx_assets_shot_id').on(table.shotId),
+    // One selected asset per (shot, type) — partial unique index enforced at DB level
+    uniqueIndex('idx_assets_shot_selected')
+      .on(table.shotId, table.type)
+      .where(sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL`),
     check('assets_type_check', sql`${table.type} IN ('start_image', 'end_image', 'video', 'voiceover', 'background_music')`),
     check('assets_status_check', sql`${table.status} IN ('generating', 'done', 'error')`),
     check(
@@ -174,8 +214,39 @@ export type NewProject = typeof projects.$inferInsert
 export type Scene = typeof scenes.$inferSelect
 export type NewScene = typeof scenes.$inferInsert
 
+export type Shot = typeof shots.$inferSelect
+export type NewShot = typeof shots.$inferInsert
+
 export type Asset = typeof assets.$inferSelect
 export type NewAsset = typeof assets.$inferInsert
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// ---------------------------------------------------------------------------
+// reference_images
+// ---------------------------------------------------------------------------
+
+export const referenceImages = pgTable(
+  'reference_images',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    url: text('url').notNull(),
+    storageKey: text('storage_key'),
+    label: text('label'),
+    type: text('type').notNull().default('reference').$type<'reference' | 'character'>(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_reference_images_project_id').on(table.projectId),
+    index('idx_reference_images_deleted').on(table.deletedAt),
+    check('reference_images_type_check', sql`${table.type} IN ('reference', 'character')`),
+  ],
+)
+
+export type ReferenceImage = typeof referenceImages.$inferSelect
+export type NewReferenceImage = typeof referenceImages.$inferInsert

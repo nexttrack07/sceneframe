@@ -91,9 +91,11 @@ export function StudioGallery({
         </div>
       </div>
 
-      {/* Side drawer */}
+      {/* Side drawer — overlay */}
       {selectedAsset && (
-        <div className="w-[320px] border-l bg-card flex flex-col shrink-0 overflow-y-auto">
+        <>
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => onExpandImage(null)} />
+        <div className="fixed top-0 right-0 bottom-0 z-50 w-[340px] border-l bg-card flex flex-col overflow-y-auto shadow-xl animate-in slide-in-from-right duration-200">
           <div className="px-4 py-3 border-b flex items-center justify-between">
             <h4 className="text-sm font-semibold text-foreground">Image Details</h4>
             <Button size="sm" variant="ghost" onClick={() => onExpandImage(null)} className="h-7 w-7 p-0">
@@ -198,6 +200,7 @@ export function StudioGallery({
             </div>
           </div>
         </div>
+        </>
       )}
 
       {/* Lightbox */}

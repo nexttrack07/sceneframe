@@ -10,6 +10,7 @@ export interface IntakeAnswers {
   workingTitle?: string
   thumbnailPromise?: string
   concept: string
+  targetDurationSec?: number
 }
 
 export interface ScenePlanEntry {
@@ -20,9 +21,13 @@ export interface ScenePlanEntry {
   hookRole?: 'hook' | 'body' | 'cta'
 }
 
-export interface SceneVersionEntry {
+export type ShotType = 'talking' | 'visual'
+
+export interface ShotPlanEntry {
   description: string
-  createdAt: string
+  shotType: ShotType
+  durationSec: number
+  sceneIndex: number
 }
 
 export interface ImageDefaults {
@@ -32,24 +37,15 @@ export interface ImageDefaults {
   batchCount: number
 }
 
-export interface ConsistencyLock {
-  enabled: boolean
-  strength: 'low' | 'medium' | 'high'
-  referenceUrls: string[]
-}
-
 export interface ProjectSettings {
   intake?: IntakeAnswers
   hookConfirmed?: boolean
-  sceneVersions?: Record<string, SceneVersionEntry[]>
-  assetDecisionReasons?: Record<string, string[]>
-  imageDefaults?: ImageDefaults
-  consistencyLock?: ConsistencyLock
 }
 
 export interface SceneAssetSummary {
   id: string
   sceneId: string
+  shotId: string | null
   type: 'start_image' | 'end_image'
   status: 'generating' | 'done' | 'error'
   url: string | null

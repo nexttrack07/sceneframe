@@ -5,7 +5,6 @@ import {
 } from 'lucide-react'
 import type { Scene } from '@/db/schema'
 import type { SceneAssetSummary, ScenePlanEntry } from '../project-types'
-import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,7 +22,6 @@ export function StoryboardCard({
   scene,
   index,
   plan,
-  reasons,
   imageAssets,
   isSelected,
   isDragging,
@@ -37,7 +35,6 @@ export function StoryboardCard({
   scene: Scene
   index: number
   plan?: ScenePlanEntry
-  reasons: string[]
   imageAssets: SceneAssetSummary[]
   isSelected: boolean
   isDragging: boolean
@@ -108,16 +105,6 @@ export function StoryboardCard({
             <p className={`text-xs mt-1 ${imageStatusTone}`}>
               Images: {imageStatusLabel}
             </p>
-            {reasons.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {reasons.map((r) => (
-                  <Badge key={r} variant="outline" className="text-[10px]">
-                    {r}
-                  </Badge>
-                ))}
-              </div>
-            )}
-
             {/* Pipeline progress */}
             <div className="flex items-center gap-3 mt-3">
               {PIPELINE_STAGES.map((stage, i) => {

@@ -4,21 +4,18 @@ import { AlertCircle, ChevronDown, ChevronUp, Loader2, Sparkles } from 'lucide-r
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Scene } from '@/db/schema'
-import type { ScenePlanEntry, SceneVersionEntry } from '../../project-types'
-import { updateScene, regenerateSceneDescription, restoreSceneVersion } from '../../scene-actions'
+import type { ScenePlanEntry } from '../../project-types'
+import { updateScene, regenerateSceneDescription } from '../../scene-actions'
 import { getPracticalityWarnings } from '../../lib/practicality-warnings'
 import { SceneRefinePanel } from '../scene-refine-panel'
-import { SceneVersionHistory } from '../scene-version-history'
 
 export function SceneContextSection({
   scene,
   plan,
-  sceneVersions,
   onDescriptionSaved,
 }: {
   scene: Scene
   plan?: ScenePlanEntry
-  sceneVersions: SceneVersionEntry[]
   onDescriptionSaved?: (newDescription: string) => void
 }) {
   const router = useRouter()
@@ -32,7 +29,6 @@ export function SceneContextSection({
   const [isRefineOpen, setIsRefineOpen] = useState(false)
   const [refineInstructions, setRefineInstructions] = useState('')
   const [isRegenerating, setIsRegenerating] = useState(false)
-  const [isRestoring, setIsRestoring] = useState(false)
 
   const practicalityWarnings = getPracticalityWarnings(description)
 
@@ -79,24 +75,6 @@ export function SceneContextSection({
       setError(err instanceof Error ? err.message : 'Failed to regenerate description')
     } finally {
       setIsRegenerating(false)
-    }
-  }
-
-  async function handleRestoreVersion(version: SceneVersionEntry) {
-    setIsRestoring(true)
-    setError(null)
-    try {
-      await restoreSceneVersion({
-        data: { sceneId: scene.id, description: version.description },
-      })
-      setDescription(version.description)
-      setIsDirty(false)
-      onDescriptionSaved?.(version.description)
-      router.invalidate()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to restore version')
-    } finally {
-      setIsRestoring(false)
     }
   }
 
@@ -202,13 +180,6 @@ export function SceneContextSection({
               </ul>
             </div>
           )}
-
-          {/* Version history */}
-          <SceneVersionHistory
-            sceneVersions={sceneVersions}
-            isRestoring={isRestoring}
-            onRestoreVersion={handleRestoreVersion}
-          />
 
           {/* Error */}
           {error && (

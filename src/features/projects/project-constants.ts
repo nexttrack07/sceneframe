@@ -1,5 +1,5 @@
 import { Film, Image as ImageIcon, Video, Music } from 'lucide-react'
-import type { ConsistencyLock, ImageDefaults } from './project-types'
+import type { ImageDefaults } from './project-types'
 
 export const PIPELINE_STAGES = [
   { key: 'script', label: 'Script', icon: Film },
@@ -38,11 +38,3 @@ export const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
   qualityPreset: 'balanced',
   batchCount: 2,
 }
-
-export const DEFAULT_CONSISTENCY_LOCK: ConsistencyLock = {
-  enabled: false,
-  strength: 'medium',
-  referenceUrls: [],
-}
-
-export const DECISION_REASONS = ['off-style', 'wrong subject', 'bad composition', 'not clickable'] as const

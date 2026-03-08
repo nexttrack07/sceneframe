@@ -1,8 +1,26 @@
 import { useState, useCallback } from 'react'
 import { ArrowLeft, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { IntakeAnswers } from '../project-types'
+
+const DURATION_PRESETS = [
+  { label: '30s', seconds: 30 },
+  { label: '1 min', seconds: 60 },
+  { label: '2 min', seconds: 120 },
+  { label: '5 min', seconds: 300 },
+  { label: '8 min', seconds: 480 },
+  { label: '15 min', seconds: 900 },
+] as const
+
+function deriveDurationFromLength(length: string): number {
+  if (length === '30 seconds') return 30
+  if (length === '1-2 minutes') return 90
+  if (length === '3-5 minutes') return 240
+  if (length === '5+ minutes') return 480
+  return 300
+}
 
 const PRESET_DEFAULTS: Record<
   string,
@@ -63,6 +81,13 @@ const STEPS = [
     subtitle: 'This helps determine how many scenes to create.',
     type: 'single' as const,
     options: ['15 seconds', '30 seconds', '1 minute', '2-3 minutes', '5+ minutes'],
+  },
+  {
+    key: 'targetDurationSec' as const,
+    question: 'Target Video Duration',
+    subtitle: 'Exact duration for shot planning. This determines how many 5-second shots will be generated.',
+    type: 'duration' as const,
+    options: [],
   },
   {
     key: 'style' as const,
@@ -163,6 +188,7 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
     channelPreset: '',
     purpose: '',
     length: '',
+    targetDurationSec: 300,
     style: [],
     mood: [],
     setting: [],
@@ -191,12 +217,21 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
     setAnswers((prev) => {
       if (step.key === 'channelPreset') {
         const preset = PRESET_DEFAULTS[value]
+        const newLength = preset?.length ?? prev.length ?? ''
         return {
           ...prev,
           channelPreset: value,
-          length: preset?.length ?? prev.length ?? '',
+          length: newLength,
+          targetDurationSec: deriveDurationFromLength(newLength),
           style: preset?.style ?? prev.style ?? [],
           mood: preset?.mood ?? prev.mood ?? [],
+        }
+      }
+      if (step.key === 'length') {
+        return {
+          ...prev,
+          length: value,
+          targetDurationSec: deriveDurationFromLength(value),
         }
       }
       return { ...prev, [step.key]: value }
@@ -229,6 +264,7 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
           channelPreset: answers.channelPreset ?? '',
           purpose: answers.purpose ?? '',
           length: answers.length ?? '',
+          targetDurationSec: answers.targetDurationSec ?? 300,
           style: answers.style ?? [],
           mood: answers.mood ?? [],
           setting: answers.setting ?? [],
@@ -339,6 +375,13 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
             />
           )}
 
+          {step.type === 'duration' && (
+            <DurationInput
+              value={answers.targetDurationSec ?? 300}
+              onChange={(val) => setAnswers((prev) => ({ ...prev, targetDurationSec: val }))}
+            />
+          )}
+
           {/* Continue button for multi-select and text steps */}
           {step.type !== 'single' && (
             <Button
@@ -377,6 +420,10 @@ export function IntakeForm({ onComplete, error, onDismissError }: IntakeFormProp
 }
 
 function isStepValid(key: StepKey, answers: Partial<IntakeAnswers>): boolean {
+  if (key === 'targetDurationSec') {
+    const val = answers.targetDurationSec
+    return typeof val === 'number' && val >= 15 && val <= 900
+  }
   const val = answers[key]
   if (key === 'workingTitle' || key === 'thumbnailPromise') return true
   if (Array.isArray(val)) return val.length > 0
@@ -384,6 +431,53 @@ function isStepValid(key: StepKey, answers: Partial<IntakeAnswers>): boolean {
     return typeof val === 'string' && val.trim().length >= 5
   if (key === 'concept') return typeof val === 'string' && val.trim().length >= 10
   return typeof val === 'string' && val.length > 0
+}
+
+function DurationInput({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (val: number) => void
+}) {
+  const shotCount = Math.ceil(value / 5)
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-2">
+        {DURATION_PRESETS.map((preset) => (
+          <button
+            key={preset.seconds}
+            type="button"
+            onClick={() => onChange(preset.seconds)}
+            className={`text-left px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
+              value === preset.seconds
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border bg-card text-foreground hover:border-primary/40'
+            }`}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-3">
+        <Input
+          type="number"
+          min={15}
+          max={900}
+          value={value}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10)
+            if (!isNaN(n)) onChange(Math.min(900, Math.max(15, n)))
+          }}
+          className="text-base"
+        />
+        <span className="text-sm text-muted-foreground whitespace-nowrap">seconds</span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        ~{shotCount} shot{shotCount !== 1 ? 's' : ''} will be generated
+      </p>
+    </div>
+  )
 }
 
 function SingleSelect({

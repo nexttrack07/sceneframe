@@ -4,11 +4,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 export function PromptEditor({
   prompt,
   onPromptChange,
+  onPromptBlur,
   onGeneratePrompt,
   isGeneratingPrompt,
 }: {
   prompt: string
   onPromptChange: (value: string) => void
+  onPromptBlur?: () => void
   onGeneratePrompt?: () => void
   isGeneratingPrompt?: boolean
 }) {
@@ -37,6 +39,7 @@ export function PromptEditor({
       <textarea
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
+        onBlur={onPromptBlur}
         rows={10}
         disabled={isGeneratingPrompt}
         className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent bg-background disabled:opacity-50"

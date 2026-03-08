@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { loadProject } from '@/features/projects/project-queries'
 import type { ScenePlanEntry } from '@/features/projects/project-types'
-import { GlobalImageSettingsDialog } from '@/features/projects/components/global-image-settings-dialog'
 import { ScriptWorkshop } from '@/features/projects/components/script-workshop'
 import { Storyboard } from '@/features/projects/components/storyboard'
 
@@ -27,6 +26,7 @@ function ProjectPage() {
   const {
     project,
     scenes: projectScenes,
+    shots: projectShots,
     messages: projectMessages,
     assets: projectAssets,
   } = Route.useLoaderData()
@@ -49,7 +49,9 @@ function ProjectPage() {
             <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
             {!isWorkshopPhase && projectScenes.length > 0 && (
               <p className="text-sm text-muted-foreground mt-0.5">
-                {projectScenes.length} scene{projectScenes.length !== 1 ? 's' : ''}
+                {projectShots.length > 0
+                  ? `${projectShots.length} shots across ${projectScenes.length} scenes`
+                  : `${projectScenes.length} scene${projectScenes.length !== 1 ? 's' : ''}`}
               </p>
             )}
           </div>
@@ -63,16 +65,13 @@ function ProjectPage() {
                 Script Workshop
               </Badge>
             ) : (
-              <>
-                <Badge
-                  variant="outline"
-                  className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
-                >
-                  <Check size={11} />
-                  Script approved
-                </Badge>
-                <GlobalImageSettingsDialog projectId={project.id} projectSettings={project.settings} />
-              </>
+              <Badge
+                variant="outline"
+                className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
+              >
+                <Check size={11} />
+                Script approved
+              </Badge>
             )}
           </div>
         </div>
@@ -90,6 +89,7 @@ function ProjectPage() {
         <Storyboard
           projectId={project.id}
           scenes={projectScenes}
+          shots={projectShots}
           assets={projectAssets}
           projectSettings={project.settings}
           scenePlan={scenePlan}

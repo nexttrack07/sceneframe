@@ -1,5 +1,5 @@
-import type { IntakeAnswers, ProjectSettings, ImageDefaults, ConsistencyLock } from './project-types'
-import { DEFAULT_IMAGE_DEFAULTS, DEFAULT_CONSISTENCY_LOCK } from './project-constants'
+import type { IntakeAnswers, ProjectSettings, ImageDefaults } from './project-types'
+import { DEFAULT_IMAGE_DEFAULTS } from './project-constants'
 
 export function normalizeProjectSettings(raw: unknown): ProjectSettings | null {
   if (!raw || typeof raw !== 'object') return null
@@ -35,22 +35,5 @@ export function normalizeImageDefaults(value: unknown): ImageDefaults {
         ? raw.qualityPreset
         : DEFAULT_IMAGE_DEFAULTS.qualityPreset,
     batchCount,
-  }
-}
-
-export function normalizeConsistencyLock(value: unknown): ConsistencyLock {
-  if (!value || typeof value !== 'object') return DEFAULT_CONSISTENCY_LOCK
-  const raw = value as Partial<ConsistencyLock>
-  const referenceUrls = Array.isArray(raw.referenceUrls)
-    ? raw.referenceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
-    : []
-
-  return {
-    enabled: Boolean(raw.enabled),
-    strength:
-      raw.strength === 'low' || raw.strength === 'medium' || raw.strength === 'high'
-        ? raw.strength
-        : DEFAULT_CONSISTENCY_LOCK.strength,
-    referenceUrls,
   }
 }

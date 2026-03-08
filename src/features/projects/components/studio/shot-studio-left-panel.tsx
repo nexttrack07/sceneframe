@@ -1,18 +1,20 @@
-import { Loader2, Wand2 } from 'lucide-react'
+import { Loader2, PlusCircle, MinusCircle, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { Scene } from '@/db/schema'
-import type { ImageDefaults, SceneAssetSummary, ScenePlanEntry } from '../../project-types'
-import { SceneContextSection } from './scene-context-section'
+import type { Scene, Shot } from '@/db/schema'
+import type { ImageDefaults, SceneAssetSummary } from '../../project-types'
+import { ShotContextSection } from './shot-context-section'
 import { FrameTabBar } from './frame-tab-bar'
 import { PromptEditor } from './prompt-editor'
 import { InlineSettingsRow } from './inline-settings-row'
 
-export function StudioLeftPanel({
-  scene,
-  plan,
-  sceneAssets,
+export function ShotStudioLeftPanel({
+  shot,
+  parentScene,
+  shotAssets,
   activeLane,
   onLaneChange,
+  showEndFrame,
+  onToggleEndFrame,
   prompt,
   onPromptChange,
   onPromptBlur,
@@ -24,11 +26,13 @@ export function StudioLeftPanel({
   onGenerate,
   onDescriptionSaved,
 }: {
-  scene: Scene
-  plan?: ScenePlanEntry
-  sceneAssets: SceneAssetSummary[]
+  shot: Shot
+  parentScene: Scene
+  shotAssets: SceneAssetSummary[]
   activeLane: 'start' | 'end'
   onLaneChange: (lane: 'start' | 'end') => void
+  showEndFrame: boolean
+  onToggleEndFrame: () => void
   prompt: string
   onPromptChange: (value: string) => void
   onPromptBlur?: () => void
@@ -44,18 +48,31 @@ export function StudioLeftPanel({
     <div className="w-[380px] border-r flex flex-col shrink-0 bg-card">
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <SceneContextSection
-          scene={scene}
-          plan={plan}
+        <ShotContextSection
+          shot={shot}
+          parentScene={parentScene}
           onDescriptionSaved={onDescriptionSaved}
         />
 
         <div className="border-t pt-4 space-y-4">
-          <FrameTabBar
-            activeLane={activeLane}
-            onLaneChange={onLaneChange}
-            sceneAssets={sceneAssets}
-          />
+          {/* End frame toggle */}
+          <button
+            type="button"
+            onClick={onToggleEndFrame}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showEndFrame ? <MinusCircle size={13} /> : <PlusCircle size={13} />}
+            {showEndFrame ? 'Remove end frame' : 'Add end frame'}
+          </button>
+
+          {/* Frame tab bar — only visible when end frame is enabled */}
+          {showEndFrame && (
+            <FrameTabBar
+              activeLane={activeLane}
+              onLaneChange={onLaneChange}
+              sceneAssets={shotAssets}
+            />
+          )}
 
           <PromptEditor
             prompt={prompt}

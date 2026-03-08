@@ -1,22 +1,24 @@
 import { ChevronRight, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { Scene } from '@/db/schema'
-import { SceneFilmstrip } from './scene-filmstrip'
+import type { Scene, Shot } from '@/db/schema'
+import { ShotFilmstrip } from './shot-filmstrip'
 import type { SceneAssetSummary } from '../../project-types'
 
-export function StudioHeader({
-  scene,
-  sceneIndex,
-  allScenes,
+export function ShotStudioHeader({
+  shot,
+  shotIndex,
+  parentScene,
+  allShots,
   allAssets,
-  onSceneChange,
+  onShotChange,
   onClose,
 }: {
-  scene: Scene
-  sceneIndex: number
-  allScenes: Scene[]
+  shot: Shot
+  shotIndex: number
+  parentScene: Scene
+  allShots: Shot[]
   allAssets: SceneAssetSummary[]
-  onSceneChange: (sceneId: string) => void
+  onShotChange: (shotId: string) => void
   onClose: () => void
 }) {
   return (
@@ -31,18 +33,22 @@ export function StudioHeader({
           Storyboard
         </button>
         <ChevronRight size={12} />
+        <span className="text-muted-foreground">
+          {parentScene.title || `Scene ${parentScene.order}`}
+        </span>
+        <ChevronRight size={12} />
         <span className="text-foreground font-medium">
-          {scene.title || `Scene ${sceneIndex + 1}`}
+          Shot {shotIndex + 1}
         </span>
       </div>
 
       {/* Filmstrip */}
       <div className="flex-1 min-w-0 mx-4">
-        <SceneFilmstrip
-          scenes={allScenes}
+        <ShotFilmstrip
+          shots={allShots}
           allAssets={allAssets}
-          currentSceneId={scene.id}
-          onSceneChange={onSceneChange}
+          currentShotId={shot.id}
+          onShotChange={onShotChange}
         />
       </div>
 
