@@ -17,3 +17,6 @@ todos.json
 .env.local
 .trigger
 .trigger/*
+# OMC plugin state
+.omc/
+src/**/.omc/
