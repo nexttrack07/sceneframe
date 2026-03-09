@@ -32,7 +32,7 @@ export function GalleryVideoCard({
         <div className={`w-full h-full ${asset.status === 'error' ? 'bg-destructive/10' : 'bg-muted animate-pulse'}`} />
       )}
 
-      {/* Hover overlay */}
+      {/* Hover overlay — done assets */}
       {asset.status === 'done' && asset.url && (
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
           <button
@@ -51,6 +51,18 @@ export function GalleryVideoCard({
             {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
           </button>
         </div>
+      )}
+
+      {/* Always-visible delete on error */}
+      {asset.status === 'error' && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          disabled={isDeleting}
+          className="absolute bottom-2 right-2 bg-white/90 text-red-600 p-1.5 rounded-md hover:bg-white transition-colors disabled:opacity-50"
+        >
+          {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+        </button>
       )}
 
       {/* Status badges */}

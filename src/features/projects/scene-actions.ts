@@ -949,13 +949,14 @@ export const pollVideoAsset = createServerFn({ method: 'POST' })
 
     if (prediction.status === 'succeeded') {
       const output = prediction.output
-      // FileOutput from Replicate SDK: url may be a getter (string), a method, or raw string
+      // FileOutput from Replicate SDK: toString() returns the URL (no .url property)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw = output as any
-      const candidate: unknown = typeof raw?.url === 'function' ? raw.url() : raw?.url ?? raw
-      const videoUrl = typeof candidate === 'string' && candidate.startsWith('http')
-        ? candidate
-        : (() => { throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`) })()
+      const str = typeof raw === 'string' ? raw : String(raw)
+      if (!str.startsWith('http')) {
+        throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
+      }
+      const videoUrl = str
 
       const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${assetId}.mp4`
       const storedUrl = await uploadFromUrl(videoUrl, storageKey, 'video/mp4')
