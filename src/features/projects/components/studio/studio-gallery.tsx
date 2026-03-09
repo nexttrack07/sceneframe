@@ -104,27 +104,26 @@ export function StudioGallery({
         {videoAssets.length > 0 && (
           <div className="shrink-0 border-t p-4 bg-muted/20 space-y-3">
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Videos</p>
-            {videoAssets.map((asset) => (
-              <div key={asset.id} className="space-y-1.5">
-                {asset.status === 'done' && asset.url ? (
-                  <video
-                    src={asset.url}
-                    controls
-                    className="w-full rounded-lg border border-border"
-                    style={{ maxHeight: 220 }}
-                  />
-                ) : asset.status === 'generating' ? (
-                  <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/50 px-3 py-4 text-xs text-muted-foreground">
-                    <Clock size={13} className="animate-pulse shrink-0" />
-                    Generating video...
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-4 text-xs text-destructive">
-                    {asset.errorMessage ?? 'Video generation failed'}
-                  </div>
-                )}
-              </div>
-            ))}
+            <div className="grid grid-cols-3 gap-2">
+              {videoAssets.map((asset) => (
+                <div key={asset.id} className="relative rounded-lg border border-border overflow-hidden bg-muted/30 aspect-video">
+                  {asset.status === 'done' && asset.url ? (
+                    <video src={asset.url} controls className="w-full h-full object-cover" />
+                  ) : asset.status === 'generating' ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+                      <Clock size={14} className="animate-pulse text-muted-foreground" />
+                      <span className="text-[10px] text-muted-foreground">Generating...</span>
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center p-2">
+                      <span className="text-[10px] text-destructive text-center leading-relaxed">
+                        {asset.errorMessage ?? 'Failed'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

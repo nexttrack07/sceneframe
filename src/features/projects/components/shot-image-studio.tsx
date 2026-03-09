@@ -195,6 +195,7 @@ export function ShotImageStudio({
           }
         }, 5000)
       })
+      setError(null)
       await router.invalidate()
       toast('Video generated', 'success')
     } catch (err) {

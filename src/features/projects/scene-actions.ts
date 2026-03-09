@@ -949,22 +949,13 @@ export const pollVideoAsset = createServerFn({ method: 'POST' })
 
     if (prediction.status === 'succeeded') {
       const output = prediction.output
-      let videoUrl: string
-      if (typeof output === 'string' && output) {
-        videoUrl = output
-      } else if (output && typeof (output as { url?: () => string }).url === 'function') {
-        videoUrl = (output as { url: () => string }).url()
-      } else if (output) {
-        // FileOutput objects implement toString() returning the URL
-        const str = String(output)
-        if (str.startsWith('http')) {
-          videoUrl = str
-        } else {
-          throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
-        }
-      } else {
-        throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
-      }
+      // FileOutput from Replicate SDK: url may be a getter (string), a method, or raw string
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = output as any
+      const candidate: unknown = typeof raw?.url === 'function' ? raw.url() : raw?.url ?? raw
+      const videoUrl = typeof candidate === 'string' && candidate.startsWith('http')
+        ? candidate
+        : (() => { throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`) })()
 
       const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${assetId}.mp4`
       const storedUrl = await uploadFromUrl(videoUrl, storageKey, 'video/mp4')
