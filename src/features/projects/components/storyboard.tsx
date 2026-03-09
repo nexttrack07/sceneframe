@@ -9,7 +9,7 @@ import {
   Info,
 } from 'lucide-react'
 import type { Scene, Shot } from '@/db/schema'
-import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry } from '../project-types'
+import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
 import { exportProjectHandoff } from '../project-queries'
 import { resetWorkshop } from '../project-mutations'
 import { reorderScene, addScene, deleteScene, addShot, deleteShot } from '../scene-actions'
@@ -21,6 +21,7 @@ import { ResetDialog } from './reset-dialog'
 import { StoryboardCard } from './storyboard-card'
 import { ShotCard } from './shot-card'
 import { SceneHeader } from './scene-header'
+import { TransitionConnector } from './transition-connector'
 
 function formatTimestamp(seconds: number | null): string {
   if (seconds == null) return '--:--'
@@ -36,6 +37,7 @@ export function Storyboard({
   assets: sceneAssets,
   projectSettings,
   scenePlan,
+  transitionVideos,
 }: {
   projectId: string
   scenes: Scene[]
@@ -43,6 +45,7 @@ export function Storyboard({
   assets: SceneAssetSummary[]
   projectSettings: ProjectSettings | null
   scenePlan: ScenePlanEntry[]
+  transitionVideos: TransitionVideoSummary[]
 }) {
   const router = useRouter()
   const [isResetting, setIsResetting] = useState(false)
@@ -455,17 +458,32 @@ export function Storyboard({
 
                   {!isCollapsed && (
                     <div className="ml-6 mt-2 space-y-2">
-                      {sceneShots.map((shot) => (
-                        <ShotCard
-                          key={shot.id}
-                          shot={shot}
-                          globalIndex={globalShotIndex.get(shot.id) ?? 0}
-                          assets={assetsByShotId.get(shot.id) ?? []}
-                          isSelected={selectedShotId === shot.id}
-                          onSelect={() => handleShotSelect(shot)}
-                          onDelete={() => handleDeleteShot(shot.id)}
-                        />
-                      ))}
+                      {sceneShots.map((shot, shotIdx) => {
+                        const nextShot = sceneShots[shotIdx + 1] ?? null
+                        return (
+                          <div key={shot.id}>
+                            <ShotCard
+                              shot={shot}
+                              globalIndex={globalShotIndex.get(shot.id) ?? 0}
+                              assets={assetsByShotId.get(shot.id) ?? []}
+                              isSelected={selectedShotId === shot.id}
+                              onSelect={() => handleShotSelect(shot)}
+                              onDelete={() => handleDeleteShot(shot.id)}
+                            />
+                            {nextShot && (
+                              <TransitionConnector
+                                fromShot={shot}
+                                toShot={nextShot}
+                                fromShotAssets={assetsByShotId.get(shot.id) ?? []}
+                                toShotAssets={assetsByShotId.get(nextShot.id) ?? []}
+                                transitionVideos={transitionVideos.filter(
+                                  (tv) => tv.sceneId === scene.id,
+                                )}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
 
                       {/* Add Shot button */}
                       <button

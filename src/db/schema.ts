@@ -182,6 +182,50 @@ export const assets = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// transition_videos
+// ---------------------------------------------------------------------------
+
+export const transitionVideos = pgTable(
+  'transition_videos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sceneId: uuid('scene_id').notNull().references(() => scenes.id),
+    fromShotId: uuid('from_shot_id').notNull().references(() => shots.id),
+    toShotId: uuid('to_shot_id').notNull().references(() => shots.id),
+    fromImageId: uuid('from_image_id').references(() => assets.id),
+    toImageId: uuid('to_image_id').references(() => assets.id),
+    prompt: text('prompt'),
+    model: text('model').notNull().default('kwaivgi/kling-v3-omni-video'),
+    modelSettings: jsonb('model_settings'),
+    generationId: text('generation_id'),
+    url: text('url'),
+    storageKey: text('storage_key'),
+    status: text('status').notNull().default('generating').$type<'generating' | 'done' | 'error'>(),
+    errorMessage: text('error_message'),
+    isSelected: boolean('is_selected').notNull().default(false),
+    stale: boolean('stale').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index('idx_transition_videos_scene_id').on(table.sceneId),
+    index('idx_transition_videos_from_shot').on(table.fromShotId),
+    index('idx_transition_videos_to_shot').on(table.toShotId),
+    index('idx_transition_videos_deleted').on(table.deletedAt),
+    index('idx_transition_videos_generation_id').on(table.generationId),
+    // One selected video per transition edge
+    uniqueIndex('idx_transition_videos_selected')
+      .on(table.fromShotId, table.toShotId)
+      .where(sql`${table.isSelected} = true AND ${table.deletedAt} IS NULL`),
+    check('transition_videos_status_check', sql`${table.status} IN ('generating', 'done', 'error')`),
+  ],
+)
+
+export type TransitionVideo = typeof transitionVideos.$inferSelect
+export type NewTransitionVideo = typeof transitionVideos.$inferInsert
+
+// ---------------------------------------------------------------------------
 // messages (Script Workshop chat history)
 // ---------------------------------------------------------------------------
 

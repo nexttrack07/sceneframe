@@ -41,6 +41,7 @@ function ProjectPage() {
     shots: projectShots,
     messages: projectMessages,
     assets: projectAssets,
+    transitionVideos: projectTransitionVideos,
   } = Route.useLoaderData()
   const scenePlan: ScenePlanEntry[] = (() => {
     if (!project.scriptRaw) return []
@@ -113,6 +114,7 @@ function ProjectPage() {
           assets={projectAssets}
           projectSettings={project.settings}
           scenePlan={scenePlan}
+          transitionVideos={projectTransitionVideos}
         />
       )}
     </div>

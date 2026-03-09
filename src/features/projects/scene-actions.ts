@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
-import { assets, scenes, shots } from '@/db/schema'
-import { and, asc, eq, inArray, isNull, desc } from 'drizzle-orm'
+import { assets, scenes, shots, transitionVideos } from '@/db/schema'
+import { and, asc, eq, inArray, isNull, desc, or } from 'drizzle-orm'
 import Replicate from 'replicate'
 import { uploadFromUrl, deleteObject } from '@/lib/r2.server'
 import { randomUUID } from 'node:crypto'
@@ -524,6 +524,20 @@ export const deleteShot = createServerFn({ method: 'POST' })
       .set({ deletedAt: now })
       .where(and(eq(assets.shotId, shotId), isNull(assets.deletedAt)))
 
+    // Soft-delete any transition videos involving this shot
+    await db
+      .update(transitionVideos)
+      .set({ deletedAt: now })
+      .where(
+        and(
+          or(
+            eq(transitionVideos.fromShotId, shotId),
+            eq(transitionVideos.toShotId, shotId),
+          ),
+          isNull(transitionVideos.deletedAt),
+        ),
+      )
+
     // Soft-delete the shot
     await db.update(shots).set({ deletedAt: now }).where(eq(shots.id, shotId))
 
@@ -1001,4 +1015,286 @@ export const selectShotAsset = createServerFn({ method: 'POST' })
         ))
       await tx.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
     })
+
+    // Mark transition videos stale if they used an image from this shot
+    if (asset.shotId) {
+      await db
+        .update(transitionVideos)
+        .set({ stale: true })
+        .where(
+          and(
+            or(
+              eq(transitionVideos.fromShotId, asset.shotId),
+              eq(transitionVideos.toShotId, asset.shotId),
+            ),
+            isNull(transitionVideos.deletedAt),
+            eq(transitionVideos.stale, false),
+          ),
+        )
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// generateTransitionVideoPrompt
+// ---------------------------------------------------------------------------
+
+export const generateTransitionVideoPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { fromShotId: string; toShotId: string }) => data)
+  .handler(async ({ data: { fromShotId, toShotId } }) => {
+    // Assert ownership via from shot
+    const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    // Get to shot for context
+    const toShot = await db.query.shots.findFirst({
+      where: and(eq(shots.id, toShotId), isNull(shots.deletedAt)),
+    })
+    if (!toShot) throw new Error('Next shot not found')
+
+    const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+You are generating a motion prompt for a video transition between two consecutive shots.
+
+The video will start at the first frame image of Shot A and end at the first frame image of Shot B.
+Your prompt must describe the MOTION and CAMERA MOVEMENT that naturally bridges these two shots.
+
+Shot A (start): ${fromShot.description}
+Shot B (end): ${toShot.description}
+
+Focus on:
+1. Camera movement direction and speed (zoom, pan, tilt, dolly, aerial ascent/descent, etc.)
+2. How the visual composition evolves from Shot A's state to Shot B's state
+3. Subject motion during the transition
+4. Environmental continuity
+
+Use this exact structured format:
+
+[Cinematography]: Camera movement from Shot A composition to Shot B composition — direction, speed, technique.
+
+[Subject]: How subjects move or transform during the transition.
+
+[Action]: The specific motion arc — what changes between the two frames.
+
+[Context]: Environmental elements and how they shift during the transition.
+
+[Style & Ambiance]: Visual feel, lighting changes, mood continuity.
+
+Rules:
+- Write in present tense
+- Be specific about direction and speed
+- The motion must feel like a NATURAL continuation from Shot A into Shot B
+- Do NOT describe static elements — focus on what MOVES
+${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(', ')}` : ''}
+
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: systemPrompt, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const generatedPrompt = chunks.join('').trim()
+      if (!generatedPrompt) throw new Error('AI returned an empty response — please try again')
+      return { prompt: generatedPrompt }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// generateTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const generateTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: {
+    fromShotId: string
+    toShotId: string
+    prompt: string
+    mode?: 'standard' | 'pro'
+    generateAudio?: boolean
+  }) => data)
+  .handler(async ({ data: { fromShotId, toShotId, prompt, mode = 'pro', generateAudio = false } }) => {
+    const { userId, shot: fromShot, scene } = await assertShotOwner(fromShotId)
+    const apiKey = await getUserApiKey(userId)
+
+    // Get selected image for from shot
+    const fromImage = await db.query.assets.findFirst({
+      where: and(
+        eq(assets.shotId, fromShotId),
+        inArray(assets.type, ['start_image', 'end_image', 'image']),
+        eq(assets.isSelected, true),
+        eq(assets.status, 'done'),
+        isNull(assets.deletedAt),
+      ),
+    })
+    if (!fromImage?.url) throw new Error('No selected image for source shot — select an image first')
+
+    // Get selected image for to shot
+    const toImage = await db.query.assets.findFirst({
+      where: and(
+        eq(assets.shotId, toShotId),
+        inArray(assets.type, ['start_image', 'end_image', 'image']),
+        eq(assets.isSelected, true),
+        eq(assets.status, 'done'),
+        isNull(assets.deletedAt),
+      ),
+    })
+    if (!toImage?.url) throw new Error('No selected image for destination shot — select an image first')
+
+    // Submit to Replicate — fire and forget
+    const replicate = new Replicate({ auth: apiKey })
+    const prediction = await replicate.predictions.create({
+      model: 'kwaivgi/kling-v3-omni-video' as `${string}/${string}`,
+      input: {
+        prompt,
+        start_image: fromImage.url,
+        end_image: toImage.url,
+        duration: Math.max(3, Math.min(15, fromShot.durationSec)),
+        mode,
+        generate_audio: generateAudio,
+      },
+    })
+
+    const [placeholder] = await db
+      .insert(transitionVideos)
+      .values({
+        sceneId: scene.id,
+        fromShotId,
+        toShotId,
+        fromImageId: fromImage.id,
+        toImageId: toImage.id,
+        prompt,
+        model: 'kwaivgi/kling-v3-omni-video',
+        modelSettings: { duration: fromShot.durationSec, mode, generateAudio },
+        generationId: prediction.id,
+        status: 'generating',
+        isSelected: false,
+        stale: false,
+      })
+      .returning({ id: transitionVideos.id })
+
+    return { transitionVideoId: placeholder.id }
+  })
+
+// ---------------------------------------------------------------------------
+// pollTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const pollTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    // Get the transition video
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(
+        eq(transitionVideos.id, transitionVideoId),
+        isNull(transitionVideos.deletedAt),
+      ),
+    })
+    if (!tv) throw new Error('Transition video not found')
+
+    if (tv.status === 'done') return { status: 'done' as const, url: tv.url }
+    if (tv.status === 'error') return { status: 'error' as const, errorMessage: tv.errorMessage }
+
+    if (!tv.generationId) throw new Error('No generation ID found')
+
+    // Get ownership for API key
+    const { userId, project } = await assertShotOwner(tv.fromShotId)
+    const apiKey = await getUserApiKey(userId)
+    const replicate = new Replicate({ auth: apiKey })
+
+    const prediction = await replicate.predictions.get(tv.generationId)
+
+    if (prediction.status === 'succeeded') {
+      const output = prediction.output
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = output as any
+      const str = typeof raw === 'string' ? raw : String(raw)
+      if (!str.startsWith('http')) {
+        throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
+      }
+
+      const storageKey = `projects/${project.id}/scenes/${tv.sceneId}/transitions/${transitionVideoId}.mp4`
+      const storedUrl = await uploadFromUrl(str, storageKey, 'video/mp4')
+
+      await db
+        .update(transitionVideos)
+        .set({ url: storedUrl, storageKey, status: 'done', errorMessage: null })
+        .where(eq(transitionVideos.id, transitionVideoId))
+
+      return { status: 'done' as const, url: storedUrl }
+    }
+
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      const errorMessage = prediction.error ? String(prediction.error) : 'Video generation failed'
+      await db
+        .update(transitionVideos)
+        .set({ status: 'error', errorMessage })
+        .where(eq(transitionVideos.id, transitionVideoId))
+      return { status: 'error' as const, errorMessage }
+    }
+
+    return { status: 'generating' as const }
+  })
+
+// ---------------------------------------------------------------------------
+// selectTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const selectTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(eq(transitionVideos.id, transitionVideoId), isNull(transitionVideos.deletedAt)),
+    })
+    if (!tv) throw new Error('Transition video not found')
+    if (tv.status !== 'done') throw new Error('Only completed transition videos can be selected')
+
+    // Assert ownership
+    await assertShotOwner(tv.fromShotId)
+
+    await db.transaction(async (tx) => {
+      // Deselect all for this (from, to) pair
+      await tx
+        .update(transitionVideos)
+        .set({ isSelected: false })
+        .where(
+          and(
+            eq(transitionVideos.fromShotId, tv.fromShotId),
+            eq(transitionVideos.toShotId, tv.toShotId),
+            isNull(transitionVideos.deletedAt),
+          ),
+        )
+      // Select this one
+      await tx
+        .update(transitionVideos)
+        .set({ isSelected: true })
+        .where(eq(transitionVideos.id, transitionVideoId))
+    })
+  })
+
+// ---------------------------------------------------------------------------
+// deleteTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const deleteTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(eq(transitionVideos.id, transitionVideoId), isNull(transitionVideos.deletedAt)),
+    })
+    if (!tv) throw new Error('Transition video not found')
+
+    await assertShotOwner(tv.fromShotId)
+
+    await db
+      .update(transitionVideos)
+      .set({ deletedAt: new Date() })
+      .where(eq(transitionVideos.id, transitionVideoId))
   })

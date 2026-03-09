@@ -36,9 +36,11 @@ export function StudioGallery({
     [sceneAssets],
   )
 
+  // Videos are now in transitionVideos, not sceneAssets - this will always be empty
   const videoAssets = useMemo(
-    () => [...sceneAssets.filter((a) => a.type === 'video')].reverse(),
-    [sceneAssets],
+    () => [] as typeof sceneAssets,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   )
 
   const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)

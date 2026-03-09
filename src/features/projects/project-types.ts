@@ -41,11 +41,31 @@ export interface ProjectSettings {
   intake?: IntakeAnswers
 }
 
+export interface TransitionVideoSummary {
+  id: string
+  sceneId: string
+  fromShotId: string
+  toShotId: string
+  fromImageId: string | null
+  toImageId: string | null
+  status: 'generating' | 'done' | 'error'
+  url: string | null
+  errorMessage: string | null
+  prompt: string | null
+  model: string
+  isSelected: boolean
+  stale: boolean
+  generationId: string | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  modelSettings: Record<string, any> | null
+  createdAt: string
+}
+
 export interface SceneAssetSummary {
   id: string
   sceneId: string
   shotId: string | null
-  type: 'start_image' | 'end_image' | 'image' | 'video'
+  type: 'start_image' | 'end_image' | 'image'
   status: 'generating' | 'done' | 'error'
   url: string | null
   errorMessage: string | null
