@@ -930,10 +930,14 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         signal: controller.signal,
       })
 
-      if (typeof output !== 'string' || !output) {
+      let videoUrl: string
+      if (typeof output === 'string' && output) {
+        videoUrl = output
+      } else if (output && typeof (output as { url?: () => string }).url === 'function') {
+        videoUrl = (output as { url: () => string }).url()
+      } else {
         throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
       }
-      const videoUrl = output
 
       const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${placeholder.id}.mp4`
       const storedUrl = await uploadFromUrl(videoUrl, storageKey, 'video/mp4')
