@@ -45,7 +45,7 @@ export interface SceneAssetSummary {
   id: string
   sceneId: string
   shotId: string | null
-  type: 'start_image' | 'end_image'
+  type: 'start_image' | 'end_image' | 'image' | 'video'
   status: 'generating' | 'done' | 'error'
   url: string | null
   errorMessage: string | null

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Clock, Film, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Clock, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SceneAssetSummary } from '../../project-types'
 import { GalleryImageCard } from './gallery-image-card'
@@ -7,7 +7,6 @@ import { ImageLightbox } from '../image-lightbox'
 
 export function StudioGallery({
   sceneAssets,
-  activeLane,
   selectingAssetId,
   deletingAssetId,
   onSelectAsset,
@@ -18,7 +17,6 @@ export function StudioGallery({
   onLightboxChange,
 }: {
   sceneAssets: SceneAssetSummary[]
-  activeLane: 'start' | 'end'
   selectingAssetId: string | null
   deletingAssetId: string | null
   onSelectAsset: (assetId: string) => void
@@ -31,10 +29,14 @@ export function StudioGallery({
   const [showLightbox, setShowLightbox] = useState(false)
   const [lightboxStartIndex, setLightboxStartIndex] = useState(0)
 
-  const laneType = activeLane === 'start' ? 'start_image' : 'end_image'
   const laneAssets = useMemo(
-    () => sceneAssets.filter((a) => a.type === laneType),
-    [sceneAssets, laneType],
+    () => sceneAssets.filter((a) => ['start_image', 'end_image', 'image'].includes(a.type)),
+    [sceneAssets],
+  )
+
+  const videoAssets = useMemo(
+    () => [...sceneAssets.filter((a) => a.type === 'video')].reverse(),
+    [sceneAssets],
   )
   // Most recent first
   const sortedAssets = useMemo(
@@ -99,15 +101,32 @@ export function StudioGallery({
         </div>
 
         {/* Videos section */}
-        <div className="h-[200px] shrink-0 border-t p-4 bg-muted/20">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Videos</p>
-          <div className="h-full flex flex-col items-center justify-center gap-2 border border-dashed border-border/60 rounded-lg">
-            <Film size={20} className="text-muted-foreground/40" />
-            <p className="text-xs text-muted-foreground text-center max-w-[200px]">
-              Videos will appear here after generating from selected images
-            </p>
+        {videoAssets.length > 0 && (
+          <div className="shrink-0 border-t p-4 bg-muted/20 space-y-3">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Videos</p>
+            {videoAssets.map((asset) => (
+              <div key={asset.id} className="space-y-1.5">
+                {asset.status === 'done' && asset.url ? (
+                  <video
+                    src={asset.url}
+                    controls
+                    className="w-full rounded-lg border border-border"
+                    style={{ maxHeight: 220 }}
+                  />
+                ) : asset.status === 'generating' ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/50 px-3 py-4 text-xs text-muted-foreground">
+                    <Clock size={13} className="animate-pulse shrink-0" />
+                    Generating video...
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-4 text-xs text-destructive">
+                    {asset.errorMessage ?? 'Video generation failed'}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
-        </div>
+        )}
       </div>
 
       {/* Side drawer — overlay */}
@@ -214,7 +233,7 @@ export function StudioGallery({
 
               {/* Selected status */}
               {selectedAsset.isSelected && (
-                <MetadataRow label="Selection" value={`Selected as ${activeLane} frame`} />
+                <MetadataRow label="Selection" value="Selected" />
               )}
             </div>
           </div>

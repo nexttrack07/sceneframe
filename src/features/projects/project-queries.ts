@@ -49,7 +49,7 @@ export const loadProject = createServerFn({ method: 'GET' })
         ? []
         : await db.query.assets.findMany({
             where: and(
-              eq(assets.stage, 'images'),
+              inArray(assets.stage, ['images', 'video']),
               isNull(assets.deletedAt),
               shotIds.length > 0
                 ? or(
@@ -70,8 +70,8 @@ export const loadProject = createServerFn({ method: 'GET' })
       shots: projectShots,
       messages: projectMessages,
       assets: projectAssets
-        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' } =>
-          asset.type === 'start_image' || asset.type === 'end_image',
+        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' | 'image' | 'video' } =>
+          asset.type === 'start_image' || asset.type === 'end_image' || asset.type === 'image' || asset.type === 'video',
         )
         .filter(
           (asset): asset is typeof asset & { status: 'generating' | 'done' | 'error' } =>
