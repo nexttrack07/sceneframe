@@ -16,17 +16,14 @@ export function GalleryVideoCard({
 
   return (
     <div
-      className={`relative rounded-lg overflow-hidden bg-muted group aspect-video ${
-        asset.status === 'done' && asset.url ? 'cursor-pointer' : 'cursor-default'
-      }`}
-      onClick={asset.status === 'done' && asset.url ? onExpand : undefined}
+      className="relative rounded-lg overflow-hidden bg-muted group aspect-video cursor-default"
     >
       {/* Video thumbnail — browser renders first frame via preload=metadata */}
       {asset.url ? (
         <video
           src={asset.url}
-          preload="metadata"
-          className="w-full h-full object-cover block pointer-events-none"
+          controls
+          className="w-full h-full object-cover block"
         />
       ) : (
         <div className={`w-full h-full ${asset.status === 'error' ? 'bg-destructive/10' : 'bg-muted animate-pulse'}`} />
