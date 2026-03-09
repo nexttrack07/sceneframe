@@ -826,26 +826,28 @@ export const generateShotVideoPrompt = createServerFn({ method: 'POST' })
     const settings = normalizeProjectSettings(project.settings)
 
     const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
-Given a shot description, write a motion prompt that describes exactly what happens during this shot as a continuous video clip.
+Given a shot description, write a video motion prompt using this exact structured format:
 
-Focus entirely on MOTION and ACTION — not static appearance. Kling will handle visual style from the start frame image.
+[Cinematography]: Describe the camera movement precisely — type of shot, direction, speed, and how it evolves. Be specific (e.g. "slow dolly forward", "rapid zoom-out accelerating into aerial bird's-eye view", "static locked-off medium shot").
 
-Your prompt must describe:
-1. What moves and how (subjects, camera, objects)
-2. The speed and feel of the motion (slow drift, quick cut, smooth pan, etc.)
-3. Any environmental motion (wind, light changes, crowd movement)
-4. Camera behavior (static, slow push in, tracking left, handheld, aerial descent, etc.)
+[Subject]: Describe the main subject(s) and how they appear or change as the camera moves. Include relevant visual details only where they support understanding the motion.
+
+[Action]: Describe exactly what the subject does during the clip — movement, gestures, direction, speed, and how the action resolves by the end of the shot.
+
+[Context]: Describe the environment and any environmental motion — wind, crowds, light shifts, background elements in motion.
+
+[Style & Ambiance]: Visual style, mood, lighting quality, and overall aesthetic. Be specific about the feel and tone.
 
 Rules:
-- Be specific about direction and speed of movement
-- Write in present tense, as if describing the clip as it plays
-- Keep it under 150 words — dense and specific, not padded
-- Do NOT describe static appearance (that comes from the image)
-- Do NOT use vague terms like "dynamic" or "cinematic" — describe the actual motion
-${settings?.intake?.style?.length ? `- Visual style reference: ${settings.intake.style.join(', ')}` : ''}
+- Write each section as 1-3 dense, specific sentences
+- Present tense throughout
+- Prioritize motion and action — static description belongs in the start frame image, not here
+- Be precise about speed and direction — avoid vague terms like "dynamic" or "cinematic"
+- The start frame image already establishes appearance — reference it only to anchor motion
+${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(', ')}` : ''}
 ${settings?.intake?.mood?.length ? `- Mood: ${settings.intake.mood.join(', ')}` : ''}
 
-Return ONLY the motion prompt, nothing else.`
+Return ONLY the structured prompt, nothing else.`
 
     const userMessage = `Shot description: ${shot.description}`
 
