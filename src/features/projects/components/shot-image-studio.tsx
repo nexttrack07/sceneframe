@@ -62,6 +62,8 @@ export function ShotImageStudio({
   const [videoPrompt, setVideoPrompt] = useState('')
   const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
+  const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
+  const [generateAudio, setGenerateAudio] = useState(false)
 
   // Reset local state when shot changes (state-based navigation, no key remount)
   useEffect(() => {
@@ -174,7 +176,7 @@ export function ShotImageStudio({
     setIsGeneratingVideo(true)
     setError(null)
     try {
-      const { assetId } = await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt } })
+      const { assetId } = await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt, mode: videoMode, generateAudio } })
       // Poll until Replicate finishes — avoids serverless timeout and keeps studio open
       await new Promise<void>((resolve, reject) => {
         const interval = setInterval(async () => {
@@ -284,6 +286,10 @@ export function ShotImageStudio({
           isGeneratingVideoPrompt={isGeneratingVideoPrompt}
           isGeneratingVideo={isGeneratingVideo}
           onGenerateVideo={handleGenerateVideo}
+          videoMode={videoMode}
+          onVideoModeChange={setVideoMode}
+          generateAudio={generateAudio}
+          onGenerateAudioChange={setGenerateAudio}
         />
 
         <StudioGallery

@@ -28,6 +28,10 @@ export function ShotStudioLeftPanel({
   isGeneratingVideoPrompt,
   isGeneratingVideo,
   onGenerateVideo,
+  videoMode,
+  onVideoModeChange,
+  generateAudio,
+  onGenerateAudioChange,
 }: {
   shot: Shot
   parentScene: Scene
@@ -49,6 +53,10 @@ export function ShotStudioLeftPanel({
   isGeneratingVideoPrompt: boolean
   isGeneratingVideo: boolean
   onGenerateVideo: () => void
+  videoMode: 'standard' | 'pro'
+  onVideoModeChange: (mode: 'standard' | 'pro') => void
+  generateAudio: boolean
+  onGenerateAudioChange: (value: boolean) => void
 }) {
   const [mediaTab, setMediaTab] = useState<'image' | 'video'>('image')
 
@@ -153,6 +161,28 @@ export function ShotStudioLeftPanel({
                       alt="Start frame"
                       className="w-full rounded-lg border border-border object-cover aspect-video"
                     />
+                  </div>
+
+                  {/* Video settings */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 flex-1">
+                      <label className="text-xs font-medium text-muted-foreground">Resolution</label>
+                      <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
+                        <button type="button" onClick={() => onVideoModeChange('standard')}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                          720p
+                        </button>
+                        <button type="button" onClick={() => onVideoModeChange('pro')}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                          1080p
+                        </button>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={generateAudio} onChange={(e) => onGenerateAudioChange(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded accent-primary" />
+                      <span className="text-xs font-medium text-muted-foreground">Audio</span>
+                    </label>
                   </div>
 
                   {/* Motion prompt */}

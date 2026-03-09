@@ -876,8 +876,8 @@ Return ONLY the structured prompt, nothing else.`
 // ---------------------------------------------------------------------------
 
 export const generateShotVideo = createServerFn({ method: 'POST' })
-  .inputValidator((data: { shotId: string; prompt: string }) => data)
-  .handler(async ({ data: { shotId, prompt } }) => {
+  .inputValidator((data: { shotId: string; prompt: string; mode?: 'standard' | 'pro'; generateAudio?: boolean }) => data)
+  .handler(async ({ data: { shotId, prompt, mode = 'pro', generateAudio = false } }) => {
     const { userId, shot, scene } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
 
@@ -900,7 +900,8 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         prompt,
         start_image: selectedAsset.url,
         duration: Math.max(3, Math.min(15, shot.durationSec)),
-        generate_audio: false,
+        mode,
+        generate_audio: generateAudio,
       },
     })
 
@@ -913,7 +914,7 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         stage: 'video' as const,
         prompt,
         model: 'kwaivgi/kling-v3-omni-video',
-        modelSettings: { duration: shot.durationSec },
+        modelSettings: { duration: shot.durationSec, mode, generateAudio },
         status: 'generating' as const,
         isSelected: false,
         batchId: randomUUID(),
@@ -953,6 +954,14 @@ export const pollVideoAsset = createServerFn({ method: 'POST' })
         videoUrl = output
       } else if (output && typeof (output as { url?: () => string }).url === 'function') {
         videoUrl = (output as { url: () => string }).url()
+      } else if (output) {
+        // FileOutput objects implement toString() returning the URL
+        const str = String(output)
+        if (str.startsWith('http')) {
+          videoUrl = str
+        } else {
+          throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
+        }
       } else {
         throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
       }
