@@ -922,7 +922,7 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         input: {
           prompt,
           start_image: selectedAsset.url,
-          duration: shot.durationSec,
+          duration: Math.max(3, Math.min(15, shot.durationSec)),
           generate_audio: false,
         },
         signal: controller.signal,
