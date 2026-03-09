@@ -23,9 +23,9 @@ export function ShotFilmstrip({
 
   function getPreviewUrl(shotId: string): string | null {
     const shotAssets = allAssets.filter((a) => a.shotId === shotId)
-    const selected = shotAssets.find((a) => a.type === 'start_image' && a.isSelected)
+    const selected = shotAssets.find((a) => a.isSelected)
     if (selected?.url) return selected.url
-    const anyDone = shotAssets.find((a) => a.type === 'start_image' && a.status === 'done' && a.url)
+    const anyDone = shotAssets.find((a) => a.status === 'done' && a.url)
     return anyDone?.url ?? null
   }
 

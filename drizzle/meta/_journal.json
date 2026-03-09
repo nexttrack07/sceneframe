@@ -15,6 +15,13 @@
       "when": 1772945982526,
       "tag": "0001_acoustic_kree",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773013745962,
+      "tag": "0002_absurd_falcon",
+      "breakpoints": true
     }
   ]
 }

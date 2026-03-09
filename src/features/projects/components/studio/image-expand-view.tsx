@@ -6,7 +6,6 @@ import { ImageLightbox } from '../image-lightbox'
 
 export function ImageExpandView({
   asset,
-  activeLane,
   allLaneAssets,
   onSelect,
   onRegenerate,
@@ -14,7 +13,6 @@ export function ImageExpandView({
   onLightboxChange,
 }: {
   asset: SceneAssetSummary
-  activeLane: 'start' | 'end'
   allLaneAssets: SceneAssetSummary[]
   onSelect: () => void
   onRegenerate: () => void
@@ -69,7 +67,7 @@ export function ImageExpandView({
         {!asset.isSelected && (
           <Button size="sm" onClick={onSelect} className="gap-1.5">
             <Check size={12} />
-            Select as {activeLane === 'start' ? 'Start Frame' : 'End Frame'}
+            Select
           </Button>
         )}
         <Button size="sm" variant="outline" onClick={onRegenerate} className="gap-1.5">

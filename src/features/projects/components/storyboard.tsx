@@ -137,7 +137,7 @@ export function Storyboard({
     if (hasShotsMode) {
       const count = storyShots.filter((shot) => {
         const shotAssets = assetsByShotId.get(shot.id) ?? []
-        return shotAssets.some((a) => a.type === 'start_image' && a.isSelected)
+        return shotAssets.some((a) => a.isSelected)
       }).length
       return {
         readyCount: count,
@@ -147,9 +147,7 @@ export function Storyboard({
     }
     const count = storyScenes.filter((scene) => {
       const sceneAssetList = assetsBySceneId.get(scene.id) ?? []
-      const hasStart = sceneAssetList.some((a) => a.type === 'start_image' && a.isSelected)
-      const hasEnd = sceneAssetList.some((a) => a.type === 'end_image' && a.isSelected)
-      return hasStart && hasEnd
+      return sceneAssetList.some((a) => a.isSelected)
     }).length
     return {
       readyCount: count,

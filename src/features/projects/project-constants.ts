@@ -19,6 +19,7 @@ export type AssetStatus = (typeof ASSET_STATUS)[keyof typeof ASSET_STATUS]
 export const ASSET_TYPE = {
   START_IMAGE: 'start_image',
   END_IMAGE: 'end_image',
+  IMAGE: 'image',
 } as const
 
 export type AssetType = (typeof ASSET_TYPE)[keyof typeof ASSET_TYPE]

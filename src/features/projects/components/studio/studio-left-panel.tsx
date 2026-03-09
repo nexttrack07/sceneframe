@@ -1,18 +1,14 @@
 import { Loader2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Scene } from '@/db/schema'
-import type { ImageDefaults, SceneAssetSummary, ScenePlanEntry } from '../../project-types'
+import type { ImageDefaults, ScenePlanEntry } from '../../project-types'
 import { SceneContextSection } from './scene-context-section'
-import { FrameTabBar } from './frame-tab-bar'
 import { PromptEditor } from './prompt-editor'
 import { InlineSettingsRow } from './inline-settings-row'
 
 export function StudioLeftPanel({
   scene,
   plan,
-  sceneAssets,
-  activeLane,
-  onLaneChange,
   prompt,
   onPromptChange,
   onPromptBlur,
@@ -26,9 +22,8 @@ export function StudioLeftPanel({
 }: {
   scene: Scene
   plan?: ScenePlanEntry
-  sceneAssets: SceneAssetSummary[]
-  activeLane: 'start' | 'end'
-  onLaneChange: (lane: 'start' | 'end') => void
+  promptMode?: 'start' | 'end'
+  onPromptModeChange?: (mode: 'start' | 'end') => void
   prompt: string
   onPromptChange: (value: string) => void
   onPromptBlur?: () => void
@@ -51,12 +46,6 @@ export function StudioLeftPanel({
         />
 
         <div className="border-t pt-4 space-y-4">
-          <FrameTabBar
-            activeLane={activeLane}
-            onLaneChange={onLaneChange}
-            sceneAssets={sceneAssets}
-          />
-
           <PromptEditor
             prompt={prompt}
             onPromptChange={onPromptChange}

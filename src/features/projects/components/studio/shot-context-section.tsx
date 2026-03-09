@@ -62,11 +62,6 @@ export function ShotContextSection({
     }
   }
 
-  function handleShotTypeChange(type: ShotType) {
-    setShotType(type)
-    setIsDirty(true)
-  }
-
   function handleDurationChange(value: number) {
     const clamped = Math.max(1, Math.min(10, value))
     setDurationSec(clamped)

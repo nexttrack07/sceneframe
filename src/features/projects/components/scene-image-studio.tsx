@@ -38,15 +38,12 @@ export function SceneImageStudio({
   const router = useRouter()
   const { toast } = useToast()
 
-  // Lane state
-  const [activeLane, setActiveLane] = useState<'start' | 'end'>('start')
+  // Prompt mode state
+  const [promptMode, setPromptMode] = useState<'start' | 'end'>('start')
 
-  // Load prompts from DB, fallback to generated default
-  const [startPrompt, setStartPrompt] = useState(
+  // Single prompt state — initialized from DB, fallback to generated default
+  const [prompt, setPrompt] = useState(
     scene.startFramePrompt ?? makeDefaultPrompt(scene.description, 'start'),
-  )
-  const [endPrompt, setEndPrompt] = useState(
-    scene.endFramePrompt ?? makeDefaultPrompt(scene.description, 'end'),
   )
 
   // Default settings from most recent asset's modelSettings, fallback to app defaults
@@ -68,30 +65,22 @@ export function SceneImageStudio({
   const [error, setError] = useState<string | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
-  const prompt = activeLane === 'start' ? startPrompt : endPrompt
-  const setPrompt = activeLane === 'start' ? setStartPrompt : setEndPrompt
-
-  // Clear expanded image when switching lanes
-  function handleLaneChange(lane: 'start' | 'end') {
-    setActiveLane(lane)
+  // Reset local state when scene changes (state-based navigation, no key remount)
+  useEffect(() => {
+    setPrompt(scene.startFramePrompt ?? makeDefaultPrompt(scene.description, 'start'))
+    setPromptMode('start')
+    setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
     setExpandedImageId(null)
-  }
-
-  // Sync prompts when description changes (e.g. after save in SceneContextSection)
-  function handleDescriptionSaved(newDescription: string) {
-    // Only reset prompts that haven't been customized (still match the default pattern)
-    if (startPrompt === makeDefaultPrompt(scene.description, 'start') || !scene.startFramePrompt) {
-      setStartPrompt(makeDefaultPrompt(newDescription, 'start'))
-    }
-    if (endPrompt === makeDefaultPrompt(scene.description, 'end') || !scene.endFramePrompt) {
-      setEndPrompt(makeDefaultPrompt(newDescription, 'end'))
-    }
-  }
+    setIsGenerating(false)
+    setIsGeneratingPrompt(false)
+    setIsSelectingAssetId(null)
+    setDeletingAssetId(null)
+    setError(null)
+  }, [scene.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save prompt to DB on blur (debounce-free persistence)
   async function handlePromptBlur() {
-    const currentPrompt = activeLane === 'start' ? startPrompt : endPrompt
-    await saveScenePrompt({ data: { sceneId: scene.id, lane: activeLane, prompt: currentPrompt } })
+    await saveScenePrompt({ data: { sceneId: scene.id, lane: promptMode, prompt } })
     await router.invalidate()
   }
 
@@ -118,14 +107,14 @@ export function SceneImageStudio({
   }, [scene.id, allScenes, onSceneChange, onClose, isLightboxOpen])
 
   async function handleGenerate() {
-    const promptOverride = (activeLane === 'start' ? startPrompt : endPrompt).trim()
+    const promptOverride = prompt.trim()
     setIsGenerating(true)
     setError(null)
     try {
       const result = await generateSceneImages({
         data: {
           sceneId: scene.id,
-          lane: activeLane,
+          lane: promptMode,
           promptOverride: promptOverride || undefined,
           settingsOverrides,
         },
@@ -148,7 +137,7 @@ export function SceneImageStudio({
       const result = await generateImagePrompt({
         data: {
           sceneId: scene.id,
-          lane: activeLane,
+          lane: promptMode,
           currentPrompt: prompt.trim() || undefined,
         },
       })
@@ -226,9 +215,8 @@ export function SceneImageStudio({
         <StudioLeftPanel
           scene={scene}
           plan={scenePlan.get(scene.id)}
-          sceneAssets={sceneAssets}
-          activeLane={activeLane}
-          onLaneChange={handleLaneChange}
+          promptMode={promptMode}
+          onPromptModeChange={setPromptMode}
           prompt={prompt}
           onPromptChange={setPrompt}
           onPromptBlur={handlePromptBlur}
@@ -238,12 +226,10 @@ export function SceneImageStudio({
           onSettingsChange={setSettingsOverrides}
           isGenerating={isGenerating}
           onGenerate={handleGenerate}
-          onDescriptionSaved={handleDescriptionSaved}
         />
 
         <StudioGallery
           sceneAssets={sceneAssets}
-          activeLane={activeLane}
           selectingAssetId={isSelectingAssetId}
           deletingAssetId={deletingAssetId}
           onSelectAsset={handleSelectAsset}

@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SceneFrame — Storyboard Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f11;
+      --surface: #161a1e;
+      --surface-elevated: #1e2328;
+      --border: #2a2f36;
+      --border-active: #3d4450;
+      --text-primary: #e8eaed;
+      --text-secondary: #8b9099;
+      --text-muted: #545b66;
+      --accent-green: #22c55e;
+      --accent-green-dim: rgba(34, 197, 94, 0.15);
+      --accent-green-glow: rgba(34, 197, 94, 0.3);
+      --accent-amber: #f59e0b;
+      --accent-amber-dim: rgba(245, 158, 11, 0.12);
+      --accent-blue: #3b82f6;
+      --accent-blue-dim: rgba(59, 130, 246, 0.12);
+      --connector-inactive: #2a2f36;
+      --radius-card: 12px;
+      --radius-sm: 6px;
+      --shadow-card: 0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.3);
+      --shadow-elevated: 0 4px 16px rgba(0,0,0,0.5), 0 1px 4px rgba(0,0,0,0.4);
+      --transition: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      gap: 16px;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+    }
+
+    .logo span {
+      color: var(--accent-green);
+    }
+
+    .scene-label {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .scene-title {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-primary);
+      letter-spacing: -0.2px;
+    }
+
+    .divider-v {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      background: var(--surface-elevated);
+    }
+
+    .badge.ready {
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+      background: var(--accent-green-dim);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: var(--transition);
+      white-space: nowrap;
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      border-color: var(--border-active);
+      color: var(--text-primary);
+      background: var(--surface-elevated);
+    }
+
+    .btn-primary {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: #000;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #16a34a;
+      border-color: #16a34a;
+    }
+    .btn-primary svg { color: #000; }
+
+    .btn-generate-all {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      border-color: transparent;
+      color: #000;
+      font-weight: 600;
+      box-shadow: 0 0 0 0 var(--accent-green-glow);
+      animation: pulse-glow 2s infinite;
+    }
+    .btn-generate-all:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px var(--accent-green-glow);
+      animation: none;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 0 var(--accent-green-glow); }
+      50% { box-shadow: 0 0 0 6px transparent; }
+    }
+
+    /* ── Main scroll area ─────────────────────────────────────────── */
+    .main {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .scroll-area {
+      flex: 1;
+      overflow-x: auto;
+      overflow-y: auto;
+      padding: 40px 32px;
+      display: flex;
+      align-items: flex-start;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .scroll-area::-webkit-scrollbar { height: 6px; width: 6px; }
+    .scroll-area::-webkit-scrollbar-track { background: transparent; }
+    .scroll-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Shot Rail ────────────────────────────────────────────────── */
+    .shot-rail {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      min-width: max-content;
+      padding-bottom: 8px;
+    }
+
+    /* ── Shot Card ────────────────────────────────────────────────── */
+    .shot-card {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+      transition: border-color var(--transition), box-shadow var(--transition);
+      position: relative;
+    }
+
+    .shot-card:hover {
+      border-color: var(--border-active);
+      box-shadow: var(--shadow-elevated);
+    }
+
+    .shot-card.has-image {
+      border-color: var(--border-active);
+    }
+
+    /* Image area */
+    .shot-image {
+      width: 100%;
+      height: 132px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .shot-image-gradient {
+      width: 100%;
+      height: 100%;
+      display: block;
+      transition: transform 400ms ease;
+    }
+    .shot-card:hover .shot-image-gradient {
+      transform: scale(1.04);
+    }
+
+    .shot-no-image {
+      width: 100%;
+      height: 132px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--surface-elevated);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .shot-no-image-icon {
+      width: 32px;
+      height: 32px;
+      opacity: 0.25;
+    }
+
+    .shot-no-image-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'DM Mono', monospace;
+    }
+
+    .shot-image-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .shot-image-badge {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      background: rgba(0,0,0,0.5);
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(4px);
+    }
+
+    /* Card body */
+    .shot-body {
+      padding: 12px 14px 14px;
+    }
+
+    .shot-number {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      font-family: 'DM Mono', monospace;
+      margin-bottom: 5px;
+    }
+
+    .shot-desc {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      margin-bottom: 12px;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
+    }
+
+    .shot-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-select {
+      flex: 1;
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: inherit;
+      cursor: pointer;
+      transition: var(--transition);
+      font-weight: 500;
+    }
+    .btn-select:hover {
+      border-color: var(--border-active);
+      color: var(--text-primary);
+      background: var(--surface-elevated);
+    }
+    .btn-select.selected {
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+      background: var(--accent-green-dim);
+    }
+
+    /* ── Connector ────────────────────────────────────────────────── */
+    .connector {
+      width: 80px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      position: relative;
+      height: 180px; /* matches card height roughly */
+    }
+
+    /* Inactive: dashed line */
+    .connector-line {
+      width: 100%;
+      height: 2px;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .connector-line-inactive {
+      width: 100%;
+      height: 2px;
+      background: repeating-linear-gradient(
+        to right,
+        var(--border) 0,
+        var(--border) 5px,
+        transparent 5px,
+        transparent 10px
+      );
+      border-radius: 1px;
+      opacity: 0.5;
+    }
+
+    /* Ready: animated arrow */
+    .connector-ready {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .connector-arrow-track {
+      width: 100%;
+      height: 2px;
+      background: var(--accent-green);
+      border-radius: 1px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .connector-arrow-track::after {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: -20px;
+      width: 20px;
+      height: 4px;
+      background: linear-gradient(to right, transparent, rgba(255,255,255,0.8));
+      border-radius: 2px;
+      animation: shimmer-track 1.5s linear infinite;
+    }
+
+    @keyframes shimmer-track {
+      0% { left: -20px; }
+      100% { left: 100%; }
+    }
+
+    .connector-arrow-head {
+      position: absolute;
+      right: -1px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid var(--accent-green);
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+    }
+
+    .connector-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--accent-green);
+      color: var(--accent-green);
+      background: var(--accent-green-dim);
+      font-family: inherit;
+      transition: var(--transition);
+      white-space: nowrap;
+    }
+    .connector-btn:hover {
+      background: rgba(34, 197, 94, 0.25);
+      transform: scale(1.05);
+      box-shadow: 0 0 12px var(--accent-green-glow);
+    }
+
+    /* Generating state */
+    .connector-generating {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .connector-progress-track {
+      width: 100%;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .connector-progress-bar {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      background: linear-gradient(to right, var(--accent-amber), #fbbf24);
+      border-radius: 2px;
+      animation: progress-fill 2s ease-in-out forwards;
+    }
+
+    @keyframes progress-fill {
+      0% { width: 5%; }
+      30% { width: 45%; }
+      70% { width: 75%; }
+      90% { width: 88%; }
+      100% { width: 95%; }
+    }
+
+    .connector-label {
+      font-size: 10px;
+      font-weight: 500;
+      font-family: 'DM Mono', monospace;
+      color: var(--accent-amber);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid rgba(245, 158, 11, 0.3);
+      border-top-color: var(--accent-amber);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Done state */
+    .connector-done {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .connector-done-track {
+      width: 100%;
+      height: 2px;
+      background: var(--accent-green);
+      border-radius: 1px;
+      position: relative;
+    }
+
+    .connector-play-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+      position: relative;
+      box-shadow: 0 0 0 0 var(--accent-green-glow);
+      animation: done-pulse 2.5s infinite;
+    }
+    .connector-play-btn:hover {
+      transform: scale(1.12);
+      box-shadow: 0 0 20px var(--accent-green-glow);
+      animation: none;
+    }
+
+    @keyframes done-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 var(--accent-green-glow); }
+      50% { box-shadow: 0 0 0 8px transparent; }
+    }
+
+    .connector-play-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: #000;
+      margin-left: 2px;
+    }
+
+    .connector-done-label {
+      font-size: 10px;
+      font-weight: 600;
+      font-family: 'DM Mono', monospace;
+      color: var(--accent-green);
+    }
+
+    /* ── Video preview overlay ────────────────────────────────────── */
+    .video-preview-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+      animation: overlay-in 200ms ease;
+    }
+
+    @keyframes overlay-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .video-preview-modal {
+      background: var(--surface);
+      border: 1px solid var(--border-active);
+      border-radius: 16px;
+      width: 560px;
+      max-width: 90vw;
+      overflow: hidden;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+      animation: modal-in 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes modal-in {
+      from { transform: scale(0.92); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .video-preview-screen {
+      width: 100%;
+      aspect-ratio: 16/9;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .video-preview-film {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-frame-a, .video-frame-b {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+    }
+
+    .video-frame-a {
+      animation: cross-dissolve-a 3s ease-in-out infinite;
+    }
+
+    .video-frame-b {
+      animation: cross-dissolve-b 3s ease-in-out infinite;
+    }
+
+    @keyframes cross-dissolve-a {
+      0%, 40% { opacity: 1; }
+      50%, 90% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+
+    @keyframes cross-dissolve-b {
+      0%, 40% { opacity: 0; }
+      50%, 90% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .video-scanline {
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+    }
+
+    .video-preview-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: rgba(255,255,255,0.15);
+    }
+
+    .video-progress {
+      height: 100%;
+      background: var(--accent-green);
+      animation: video-progress 4s linear infinite;
+    }
+
+    @keyframes video-progress {
+      from { width: 0%; }
+      to { width: 100%; }
+    }
+
+    .video-play-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      opacity: 0.7;
+    }
+
+    .video-preview-footer {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--border);
+    }
+
+    .video-preview-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .video-preview-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .video-preview-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'DM Mono', monospace;
+    }
+
+    /* ── Empty state hint ─────────────────────────────────────────── */
+    .hint-bar {
+      padding: 12px 32px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .hint-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+      flex-shrink: 0;
+    }
+
+    .hint-text {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ── Generate All banner ──────────────────────────────────────── */
+    .generate-all-bar {
+      padding: 10px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      gap: 12px;
+      transition: var(--transition);
+    }
+
+    .generate-all-bar.hidden {
+      display: none;
+    }
+
+    .generate-all-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .generate-all-info-icon {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+
+    @keyframes ping {
+      0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6); }
+      100% { box-shadow: 0 0 0 8px transparent; }
+    }
+
+    .generate-all-info-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .generate-all-info-text strong {
+      color: var(--text-primary);
+    }
+
+    /* ── Toast ────────────────────────────────────────────────────── */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 200;
+      pointer-events: none;
+    }
+
+    .toast {
+      padding: 10px 16px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-active);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-primary);
+      box-shadow: var(--shadow-elevated);
+      animation: toast-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    @keyframes toast-in {
+      from { transform: translateX(110%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .toast-out {
+      animation: toast-out 300ms ease forwards;
+    }
+
+    @keyframes toast-out {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(110%); opacity: 0; }
+    }
+
+    /* ── Misc ─────────────────────────────────────────────────────── */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+    }
+
+    /* clip for connector arrow track */
+    .connector-arrow-track {
+      position: relative;
+    }
+
+    /* Selection shimmer on card with image */
+    .shot-card.has-image::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(to right, transparent, rgba(255,255,255,0.08), transparent);
+    }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo">Scene<span>Frame</span></span>
+      <span class="divider-v"></span>
+      <div>
+        <div class="scene-label">Scene 2</div>
+        <div class="scene-title">The Desert Journey</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge" id="readiness-badge">
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="8"/></svg>
+        <span id="readiness-text">3 / 5 shots have images</span>
+      </span>
+      <button class="btn btn-ghost" onclick="showToast('Export coming soon', 'info')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+      </button>
+    </div>
+  </header>
+
+  <!-- Generate All bar -->
+  <div class="generate-all-bar" id="generate-all-bar">
+    <div class="generate-all-info">
+      <div class="generate-all-info-icon"></div>
+      <div class="generate-all-info-text"><strong id="ready-count">1</strong> transition<span id="ready-plural">s</span> ready to generate</div>
+    </div>
+    <button class="btn btn-generate-all" id="generate-all-btn" onclick="generateAll()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Generate All
+    </button>
+  </div>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="scroll-area">
+      <div class="shot-rail" id="shot-rail">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </main>
+
+  <!-- Hint bar -->
+  <div class="hint-bar">
+    <div class="hint-dot"></div>
+    <span class="hint-text">Click "Select Image" on any shot to activate it. When two adjacent shots both have images, a transition can be generated.</span>
+  </div>
+
+</div>
+
+<!-- Video preview overlay -->
+<div class="video-preview-overlay" id="video-overlay" style="display:none" onclick="closeVideoPreview(event)">
+  <div class="video-preview-modal">
+    <div class="video-preview-screen">
+      <div class="video-preview-film">
+        <div class="video-frame-a" id="preview-frame-a"></div>
+        <div class="video-frame-b" id="preview-frame-b"></div>
+      </div>
+      <div class="video-scanline"></div>
+      <div class="video-play-overlay">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      </div>
+      <div class="video-preview-bar">
+        <div class="video-progress"></div>
+      </div>
+    </div>
+    <div class="video-preview-footer">
+      <div class="video-preview-meta">
+        <div class="video-preview-title" id="preview-title">Transition Preview</div>
+        <div class="video-preview-sub" id="preview-sub">Generated · 2.4s clip</div>
+      </div>
+      <button class="btn btn-primary" onclick="closeVideoPreview()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Use This
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────
+const SHOTS = [
+  {
+    id: 1,
+    number: 'SH-01',
+    description: 'Extreme wide: caravan silhouettes crest a dune ridge at dawn, sun low and diffuse behind a veil of desert haze.',
+    gradient: 'linear-gradient(135deg, #1a3a6b 0%, #c2620a 60%, #f97316 100%)',
+    gradientB: 'linear-gradient(160deg, #0f2240 0%, #d9770f 70%, #fbbf24 100%)',
+    hasImage: true,
+    label: 'WIDE · DAWN',
+  },
+  {
+    id: 2,
+    number: 'SH-02',
+    description: 'Close-up on a camel\'s eye, sand-crusted lashes, the vast dune reflected in its deep amber iris.',
+    gradient: 'linear-gradient(135deg, #7a5c2e 0%, #c9a55a 50%, #e8d5a3 100%)',
+    gradientB: 'linear-gradient(160deg, #6b4f28 0%, #d4b060 55%, #f0e0b8 100%)',
+    hasImage: true,
+    label: 'CU · AMBER',
+  },
+  {
+    id: 3,
+    number: 'SH-03',
+    description: 'Aerial pull-back revealing the full scale of the Sahara, the caravan a thin thread of life through a thousand miles of silence.',
+    gradient: null,
+    gradientB: null,
+    hasImage: false,
+    label: null,
+  },
+  {
+    id: 4,
+    number: 'SH-04',
+    description: 'Golden hour: a guide\'s weathered hands pour tea from a blackened kettle, steam catching the dying light.',
+    gradient: 'linear-gradient(135deg, #8B6914 0%, #d4a017 40%, #ffd700 80%, #ff9800 100%)',
+    gradientB: 'linear-gradient(160deg, #7a5c10 0%, #c49010 45%, #ffc107 85%, #e65100 100%)',
+    hasImage: true,
+    label: 'GOLDEN HR',
+  },
+  {
+    id: 5,
+    number: 'SH-05',
+    description: 'Night camp: embers of a fire glow orange against an ink-black sky crammed with stars; the caravan at rest.',
+    gradient: null,
+    gradientB: null,
+    hasImage: false,
+    label: null,
+  },
+];
+
+// Connector states: 'inactive' | 'ready' | 'generating' | 'done'
+// connector[i] = between shots[i] and shots[i+1]
+const connectorState = Array(SHOTS.length - 1).fill('inactive');
+const connectorTimeouts = {};
+
+// ── Render ────────────────────────────────────────────────────────────
+function computeConnectorState(idx) {
+  const left = SHOTS[idx];
+  const right = SHOTS[idx + 1];
+  if (left.hasImage && right.hasImage) return 'ready';
+  return 'inactive';
+}
+
+function initConnectors() {
+  for (let i = 0; i < SHOTS.length - 1; i++) {
+    const current = connectorState[i];
+    if (current === 'generating' || current === 'done') continue;
+    connectorState[i] = computeConnectorState(i);
+  }
+}
+
+function render() {
+  initConnectors();
+  renderRail();
+  updateUI();
+}
+
+function renderRail() {
+  const rail = document.getElementById('shot-rail');
+  rail.innerHTML = '';
+
+  SHOTS.forEach((shot, i) => {
+    // Shot card
+    const card = buildShotCard(shot, i);
+    rail.appendChild(card);
+
+    // Connector (between shots)
+    if (i < SHOTS.length - 1) {
+      const conn = buildConnector(i);
+      rail.appendChild(conn);
+    }
+  });
+}
+
+function buildShotCard(shot, i) {
+  const div = document.createElement('div');
+  div.className = 'shot-card' + (shot.hasImage ? ' has-image' : '');
+  div.id = `shot-${shot.id}`;
+
+  const imageHtml = shot.hasImage
+    ? `<div class="shot-image">
+        <div class="shot-image-gradient" style="background:${shot.gradient};height:100%;"></div>
+        <div class="shot-image-overlay"></div>
+        <div class="shot-image-badge">${shot.label}</div>
+      </div>`
+    : `<div class="shot-no-image">
+        <svg class="shot-no-image-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <span class="shot-no-image-text">No image</span>
+      </div>`;
+
+  const btnLabel = shot.hasImage ? '✓ Image selected' : '+ Select Image';
+  const btnClass = shot.hasImage ? 'btn-select selected' : 'btn-select';
+
+  div.innerHTML = `
+    ${imageHtml}
+    <div class="shot-body">
+      <div class="shot-number">${shot.number}</div>
+      <div class="shot-desc">${shot.description}</div>
+      <div class="shot-actions">
+        <button class="${btnClass}" onclick="toggleImage(${i})">${btnLabel}</button>
+      </div>
+    </div>
+  `;
+
+  return div;
+}
+
+function buildConnector(idx) {
+  const div = document.createElement('div');
+  div.className = 'connector';
+  div.id = `connector-${idx}`;
+  div.innerHTML = connectorInnerHtml(idx);
+  return div;
+}
+
+function connectorInnerHtml(idx) {
+  const state = connectorState[idx];
+
+  if (state === 'inactive') {
+    return `<div class="connector-line"><div class="connector-line-inactive"></div></div>`;
+  }
+
+  if (state === 'ready') {
+    return `
+      <div class="connector-ready">
+        <div class="connector-arrow-track" style="position:relative;">
+          <div class="connector-arrow-head"></div>
+        </div>
+        <button class="connector-btn" onclick="generateTransition(${idx})">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Generate
+        </button>
+      </div>
+    `;
+  }
+
+  if (state === 'generating') {
+    return `
+      <div class="connector-generating">
+        <div class="connector-progress-track">
+          <div class="connector-progress-bar"></div>
+        </div>
+        <div class="connector-label">
+          <span class="spinner"></span>
+          Generating
+        </div>
+      </div>
+    `;
+  }
+
+  if (state === 'done') {
+    const left = SHOTS[idx];
+    const right = SHOTS[idx + 1];
+    return `
+      <div class="connector-done">
+        <div class="connector-done-track"></div>
+        <button class="connector-play-btn" onclick="playVideoPreview(${idx})" title="Preview transition">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <div class="connector-done-label">Done</div>
+      </div>
+    `;
+  }
+}
+
+// ── Interactions ──────────────────────────────────────────────────────
+function toggleImage(shotIdx) {
+  const shot = SHOTS[shotIdx];
+  shot.hasImage = !shot.hasImage;
+
+  // Recompute adjacent connectors (only if not in generating/done state)
+  const left = shotIdx - 1;
+  const right = shotIdx;
+
+  if (left >= 0) {
+    const cs = connectorState[left];
+    if (cs !== 'generating' && cs !== 'done') {
+      connectorState[left] = computeConnectorState(left);
+    }
+  }
+  if (right < SHOTS.length - 1) {
+    const cs = connectorState[right];
+    if (cs !== 'generating' && cs !== 'done') {
+      connectorState[right] = computeConnectorState(right);
+    }
+  }
+
+  renderRail();
+  updateUI();
+
+  const action = shot.hasImage ? 'Image selected' : 'Image removed';
+  showToast(`${shot.number}: ${action}`, shot.hasImage ? 'success' : 'info');
+}
+
+function generateTransition(idx) {
+  if (connectorState[idx] !== 'ready') return;
+  connectorState[idx] = 'generating';
+  updateConnector(idx);
+  updateUI();
+
+  // Fake 2-second generation
+  connectorTimeouts[idx] = setTimeout(() => {
+    connectorState[idx] = 'done';
+    updateConnector(idx);
+    updateUI();
+    showToast(`Transition ${idx + 1}→${idx + 2} generated`, 'success');
+  }, 2200);
+}
+
+function generateAll() {
+  const readyIndices = connectorState
+    .map((s, i) => s === 'ready' ? i : -1)
+    .filter(i => i !== -1);
+
+  if (readyIndices.length === 0) return;
+
+  readyIndices.forEach((idx, pos) => {
+    connectorState[idx] = 'generating';
+    updateConnector(idx);
+
+    // Stagger completions slightly
+    connectorTimeouts[idx] = setTimeout(() => {
+      connectorState[idx] = 'done';
+      updateConnector(idx);
+      updateUI();
+    }, 2200 + pos * 400);
+  });
+
+  updateUI();
+  showToast(`Generating ${readyIndices.length} transition${readyIndices.length > 1 ? 's' : ''}...`, 'info');
+}
+
+function updateConnector(idx) {
+  const el = document.getElementById(`connector-${idx}`);
+  if (!el) return;
+  el.innerHTML = connectorInnerHtml(idx);
+}
+
+function updateUI() {
+  // Update readiness badge
+  const withImage = SHOTS.filter(s => s.hasImage).length;
+  const text = `${withImage} / ${SHOTS.length} shots have images`;
+  document.getElementById('readiness-text').textContent = text;
+
+  const badge = document.getElementById('readiness-badge');
+  if (withImage === SHOTS.length) {
+    badge.classList.add('ready');
+  } else {
+    badge.classList.remove('ready');
+  }
+
+  // Update Generate All bar
+  const readyCount = connectorState.filter(s => s === 'ready').length;
+  const bar = document.getElementById('generate-all-bar');
+  const btn = document.getElementById('generate-all-btn');
+
+  if (readyCount >= 1) {
+    bar.classList.remove('hidden');
+    document.getElementById('ready-count').textContent = readyCount;
+    document.getElementById('ready-plural').textContent = readyCount === 1 ? '' : 's';
+    btn.disabled = false;
+  } else {
+    bar.classList.add('hidden');
+    btn.disabled = true;
+  }
+}
+
+// ── Video Preview ─────────────────────────────────────────────────────
+function playVideoPreview(connectorIdx) {
+  const leftShot = SHOTS[connectorIdx];
+  const rightShot = SHOTS[connectorIdx + 1];
+
+  document.getElementById('preview-frame-a').style.background = leftShot.gradient;
+  document.getElementById('preview-frame-b').style.background = rightShot.gradientB || rightShot.gradient;
+
+  document.getElementById('preview-title').textContent =
+    `${leftShot.number} → ${rightShot.number}`;
+  document.getElementById('preview-sub').textContent =
+    'Generated · 2.4s clip · 1080p';
+
+  document.getElementById('video-overlay').style.display = 'flex';
+}
+
+function closeVideoPreview(e) {
+  if (e && e.target !== document.getElementById('video-overlay')) return;
+  document.getElementById('video-overlay').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('video-overlay').style.display = 'none';
+});
+
+// ── Toast ─────────────────────────────────────────────────────────────
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast';
+
+  const icons = {
+    success: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`,
+    info: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  };
+
+  el.innerHTML = `${icons[type] || icons.info} ${message}`;
+  container.appendChild(el);
+
+  setTimeout(() => {
+    el.classList.add('toast-out');
+    setTimeout(() => el.remove(), 300);
+  }, 3000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+render();
+updateUI();
+</script>
+</body>
+</html>

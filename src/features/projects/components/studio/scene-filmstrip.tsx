@@ -23,9 +23,9 @@ export function SceneFilmstrip({
 
   function getPreviewUrl(sceneId: string): string | null {
     const sceneAssets = allAssets.filter((a) => a.sceneId === sceneId)
-    const selected = sceneAssets.find((a) => a.type === 'start_image' && a.isSelected)
+    const selected = sceneAssets.find((a) => a.isSelected)
     if (selected?.url) return selected.url
-    const anyDone = sceneAssets.find((a) => a.type === 'start_image' && a.status === 'done' && a.url)
+    const anyDone = sceneAssets.find((a) => a.status === 'done' && a.url)
     return anyDone?.url ?? null
   }
 

@@ -132,7 +132,7 @@ export const assets = pgTable(
       .notNull()
       .references(() => scenes.id),
     shotId: uuid('shot_id').references(() => shots.id),
-    type: text('type').notNull().$type<'start_image' | 'end_image' | 'video' | 'voiceover' | 'background_music'>(),
+    type: text('type').notNull().$type<'start_image' | 'end_image' | 'image' | 'video' | 'voiceover' | 'background_music'>(),
     stage: text('stage').notNull().$type<'images' | 'video' | 'audio'>(),
     prompt: text('prompt'),
     model: text('model'),
@@ -160,20 +160,21 @@ export const assets = pgTable(
     index('idx_assets_scene_stage').on(table.sceneId, table.stage),
     index('idx_assets_batch_id').on(table.batchId),
     index('idx_assets_deleted').on(table.deletedAt),
-    // One selected asset per (scene, type) — partial unique index enforced at DB level
+    // One selected asset per scene — partial unique index enforced at DB level
     uniqueIndex('idx_assets_selected')
-      .on(table.sceneId, table.type)
-      .where(sql`${table.isSelected} = true`),
+      .on(table.sceneId)
+      .where(sql`${table.isSelected} = true AND ${table.shotId} IS NULL AND ${table.deletedAt} IS NULL`),
     index('idx_assets_shot_id').on(table.shotId),
-    // One selected asset per (shot, type) — partial unique index enforced at DB level
+    // One selected asset per shot — partial unique index enforced at DB level
     uniqueIndex('idx_assets_shot_selected')
-      .on(table.shotId, table.type)
-      .where(sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL`),
-    check('assets_type_check', sql`${table.type} IN ('start_image', 'end_image', 'video', 'voiceover', 'background_music')`),
+      .on(table.shotId)
+      .where(sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL AND ${table.deletedAt} IS NULL`),
+    check('assets_type_check', sql`${table.type} IN ('start_image', 'end_image', 'image', 'video', 'voiceover', 'background_music')`),
     check('assets_status_check', sql`${table.status} IN ('generating', 'done', 'error')`),
     check(
       'assets_type_stage_check',
       sql`(${table.type} IN ('start_image', 'end_image') AND ${table.stage} = 'images')
+       OR (${table.type} = 'image' AND ${table.stage} = 'images')
        OR (${table.type} = 'video' AND ${table.stage} = 'video')
        OR (${table.type} IN ('voiceover', 'background_music') AND ${table.stage} = 'audio')`,
     ),

@@ -46,17 +46,16 @@ export function StoryboardCard({
   onDragEnd: () => void
 }) {
   const currentStageIndex = PIPELINE_STAGES.findIndex((s) => s.key === scene.stage)
-  const selectedStart = imageAssets.some((asset) => asset.type === 'start_image' && asset.isSelected)
-  const selectedEnd = imageAssets.some((asset) => asset.type === 'end_image' && asset.isSelected)
+  const hasSelected = imageAssets.some((asset) => asset.isSelected && asset.status === 'done')
   const hasGenerating = imageAssets.some((asset) => asset.status === 'generating')
   const imageStatusLabel = hasGenerating
     ? 'Generating...'
-    : selectedStart && selectedEnd
+    : hasSelected
       ? 'Ready for video'
       : imageAssets.length > 0
         ? 'Has candidates'
         : 'Needs images'
-  const imageStatusTone = selectedStart && selectedEnd ? 'text-success' : 'text-muted-foreground'
+  const imageStatusTone = hasSelected ? 'text-success' : 'text-muted-foreground'
 
   return (
     <div

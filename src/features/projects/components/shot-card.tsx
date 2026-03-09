@@ -36,8 +36,8 @@ export function ShotCard({
   onSelect: () => void
   onDelete: () => void
 }) {
-  const selectedStartAsset = assets.find(
-    (a) => a.type === 'start_image' && a.isSelected && a.status === 'done' && a.url,
+  const selectedAsset = assets.find(
+    (a) => a.isSelected && a.status === 'done' && a.url,
   )
   const duration =
     shot.timestampEnd != null && shot.timestampStart != null
@@ -57,9 +57,9 @@ export function ShotCard({
         <div className="flex items-start gap-3">
           {/* Thumbnail */}
           <div className="w-16 h-12 rounded bg-muted flex items-center justify-center shrink-0 overflow-hidden">
-            {selectedStartAsset?.url ? (
+            {selectedAsset?.url ? (
               <img
-                src={selectedStartAsset.url}
+                src={selectedAsset.url}
                 alt={`Shot ${globalIndex}`}
                 className="w-full h-full object-cover"
               />
