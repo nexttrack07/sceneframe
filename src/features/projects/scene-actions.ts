@@ -856,7 +856,7 @@ Return ONLY the motion prompt, nothing else.`
     try {
       const chunks: string[] = []
       for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
-        input: { prompt: `${systemPrompt}\n\n${userMessage}`, max_tokens: 512, temperature: 0.7 },
+        input: { prompt: `${systemPrompt}\n\n${userMessage}`, max_tokens: 1024, temperature: 0.7 },
         signal: controller.signal,
       })) {
         chunks.push(String(event))
