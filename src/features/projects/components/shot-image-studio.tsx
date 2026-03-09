@@ -3,18 +3,11 @@ import { useRouter } from '@tanstack/react-router'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, SceneAssetSummary } from '../project-types'
 import { normalizeImageDefaults } from '../project-normalize'
-import { deleteAsset, generateShotImages, generateShotImagePrompt, saveShotPrompt, selectShotAsset } from '../scene-actions'
+import { deleteAsset, generateShotImages, generateShotImagePrompt, selectShotAsset } from '../scene-actions'
 import { useToast } from '@/components/ui/toast'
 import { ShotStudioHeader } from './studio/shot-studio-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
 import { StudioGallery } from './studio/studio-gallery'
-
-function makeDefaultShotPrompt(description: string, lane: 'start' | 'end'): string {
-  if (lane === 'start') {
-    return `${description}\nFocus on the key visual moment of this shot.`
-  }
-  return `End frame: ${description}\nFocus on the closing moment leading into the next shot.`
-}
 
 export function ShotImageStudio({
   shot,
@@ -38,17 +31,11 @@ export function ShotImageStudio({
   const router = useRouter()
   const { toast } = useToast()
 
-  // Lane state
-  const [activeLane, setActiveLane] = useState<'start' | 'end'>('start')
-  const [showEndFrame, setShowEndFrame] = useState(false)
+  // Single prompt state
+  const [prompt, setPrompt] = useState(shot.imagePrompt ?? '')
 
-  // Load prompts — shot has a single imagePrompt field
-  const [startPrompt, setStartPrompt] = useState(
-    shot.imagePrompt ?? '',
-  )
-  const [endPrompt, setEndPrompt] = useState(
-    '',
-  )
+  // Prompt context mode (affects Generate Prompt only)
+  const [promptMode, setPromptMode] = useState<'start' | 'end'>('start')
 
   // Default settings from most recent asset's modelSettings, fallback to app defaults
   const lastAssetSettings = useMemo(() => {
@@ -69,17 +56,12 @@ export function ShotImageStudio({
   const [error, setError] = useState<string | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
-  const hasSelectedImage = shotAssets.some((a) => a.type === 'start_image' && a.isSelected && a.status === 'done')
-
-  const prompt = activeLane === 'start' ? startPrompt : endPrompt
-  const setPrompt = activeLane === 'start' ? setStartPrompt : setEndPrompt
+  const hasSelectedImage = shotAssets.some((a) => a.isSelected && a.status === 'done')
 
   // Reset local state when shot changes (state-based navigation, no key remount)
   useEffect(() => {
-    setActiveLane('start')
-    setShowEndFrame(false)
-    setStartPrompt(shot.imagePrompt ?? '')
-    setEndPrompt('')
+    setPrompt(shot.imagePrompt ?? '')
+    setPromptMode('start')
     setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
     setExpandedImageId(null)
     setIsGenerating(false)
@@ -89,37 +71,9 @@ export function ShotImageStudio({
     setError(null)
   }, [shot.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear expanded image when switching lanes
-  function handleLaneChange(lane: 'start' | 'end') {
-    setActiveLane(lane)
-    setExpandedImageId(null)
-  }
-
-  function handleToggleEndFrame() {
-    if (showEndFrame) {
-      // Turning off: reset to start lane
-      setActiveLane('start')
-      setShowEndFrame(false)
-    } else {
-      setShowEndFrame(true)
-    }
-  }
-
-  // Sync prompts when description changes (e.g. after save in ShotContextSection)
-  function handleDescriptionSaved(newDescription: string) {
-    if (startPrompt === makeDefaultShotPrompt(shot.description, 'start') || !shot.imagePrompt) {
-      setStartPrompt(makeDefaultShotPrompt(newDescription, 'start'))
-    }
-    if (endPrompt === makeDefaultShotPrompt(shot.description, 'end')) {
-      setEndPrompt(makeDefaultShotPrompt(newDescription, 'end'))
-    }
-  }
-
-  // Save prompt to DB on blur
-  async function handlePromptBlur() {
-    const currentPrompt = activeLane === 'start' ? startPrompt : endPrompt
-    await saveShotPrompt({ data: { shotId: shot.id, prompt: currentPrompt } })
-    await router.invalidate()
+  function handlePromptModeChange(mode: 'start' | 'end') {
+    setPromptMode(mode)
+    setPrompt('')
   }
 
   // Keyboard shortcuts — guard for lightbox, contentEditable, and inputs
@@ -145,14 +99,14 @@ export function ShotImageStudio({
   }, [shot.id, allShots, onShotChange, onClose, isLightboxOpen])
 
   async function handleGenerate() {
-    const promptOverride = (activeLane === 'start' ? startPrompt : endPrompt).trim()
+    const promptOverride = prompt.trim()
     setIsGenerating(true)
     setError(null)
     try {
       const result = await generateShotImages({
         data: {
           shotId: shot.id,
-          lane: activeLane,
+          lane: promptMode,
           promptOverride: promptOverride || undefined,
           settingsOverrides,
         },
@@ -175,7 +129,7 @@ export function ShotImageStudio({
       const result = await generateShotImagePrompt({
         data: {
           shotId: shot.id,
-          lane: activeLane,
+          lane: promptMode,
         },
       })
       setPrompt(result.prompt)
@@ -253,27 +207,21 @@ export function ShotImageStudio({
         <ShotStudioLeftPanel
           shot={shot}
           parentScene={parentScene}
-          shotAssets={shotAssets}
-          activeLane={activeLane}
-          onLaneChange={handleLaneChange}
-          showEndFrame={showEndFrame}
-          onToggleEndFrame={handleToggleEndFrame}
+          promptMode={promptMode}
+          onPromptModeChange={handlePromptModeChange}
           prompt={prompt}
           onPromptChange={setPrompt}
-          onPromptBlur={handlePromptBlur}
           onGeneratePrompt={handleGeneratePrompt}
           isGeneratingPrompt={isGeneratingPrompt}
           settingsOverrides={settingsOverrides}
           onSettingsChange={setSettingsOverrides}
           isGenerating={isGenerating}
           onGenerate={handleGenerate}
-          onDescriptionSaved={handleDescriptionSaved}
           hasSelectedImage={hasSelectedImage}
         />
 
         <StudioGallery
           sceneAssets={shotAssets}
-          activeLane={activeLane}
           selectingAssetId={isSelectingAssetId}
           deletingAssetId={deletingAssetId}
           onSelectAsset={handleSelectAsset}

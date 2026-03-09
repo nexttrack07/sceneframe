@@ -1,24 +1,19 @@
 import { useState } from 'react'
-import { Loader2, PlusCircle, MinusCircle, Wand2, Film } from 'lucide-react'
+import { Loader2, Wand2, Film } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Scene, Shot } from '@/db/schema'
-import type { ImageDefaults, SceneAssetSummary } from '../../project-types'
+import type { ImageDefaults } from '../../project-types'
 import { ShotContextSection } from './shot-context-section'
-import { FrameTabBar } from './frame-tab-bar'
 import { PromptEditor } from './prompt-editor'
 import { InlineSettingsRow } from './inline-settings-row'
 
 export function ShotStudioLeftPanel({
   shot,
   parentScene,
-  shotAssets,
-  activeLane,
-  onLaneChange,
-  showEndFrame,
-  onToggleEndFrame,
+  promptMode,
+  onPromptModeChange,
   prompt,
   onPromptChange,
-  onPromptBlur,
   onGeneratePrompt,
   isGeneratingPrompt,
   settingsOverrides,
@@ -30,14 +25,10 @@ export function ShotStudioLeftPanel({
 }: {
   shot: Shot
   parentScene: Scene
-  shotAssets: SceneAssetSummary[]
-  activeLane: 'start' | 'end'
-  onLaneChange: (lane: 'start' | 'end') => void
-  showEndFrame: boolean
-  onToggleEndFrame: () => void
+  promptMode: 'start' | 'end'
+  onPromptModeChange?: (mode: 'start' | 'end') => void
   prompt: string
   onPromptChange: (value: string) => void
-  onPromptBlur?: () => void
   onGeneratePrompt: () => void
   isGeneratingPrompt: boolean
   settingsOverrides: ImageDefaults
@@ -60,25 +51,6 @@ export function ShotStudioLeftPanel({
         />
 
         <div className="border-t pt-4 space-y-4">
-          {/* End frame toggle */}
-          <button
-            type="button"
-            onClick={onToggleEndFrame}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showEndFrame ? <MinusCircle size={13} /> : <PlusCircle size={13} />}
-            {showEndFrame ? 'Remove end frame' : 'Add end frame'}
-          </button>
-
-          {/* Frame tab bar — only visible when end frame is enabled */}
-          {showEndFrame && (
-            <FrameTabBar
-              activeLane={activeLane}
-              onLaneChange={onLaneChange}
-              sceneAssets={shotAssets}
-            />
-          )}
-
           {/* Media type tabs */}
           <div className="flex gap-1 border-b pb-3">
             <button
@@ -107,10 +79,39 @@ export function ShotStudioLeftPanel({
 
           {mediaTab === 'image' && (
             <>
+              {/* Opening / Closing frame toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">Frame</span>
+                <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => onPromptModeChange?.('start')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                      promptMode === 'start'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Opening
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPromptModeChange?.('end')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                      promptMode === 'end'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Closing
+                  </button>
+                </div>
+              </div>
+
               <PromptEditor
                 prompt={prompt}
                 onPromptChange={onPromptChange}
-                onPromptBlur={onPromptBlur}
+
                 onGeneratePrompt={onGeneratePrompt}
                 isGeneratingPrompt={isGeneratingPrompt}
               />

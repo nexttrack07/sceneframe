@@ -196,7 +196,7 @@ export const generateSceneImages = createServerFn({ method: 'POST' })
     const outputContentType = isNanoBanana ? 'image/png' : 'image/webp'
 
     const batchId = randomUUID()
-    const type = lane === 'start' ? 'start_image' as const : 'end_image' as const
+    const type = 'image' as const
     const generationCount = Math.max(1, Math.min(4, imageDefaults.batchCount))
 
     const placeholders = await db
@@ -213,6 +213,7 @@ export const generateSceneImages = createServerFn({ method: 'POST' })
             qualityPreset: imageDefaults.qualityPreset,
             batchCount: generationCount,
             outputFormat: outputExtension,
+            generationLane: lane,
           },
           status: 'generating' as const,
           isSelected: false,
@@ -261,7 +262,7 @@ export const generateSceneImages = createServerFn({ method: 'POST' })
           throw new Error(`No output URL found (${summarizeReplicateOutput(output)}).`)
         }
 
-        const storageKey = `projects/${project.id}/scenes/${scene.id}/images/${batchId}/${type}-${i + 1}.${outputExtension}`
+        const storageKey = `projects/${project.id}/scenes/${scene.id}/images/${batchId}/image-${i + 1}.${outputExtension}`
         const storedUrl = await uploadFromUrl(sourceUrl, storageKey, outputContentType)
 
         await db
@@ -298,21 +299,27 @@ export const generateSceneImages = createServerFn({ method: 'POST' })
 export const selectAsset = createServerFn({ method: 'POST' })
   .inputValidator((data: { assetId: string }) => data)
   .handler(async ({ data: { assetId } }) => {
-    const { asset, scene } = await assertAssetOwner(assetId)
+    const { asset } = await assertAssetOwner(assetId)
 
-    if (asset.type !== 'start_image' && asset.type !== 'end_image') {
+    if (!['start_image', 'end_image', 'image'].includes(asset.type)) {
       throw new Error('Only image assets can be selected here')
     }
     if (asset.status !== 'done') {
       throw new Error('Only completed assets can be selected')
     }
 
-    await db
-      .update(assets)
-      .set({ isSelected: false })
-      .where(and(eq(assets.sceneId, scene.id), eq(assets.type, asset.type), isNull(assets.deletedAt)))
-
-    await db.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
+    await db.transaction(async (tx) => {
+      await tx
+        .update(assets)
+        .set({ isSelected: false })
+        .where(and(
+          eq(assets.sceneId, asset.sceneId),
+          isNull(assets.shotId),
+          inArray(assets.type, ['start_image', 'end_image', 'image']),
+          isNull(assets.deletedAt),
+        ))
+      await tx.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
+    })
   })
 
 export const reorderScene = createServerFn({ method: 'POST' })
@@ -607,28 +614,38 @@ export const generateShotImagePrompt = createServerFn({ method: 'POST' })
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
 
+    const isStart = lane === 'start'
+    const frameLabel = isStart ? 'FIRST (start) frame' : 'LAST (end) frame'
+    const momentInstruction = isStart
+      ? 'This is the FIRST frame — describe the scene at T=0, before any action has occurred. Capture the initial state: where subjects are positioned, their starting pose and expression, the environment as it looks at the very beginning of the shot.'
+      : 'This is the LAST frame — describe the scene at the end of the shot, after all action has completed. Capture the final state: where subjects have moved to, their ending pose and expression, any environmental changes that occurred during the shot.'
+
     const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
-Given a shot description from a video project, write a detailed, vivid image generation prompt for the ${lane === 'start' ? 'opening' : 'closing'} frame of this shot.
+You are generating the ${frameLabel} of a video shot. This image will be used as a keyframe in Kling AI video generation — the start and end frames must be visually distinct enough for the AI to interpolate meaningful motion between them.
 
-You MUST use this exact structured format with these sections:
+${momentInstruction}
 
-[Subject]: Describe the main subject(s) in detail — appearance, expression, pose, clothing, distinguishing features.
+First, silently reason about the shot's motion arc: what changes between the beginning and end of this shot? Then write the image prompt for the ${frameLabel} only.
 
-[Action]: What the subject is doing in this specific moment.
+You MUST use this exact structured format:
 
-[Environment]: The setting, background, and surrounding elements in rich detail.
+[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing. Be specific about their state at this exact moment in the shot.
 
-[Cinematography]: Camera angle, lens type, depth of field, framing, and composition.
+[Action]: What the subject is doing at this precise moment (not during the shot — at this frame specifically).
 
-[Lighting/Style]: Lighting direction, quality, color grading, mood, and artistic style.
+[Environment]: The setting and surrounding elements at this moment.
 
-[Technical]: Photography/rendering style, resolution, aspect ratio, and technical quality descriptors.
+[Cinematography]: Camera angle, lens, depth of field, framing, composition.
+
+[Lighting/Style]: Lighting, color grading, mood, artistic style.
+
+[Technical]: Photography/rendering style and quality descriptors.
 
 Rules:
-- Each section should be 1-2 detailed sentences
-- Be extremely specific and vivid — avoid vague terms
-- Use professional cinematic and photography language
-- The prompt must stand alone — no references to other shots or frames
+- Each section 1-2 sentences, extremely specific
+- The subject's pose/position/expression must reflect the ${isStart ? 'beginning' : 'end'} of the action — not a neutral or generic state
+- Use professional cinematic language
+- Do NOT reference the other frame or describe motion — only describe this single frozen moment
 - Do NOT include meta-instructions like "generate an image of"
 ${settings?.intake?.audience ? `- Target audience: ${settings.intake.audience}` : ''}
 ${settings?.intake?.viewerAction ? `- Video goal: ${settings.intake.viewerAction}` : ''}
@@ -651,9 +668,6 @@ Return ONLY the structured prompt, nothing else.`
       }
       const generatedPrompt = chunks.join('').trim()
       if (!generatedPrompt) throw new Error('AI returned an empty response — please try again')
-
-      // Persist the generated prompt to the shot
-      await db.update(shots).set({ imagePrompt: generatedPrompt }).where(eq(shots.id, shot.id))
 
       return { prompt: generatedPrompt }
     } finally {
@@ -700,7 +714,7 @@ export const generateShotImages = createServerFn({ method: 'POST' })
     const outputContentType = isNanoBanana ? 'image/png' : 'image/webp'
 
     const batchId = randomUUID()
-    const type = lane === 'start' ? 'start_image' as const : 'end_image' as const
+    const type = 'image' as const
     const generationCount = Math.max(1, Math.min(4, imageDefaults.batchCount))
 
     const placeholders = await db
@@ -718,6 +732,7 @@ export const generateShotImages = createServerFn({ method: 'POST' })
             qualityPreset: imageDefaults.qualityPreset,
             batchCount: generationCount,
             outputFormat: outputExtension,
+            generationLane: lane,
           },
           status: 'generating' as const,
           isSelected: false,
@@ -765,7 +780,7 @@ export const generateShotImages = createServerFn({ method: 'POST' })
           throw new Error(`No output URL found (${summarizeReplicateOutput(output)}).`)
         }
 
-        const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/images/${batchId}/${type}-${i + 1}.${outputExtension}`
+        const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/images/${batchId}/image-${i + 1}.${outputExtension}`
         const storedUrl = await uploadFromUrl(sourceUrl, storageKey, outputContentType)
 
         await db
@@ -808,18 +823,23 @@ export const selectShotAsset = createServerFn({ method: 'POST' })
   .handler(async ({ data: { assetId } }) => {
     const { asset, shot } = await assertAssetOwnerViaShot(assetId)
 
-    if (asset.type !== 'start_image' && asset.type !== 'end_image') {
+    if (!['start_image', 'end_image', 'image'].includes(asset.type)) {
       throw new Error('Only image assets can be selected here')
     }
     if (asset.status !== 'done') {
       throw new Error('Only completed assets can be selected')
     }
 
-    // Deselect by (shotId, type), NOT (sceneId, type)
-    await db
-      .update(assets)
-      .set({ isSelected: false })
-      .where(and(eq(assets.shotId, shot.id), eq(assets.type, asset.type), isNull(assets.deletedAt)))
-
-    await db.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
+    // Deselect all image-type assets for this shot, then select the target
+    await db.transaction(async (tx) => {
+      await tx
+        .update(assets)
+        .set({ isSelected: false })
+        .where(and(
+          eq(assets.shotId, shot.id),
+          inArray(assets.type, ['start_image', 'end_image', 'image']),
+          isNull(assets.deletedAt),
+        ))
+      await tx.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
+    })
   })
