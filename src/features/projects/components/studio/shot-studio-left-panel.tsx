@@ -21,7 +21,13 @@ export function ShotStudioLeftPanel({
   isGenerating,
   onGenerate,
   onDescriptionSaved,
-  hasSelectedImage,
+  selectedImageUrl,
+  videoPrompt,
+  onVideoPromptChange,
+  onGenerateVideoPrompt,
+  isGeneratingVideoPrompt,
+  isGeneratingVideo,
+  onGenerateVideo,
 }: {
   shot: Shot
   parentScene: Scene
@@ -36,7 +42,13 @@ export function ShotStudioLeftPanel({
   isGenerating: boolean
   onGenerate: () => void
   onDescriptionSaved?: (newDescription: string) => void
-  hasSelectedImage: boolean
+  selectedImageUrl: string | null
+  videoPrompt: string
+  onVideoPromptChange: (value: string) => void
+  onGenerateVideoPrompt: () => void
+  isGeneratingVideoPrompt: boolean
+  isGeneratingVideo: boolean
+  onGenerateVideo: () => void
 }) {
   const [mediaTab, setMediaTab] = useState<'image' | 'video'>('image')
 
@@ -125,26 +137,50 @@ export function ShotStudioLeftPanel({
 
           {mediaTab === 'video' && (
             <div className="space-y-3">
-              {!hasSelectedImage ? (
-                <div className="rounded-lg border border-dashed border-border p-4 text-center space-y-2">
+              {!selectedImageUrl ? (
+                <div className="rounded-lg border border-dashed border-border p-4 text-center">
                   <p className="text-xs text-muted-foreground">
-                    Select an image first to generate video. Choose a generated image from the gallery on the right.
+                    Select a start frame image from the gallery first.
                   </p>
                 </div>
               ) : (
                 <>
-                  <div className="space-y-3">
-                    <label className="text-xs font-medium text-muted-foreground">Video Prompt</label>
-                    <textarea
-                      rows={4}
-                      placeholder="Describe the motion and action for this shot..."
-                      className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                  {/* Start frame thumbnail */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">Start frame</label>
+                    <img
+                      src={selectedImageUrl}
+                      alt="Start frame"
+                      className="w-full rounded-lg border border-border object-cover aspect-video"
                     />
                   </div>
-                  <Button disabled className="w-full gap-2" size="sm">
-                    <Film size={14} />
-                    Generate Video (coming soon)
-                  </Button>
+
+                  {/* Motion prompt */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground">Motion prompt</label>
+                      <button
+                        type="button"
+                        onClick={onGenerateVideoPrompt}
+                        disabled={isGeneratingVideoPrompt}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                      >
+                        {isGeneratingVideoPrompt ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Wand2 size={11} />
+                        )}
+                        {isGeneratingVideoPrompt ? 'Generating...' : 'Generate'}
+                      </button>
+                    </div>
+                    <textarea
+                      rows={5}
+                      value={videoPrompt}
+                      onChange={(e) => onVideoPromptChange(e.target.value)}
+                      placeholder="Describe the motion — camera movement, subject action, speed..."
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+                    />
+                  </div>
                 </>
               )}
             </div>
@@ -152,21 +188,25 @@ export function ShotStudioLeftPanel({
         </div>
       </div>
 
-      {/* Sticky generate button — image tab only */}
+      {/* Sticky generate button */}
       {mediaTab === 'image' && (
         <div className="p-4 border-t bg-card">
+          <Button onClick={onGenerate} disabled={isGenerating} className="w-full gap-2" size="lg">
+            {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+            {isGenerating ? 'Generating...' : 'Generate images'}
+          </Button>
+        </div>
+      )}
+      {mediaTab === 'video' && selectedImageUrl && (
+        <div className="p-4 border-t bg-card">
           <Button
-            onClick={onGenerate}
-            disabled={isGenerating}
+            onClick={onGenerateVideo}
+            disabled={isGeneratingVideo || !videoPrompt.trim()}
             className="w-full gap-2"
             size="lg"
           >
-            {isGenerating ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Wand2 size={16} />
-            )}
-            {isGenerating ? 'Generating...' : 'Generate images'}
+            {isGeneratingVideo ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}
+            {isGeneratingVideo ? 'Generating video...' : 'Generate video'}
           </Button>
         </div>
       )}

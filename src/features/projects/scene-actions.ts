@@ -815,6 +815,151 @@ export const generateShotImages = createServerFn({ method: 'POST' })
   })
 
 // ---------------------------------------------------------------------------
+// generateShotVideoPrompt
+// ---------------------------------------------------------------------------
+
+export const generateShotVideoPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { shotId: string }) => data)
+  .handler(async ({ data: { shotId } }) => {
+    const { userId, shot, project } = await assertShotOwner(shotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+Given a shot description, write a motion prompt that describes exactly what happens during this shot as a continuous video clip.
+
+Focus entirely on MOTION and ACTION — not static appearance. Kling will handle visual style from the start frame image.
+
+Your prompt must describe:
+1. What moves and how (subjects, camera, objects)
+2. The speed and feel of the motion (slow drift, quick cut, smooth pan, etc.)
+3. Any environmental motion (wind, light changes, crowd movement)
+4. Camera behavior (static, slow push in, tracking left, handheld, aerial descent, etc.)
+
+Rules:
+- Be specific about direction and speed of movement
+- Write in present tense, as if describing the clip as it plays
+- Keep it under 150 words — dense and specific, not padded
+- Do NOT describe static appearance (that comes from the image)
+- Do NOT use vague terms like "dynamic" or "cinematic" — describe the actual motion
+${settings?.intake?.style?.length ? `- Visual style reference: ${settings.intake.style.join(', ')}` : ''}
+${settings?.intake?.mood?.length ? `- Mood: ${settings.intake.mood.join(', ')}` : ''}
+
+Return ONLY the motion prompt, nothing else.`
+
+    const userMessage = `Shot description: ${shot.description}`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: `${systemPrompt}\n\n${userMessage}`, max_tokens: 512, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const generatedPrompt = chunks.join('').trim()
+      if (!generatedPrompt) throw new Error('AI returned an empty response — please try again')
+      return { prompt: generatedPrompt }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// generateShotVideo
+// ---------------------------------------------------------------------------
+
+const KLING_VIDEO_TIMEOUT_MS = 300_000 // 5 minutes
+
+export const generateShotVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { shotId: string; prompt: string }) => data)
+  .handler(async ({ data: { shotId, prompt } }) => {
+    const { shot, scene, project } = await assertShotOwner(shotId)
+
+    // Get the selected image to use as start frame
+    const selectedAsset = await db.query.assets.findFirst({
+      where: and(
+        eq(assets.shotId, shotId),
+        inArray(assets.type, ['start_image', 'end_image', 'image']),
+        eq(assets.isSelected, true),
+        eq(assets.status, 'done'),
+        isNull(assets.deletedAt),
+      ),
+    })
+    if (!selectedAsset?.url) throw new Error('No selected image found — select a start frame image first')
+
+    const { userId } = await assertShotOwner(shotId)
+    const apiKey = await getUserApiKey(userId)
+
+    // Insert placeholder asset
+    const [placeholder] = await db
+      .insert(assets)
+      .values({
+        sceneId: scene.id,
+        shotId: shot.id,
+        type: 'video' as const,
+        stage: 'video' as const,
+        prompt,
+        model: 'kwaivgi/kling-v3-omni-video',
+        modelSettings: { duration: shot.durationSec },
+        status: 'generating' as const,
+        isSelected: false,
+        batchId: randomUUID(),
+        generationId: randomUUID(),
+      })
+      .returning({ id: assets.id })
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), KLING_VIDEO_TIMEOUT_MS)
+
+    try {
+      const output = await replicate.run('kwaivgi/kling-v3-omni-video', {
+        input: {
+          prompt,
+          start_image: selectedAsset.url,
+          duration: shot.durationSec,
+          generate_audio: false,
+        },
+        signal: controller.signal,
+      })
+
+      // Extract URL from FileOutput or string
+      let videoUrl: string
+      if (output && typeof (output as { url?: () => string }).url === 'function') {
+        videoUrl = (output as { url: () => string }).url()
+      } else if (typeof output === 'string') {
+        videoUrl = output
+      } else {
+        throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
+      }
+
+      const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${placeholder.id}.mp4`
+      const storedUrl = await uploadFromUrl(videoUrl, storageKey, 'video/mp4')
+
+      await db
+        .update(assets)
+        .set({ url: storedUrl, storageKey, status: 'done', errorMessage: null })
+        .where(eq(assets.id, placeholder.id))
+
+      return { assetId: placeholder.id, url: storedUrl }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Video generation failed'
+      await db
+        .update(assets)
+        .set({ status: 'error', errorMessage })
+        .where(eq(assets.id, placeholder.id))
+      throw err
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
 // selectShotAsset
 // ---------------------------------------------------------------------------
 

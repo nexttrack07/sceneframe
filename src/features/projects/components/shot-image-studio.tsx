@@ -3,7 +3,7 @@ import { useRouter } from '@tanstack/react-router'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, SceneAssetSummary } from '../project-types'
 import { normalizeImageDefaults } from '../project-normalize'
-import { deleteAsset, generateShotImages, generateShotImagePrompt, selectShotAsset } from '../scene-actions'
+import { deleteAsset, generateShotImages, generateShotImagePrompt, generateShotVideo, generateShotVideoPrompt, selectShotAsset } from '../scene-actions'
 import { useToast } from '@/components/ui/toast'
 import { ShotStudioHeader } from './studio/shot-studio-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
@@ -56,7 +56,12 @@ export function ShotImageStudio({
   const [error, setError] = useState<string | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
-  const hasSelectedImage = shotAssets.some((a) => a.isSelected && a.status === 'done')
+  const selectedAsset = shotAssets.find((a) => a.isSelected && a.status === 'done')
+  const selectedImageUrl = selectedAsset?.url ?? null
+
+  const [videoPrompt, setVideoPrompt] = useState('')
+  const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
 
   // Reset local state when shot changes (state-based navigation, no key remount)
   useEffect(() => {
@@ -69,6 +74,9 @@ export function ShotImageStudio({
     setIsSelectingAssetId(null)
     setDeletingAssetId(null)
     setError(null)
+    setVideoPrompt('')
+    setIsGeneratingVideoPrompt(false)
+    setIsGeneratingVideo(false)
   }, [shot.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handlePromptModeChange(mode: 'start' | 'end') {
@@ -141,6 +149,40 @@ export function ShotImageStudio({
       toast(msg, 'error')
     } finally {
       setIsGeneratingPrompt(false)
+    }
+  }
+
+  async function handleGenerateVideoPrompt() {
+    setIsGeneratingVideoPrompt(true)
+    setError(null)
+    try {
+      const result = await generateShotVideoPrompt({ data: { shotId: shot.id } })
+      setVideoPrompt(result.prompt)
+      toast('Video prompt generated', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate video prompt'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGeneratingVideoPrompt(false)
+    }
+  }
+
+  async function handleGenerateVideo() {
+    const trimmedPrompt = videoPrompt.trim()
+    if (!trimmedPrompt) return
+    setIsGeneratingVideo(true)
+    setError(null)
+    try {
+      await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt } })
+      await router.invalidate()
+      toast('Video generated', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate video'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGeneratingVideo(false)
     }
   }
 
@@ -217,7 +259,13 @@ export function ShotImageStudio({
           onSettingsChange={setSettingsOverrides}
           isGenerating={isGenerating}
           onGenerate={handleGenerate}
-          hasSelectedImage={hasSelectedImage}
+          selectedImageUrl={selectedImageUrl}
+          videoPrompt={videoPrompt}
+          onVideoPromptChange={setVideoPrompt}
+          onGenerateVideoPrompt={handleGenerateVideoPrompt}
+          isGeneratingVideoPrompt={isGeneratingVideoPrompt}
+          isGeneratingVideo={isGeneratingVideo}
+          onGenerateVideo={handleGenerateVideo}
         />
 
         <StudioGallery
