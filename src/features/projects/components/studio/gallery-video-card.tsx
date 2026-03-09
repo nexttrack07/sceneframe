@@ -76,7 +76,7 @@ export function GalleryVideoCard({
 
       {/* Error message */}
       {asset.status === 'error' && asset.errorMessage && (
-        <div className="absolute inset-0 flex items-center justify-center p-3">
+        <div className="absolute inset-0 flex items-center justify-center p-3 pointer-events-none">
           <p className="text-xs leading-tight text-destructive text-center line-clamp-4 bg-background/80 rounded p-2">
             {asset.errorMessage}
           </p>
