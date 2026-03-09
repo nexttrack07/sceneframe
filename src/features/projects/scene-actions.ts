@@ -872,17 +872,15 @@ Return ONLY the structured prompt, nothing else.`
   })
 
 // ---------------------------------------------------------------------------
-// generateShotVideo
+// generateShotVideo — fire-and-forget, returns immediately with assetId
 // ---------------------------------------------------------------------------
-
-const KLING_VIDEO_TIMEOUT_MS = 300_000 // 5 minutes
 
 export const generateShotVideo = createServerFn({ method: 'POST' })
   .inputValidator((data: { shotId: string; prompt: string }) => data)
   .handler(async ({ data: { shotId, prompt } }) => {
-    const { shot, scene, project } = await assertShotOwner(shotId)
+    const { userId, shot, scene } = await assertShotOwner(shotId)
+    const apiKey = await getUserApiKey(userId)
 
-    // Get the selected image to use as start frame
     const selectedAsset = await db.query.assets.findFirst({
       where: and(
         eq(assets.shotId, shotId),
@@ -894,10 +892,18 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
     })
     if (!selectedAsset?.url) throw new Error('No selected image found — select a start frame image first')
 
-    const { userId } = await assertShotOwner(shotId)
-    const apiKey = await getUserApiKey(userId)
+    // Submit prediction to Replicate — do NOT await completion
+    const replicate = new Replicate({ auth: apiKey })
+    const prediction = await replicate.predictions.create({
+      model: 'kwaivgi/kling-v3-omni-video' as `${string}/${string}`,
+      input: {
+        prompt,
+        start_image: selectedAsset.url,
+        duration: Math.max(3, Math.min(15, shot.durationSec)),
+        generate_audio: false,
+      },
+    })
 
-    // Insert placeholder asset
     const [placeholder] = await db
       .insert(assets)
       .values({
@@ -911,25 +917,37 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         status: 'generating' as const,
         isSelected: false,
         batchId: randomUUID(),
-        generationId: randomUUID(),
+        generationId: prediction.id,
       })
       .returning({ id: assets.id })
 
+    return { assetId: placeholder.id }
+  })
+
+// ---------------------------------------------------------------------------
+// pollVideoAsset — called by client to check generation progress
+// ---------------------------------------------------------------------------
+
+export const pollVideoAsset = createServerFn({ method: 'POST' })
+  .inputValidator((data: { assetId: string }) => data)
+  .handler(async ({ data: { assetId } }) => {
+    const { asset, shot } = await assertAssetOwnerViaShot(assetId)
+
+    if (asset.status === 'done') return { status: 'done' as const, url: asset.url }
+    if (asset.status === 'error') return { status: 'error' as const, errorMessage: asset.errorMessage }
+
+    const predictionId = asset.generationId
+    if (!predictionId) throw new Error('No prediction ID found on asset')
+
+    // Need userId for API key — get via shot owner
+    const { userId, project, scene } = await assertShotOwner(shot.id)
+    const apiKey = await getUserApiKey(userId)
     const replicate = new Replicate({ auth: apiKey })
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), KLING_VIDEO_TIMEOUT_MS)
 
-    try {
-      const output = await replicate.run('kwaivgi/kling-v3-omni-video', {
-        input: {
-          prompt,
-          start_image: selectedAsset.url,
-          duration: Math.max(3, Math.min(15, shot.durationSec)),
-          generate_audio: false,
-        },
-        signal: controller.signal,
-      })
+    const prediction = await replicate.predictions.get(predictionId)
 
+    if (prediction.status === 'succeeded') {
+      const output = prediction.output
       let videoUrl: string
       if (typeof output === 'string' && output) {
         videoUrl = output
@@ -939,25 +957,19 @@ export const generateShotVideo = createServerFn({ method: 'POST' })
         throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
       }
 
-      const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${placeholder.id}.mp4`
+      const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shot.id}/videos/${assetId}.mp4`
       const storedUrl = await uploadFromUrl(videoUrl, storageKey, 'video/mp4')
-
-      await db
-        .update(assets)
-        .set({ url: storedUrl, storageKey, status: 'done', errorMessage: null })
-        .where(eq(assets.id, placeholder.id))
-
-      return { assetId: placeholder.id, url: storedUrl }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Video generation failed'
-      await db
-        .update(assets)
-        .set({ status: 'error', errorMessage })
-        .where(eq(assets.id, placeholder.id))
-      throw err
-    } finally {
-      clearTimeout(timeout)
+      await db.update(assets).set({ url: storedUrl, storageKey, status: 'done', errorMessage: null }).where(eq(assets.id, assetId))
+      return { status: 'done' as const, url: storedUrl }
     }
+
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      const errorMessage = prediction.error ? String(prediction.error) : 'Video generation failed'
+      await db.update(assets).set({ status: 'error', errorMessage }).where(eq(assets.id, assetId))
+      return { status: 'error' as const, errorMessage }
+    }
+
+    return { status: 'generating' as const }
   })
 
 // ---------------------------------------------------------------------------

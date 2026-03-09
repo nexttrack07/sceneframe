@@ -3,7 +3,7 @@ import { useRouter } from '@tanstack/react-router'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, SceneAssetSummary } from '../project-types'
 import { normalizeImageDefaults } from '../project-normalize'
-import { deleteAsset, generateShotImages, generateShotImagePrompt, generateShotVideo, generateShotVideoPrompt, selectShotAsset } from '../scene-actions'
+import { deleteAsset, generateShotImages, generateShotImagePrompt, generateShotVideo, generateShotVideoPrompt, pollVideoAsset, selectShotAsset } from '../scene-actions'
 import { useToast } from '@/components/ui/toast'
 import { ShotStudioHeader } from './studio/shot-studio-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
@@ -174,7 +174,25 @@ export function ShotImageStudio({
     setIsGeneratingVideo(true)
     setError(null)
     try {
-      await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt } })
+      const { assetId } = await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt } })
+      // Poll until Replicate finishes — avoids serverless timeout and keeps studio open
+      await new Promise<void>((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            const result = await pollVideoAsset({ data: { assetId } })
+            if (result.status === 'done') {
+              clearInterval(interval)
+              resolve()
+            } else if (result.status === 'error') {
+              clearInterval(interval)
+              reject(new Error(result.errorMessage ?? 'Video generation failed'))
+            }
+          } catch (pollErr) {
+            clearInterval(interval)
+            reject(pollErr)
+          }
+        }, 5000)
+      })
       await router.invalidate()
       toast('Video generated', 'success')
     } catch (err) {
