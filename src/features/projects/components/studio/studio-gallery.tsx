@@ -5,6 +5,7 @@ import type { SceneAssetSummary } from '../../project-types'
 import { GalleryImageCard } from './gallery-image-card'
 import { GalleryVideoCard } from './gallery-video-card'
 import { ImageLightbox } from '../image-lightbox'
+import { VideoLightbox } from '../video-lightbox'
 
 export function StudioGallery({
   sceneAssets,
@@ -235,53 +236,14 @@ export function StudioGallery({
         </>
       )}
 
-      {/* Video detail drawer */}
-      {selectedVideo && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setExpandedVideoId(null)} />
-          <div className="fixed top-0 right-0 bottom-0 z-50 w-[340px] border-l bg-card flex flex-col overflow-y-auto shadow-xl animate-in slide-in-from-right duration-200">
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-foreground">Video Details</h4>
-              <Button size="sm" variant="ghost" onClick={() => setExpandedVideoId(null)} className="h-7 w-7 p-0">
-                <X size={14} />
-              </Button>
-            </div>
-            <div className="p-4 space-y-4">
-              {selectedVideo.url && (
-                <video src={selectedVideo.url} controls className="w-full rounded-lg border border-border" />
-              )}
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => { onDeleteAsset(selectedVideo.id); setExpandedVideoId(null) }}
-                  disabled={deletingAssetId === selectedVideo.id}
-                  className="gap-1.5 text-red-600 hover:text-red-600 flex-1"
-                >
-                  <Trash2 size={12} />
-                  Delete
-                </Button>
-              </div>
-              <div className="space-y-3">
-                <MetadataRow icon={<Clock size={12} />} label="Generated" value={new Date(selectedVideo.createdAt).toLocaleString()} />
-                {selectedVideo.prompt && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Prompt</p>
-                    <p className="text-xs text-foreground/80 leading-relaxed bg-muted/50 rounded-lg px-3 py-2">{selectedVideo.prompt}</p>
-                  </div>
-                )}
-                {selectedVideo.model && <MetadataRow label="Model" value={selectedVideo.model} />}
-                {selectedVideo.modelSettings?.duration && (
-                  <MetadataRow label="Duration" value={`${selectedVideo.modelSettings.duration}s`} />
-                )}
-                {selectedVideo.modelSettings?.mode && (
-                  <MetadataRow label="Resolution" value={selectedVideo.modelSettings.mode === 'pro' ? '1080p' : '720p'} />
-                )}
-                <MetadataRow label="Status" value={selectedVideo.status} />
-              </div>
-            </div>
-          </div>
-        </>
+      {/* Video lightbox */}
+      {selectedVideo && selectedVideo.url && (
+        <VideoLightbox
+          asset={selectedVideo}
+          assets={videoAssets.filter((a) => a.status === 'done' && a.url)}
+          onNavigate={setExpandedVideoId}
+          onClose={() => setExpandedVideoId(null)}
+        />
       )}
 
       {/* Lightbox */}
