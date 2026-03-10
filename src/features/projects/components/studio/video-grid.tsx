@@ -39,8 +39,8 @@ export function VideoGrid({
     <div className="p-4 relative">
       <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Videos</p>
       <div className="grid grid-cols-3 gap-2">
-        {/* Optimistic skeleton while video generation is in flight */}
-        {isGenerating && (
+        {/* Optimistic skeleton — only shown before the DB record appears */}
+        {isGenerating && !sorted.some((tv) => tv.status === 'generating') && (
           <div className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video">
             <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
