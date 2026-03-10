@@ -1,5 +1,6 @@
 import { Loader2, Maximize2, Trash2 } from 'lucide-react'
 import type { SceneAssetSummary } from '../../project-types'
+import { GeneratingTimer } from './generating-timer'
 
 export function GalleryImageCard({
   asset,
@@ -36,11 +37,11 @@ export function GalleryImageCard({
       ) : asset.status === 'error' ? (
         <div className="w-full aspect-video bg-destructive/10" />
       ) : (
-        <div className="w-full aspect-video relative overflow-hidden bg-muted">
-          <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted bg-[length:200%_100%] animate-pulse" />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-            <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/50 animate-spin" />
-            <span className="text-[10px] text-muted-foreground/60 font-medium">Generating...</span>
+        <div className="w-full aspect-video relative overflow-hidden rounded-md bg-muted">
+          <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted animate-pulse" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/60 animate-spin" />
+            <GeneratingTimer />
           </div>
         </div>
       )}
@@ -91,8 +92,6 @@ export function GalleryImageCard({
           <span className="bg-primary text-primary-foreground text-xs font-medium px-2 py-0.5 rounded-md">
             Selected
           </span>
-        ) : asset.status === 'generating' ? (
-          <Loader2 size={14} className="text-white drop-shadow animate-spin" />
         ) : asset.status === 'error' ? (
           <span className="bg-destructive text-white text-xs font-medium px-2 py-0.5 rounded-md">
             Error
