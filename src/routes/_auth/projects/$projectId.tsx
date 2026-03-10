@@ -14,6 +14,8 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { loadProject } from '@/features/projects/project-queries'
+import { projectKeys } from '@/features/projects/query-keys'
+import { useQuery } from '@tanstack/react-query'
 import type { ScenePlanEntry } from '@/features/projects/project-types'
 import { ScriptWorkshop } from '@/features/projects/components/script-workshop'
 import { Storyboard } from '@/features/projects/components/storyboard'
@@ -24,7 +26,12 @@ import { deleteProject } from '@/features/projects/project-mutations'
 // ---------------------------------------------------------------------------
 
 export const Route = createFileRoute('/_auth/projects/$projectId')({
-  loader: ({ params }) => loadProject({ data: params.projectId }),
+  loader: async ({ params, context: { queryClient } }) => {
+    return queryClient.ensureQueryData({
+      queryKey: projectKeys.project(params.projectId),
+      queryFn: () => loadProject({ data: params.projectId }),
+    })
+  },
   validateSearch: (search: Record<string, unknown>) => ({
     shot: typeof search.shot === 'string' ? search.shot : undefined,
     from: typeof search.from === 'string' ? search.from : undefined,
@@ -40,6 +47,12 @@ export const Route = createFileRoute('/_auth/projects/$projectId')({
 // ---------------------------------------------------------------------------
 
 function ProjectPage() {
+  const { projectId } = Route.useParams()
+  const { data } = useQuery({
+    queryKey: projectKeys.project(projectId),
+    queryFn: () => loadProject({ data: projectId }),
+  })
+  // data is always defined since loader seeded it
   const {
     project,
     scenes: projectScenes,
@@ -47,7 +60,7 @@ function ProjectPage() {
     messages: projectMessages,
     assets: projectAssets,
     transitionVideos: projectTransitionVideos,
-  } = Route.useLoaderData()
+  } = data!
   const { shot, from, to } = Route.useSearch()
   const scenePlan: ScenePlanEntry[] = (() => {
     if (!project.scriptRaw) return []

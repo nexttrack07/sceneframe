@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { projectKeys } from '../query-keys'
 import {
   AlertCircle,
   Download,
@@ -59,7 +61,7 @@ export function Storyboard({
   initialFromShotId?: string
   initialToShotId?: string
 }) {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const navigate = useNavigate({ from: '/projects/$projectId' })
   const { toast } = useToast()
   const [isResetting, setIsResetting] = useState(false)
@@ -136,18 +138,18 @@ export function Storyboard({
   }, [sceneAssets])
 
   const imageStudio = useImageStudio({
+    projectId,
     selectedShotId,
     storyShots,
     assetsByShotId,
-    router,
     toast,
     setError,
   })
 
   const videoStudio = useVideoStudio({
+    projectId,
     selectedTransitionPair,
     allTransitionVideos,
-    router,
     toast,
     setError,
   })
@@ -183,10 +185,10 @@ export function Storyboard({
     if (!hasGeneratingAssets) return
     if (selectedSceneId !== null || selectedShotId !== null || selectedTransitionPair !== null) return
     const interval = setInterval(() => {
-      void router.invalidate()
+      void queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     }, 2500)
     return () => clearInterval(interval)
-  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, selectedTransitionPair, router])
+  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, selectedTransitionPair, queryClient, projectId])
 
   // Keyboard shortcut: Escape closes studio
   useEffect(() => {
@@ -252,7 +254,7 @@ export function Storyboard({
     setError(null)
     try {
       await resetWorkshop({ data: projectId })
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to restart brief and chat')
     } finally {
@@ -287,7 +289,7 @@ export function Storyboard({
         setSelectedSceneId(null)
         selectShot(null)
       }
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete scene')
     }
@@ -301,7 +303,7 @@ export function Storyboard({
         selectShot(null)
         setSelectedSceneId(null)
       }
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete shot')
     }
@@ -320,7 +322,7 @@ export function Storyboard({
           afterOrder,
         },
       })
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add shot')
     }
@@ -344,7 +346,7 @@ export function Storyboard({
       })
       setNewSceneDescription('')
       setShowAddForm(false)
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add scene')
     } finally {
@@ -391,7 +393,7 @@ export function Storyboard({
     setError(null)
     try {
       await reorderScene({ data: { sceneId, newOrder } })
-      router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reorder scene')
     }

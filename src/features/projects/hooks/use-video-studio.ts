@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AnyRouter } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import type { TransitionVideoSummary } from '../project-types'
 import { generateTransitionVideo, generateTransitionVideoPrompt, enhanceTransitionVideoPrompt, pollTransitionVideo, selectTransitionVideo, deleteTransitionVideo } from '../scene-actions'
 import type { VideoModel } from '../components/studio/video-controls-panel'
+import { projectKeys } from '../query-keys'
 
 type ToastFn = (message: string, variant: 'success' | 'error') => void
 
 export function useVideoStudio({
+  projectId,
   selectedTransitionPair,
   allTransitionVideos,
-  router,
   toast,
   setError,
 }: {
+  projectId: string
   selectedTransitionPair: { fromShotId: string; toShotId: string } | null
   allTransitionVideos: TransitionVideoSummary[]
-  router: AnyRouter
   toast: ToastFn
   setError: (msg: string | null) => void
 }) {
+  const queryClient = useQueryClient()
   const [videoPrompt, setVideoPrompt] = useState('')
   const [videoModel, setVideoModel] = useState<VideoModel>('v3-omni')
   const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
@@ -83,13 +85,13 @@ export function useVideoStudio({
           }
           clearInterval(interval)
           setIsGeneratingVideo(false)
-          await router.invalidate()
+          await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
           toast('Transition video ready', 'success')
         } else if (result.status === 'error') {
           clearInterval(interval)
           setIsGeneratingVideo(false)
           await deleteTransitionVideo({ data: { transitionVideoId } })
-          await router.invalidate()
+          await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
           toast(result.errorMessage ?? 'Video generation failed', 'error')
         }
       } catch (err) {
@@ -207,7 +209,7 @@ export function useVideoStudio({
         }, 5000)
       })
 
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Transition video generated', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to generate video'
@@ -223,7 +225,7 @@ export function useVideoStudio({
     setError(null)
     try {
       await selectTransitionVideo({ data: { transitionVideoId } })
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Video selected', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to select video'
@@ -237,7 +239,7 @@ export function useVideoStudio({
     setError(null)
     try {
       await deleteTransitionVideo({ data: { transitionVideoId } })
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Video deleted', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete video'

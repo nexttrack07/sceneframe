@@ -1,27 +1,29 @@
 import { useEffect, useState } from 'react'
-import type { AnyRouter } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import type { Shot } from '@/db/schema'
 import type { ImageDefaults, SceneAssetSummary } from '../project-types'
 import { generateShotImages, generateShotImagePrompt, enhanceShotImagePrompt, selectShotAsset, deleteAsset } from '../scene-actions'
 import { normalizeImageDefaults } from '../project-normalize'
+import { projectKeys } from '../query-keys'
 
 type ToastFn = (message: string, variant: 'success' | 'error') => void
 
 export function useImageStudio({
+  projectId,
   selectedShotId,
   storyShots,
   assetsByShotId,
-  router,
   toast,
   setError,
 }: {
+  projectId: string
   selectedShotId: string | null
   storyShots: Shot[]
   assetsByShotId: Map<string, SceneAssetSummary[]>
-  router: AnyRouter
   toast: ToastFn
   setError: (msg: string | null) => void
 }) {
+  const queryClient = useQueryClient()
   const [prompt, setPrompt] = useState('')
   const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(normalizeImageDefaults(null))
   const [isGenerating, setIsGenerating] = useState(false)
@@ -88,7 +90,7 @@ export function useImageStudio({
           referenceImageUrls: useRefImage && prevShotSelectedImageUrl ? [prevShotSelectedImageUrl] : [],
         },
       })
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast(
         `Generated ${result.completedCount} image${result.completedCount !== 1 ? 's' : ''}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ''}`,
         result.failedCount > 0 ? 'error' : 'success',
@@ -111,7 +113,7 @@ export function useImageStudio({
         data: { shotId: selectedShotId, useProjectContext, usePrevShotContext },
       })
       setPrompt(result.prompt)
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Prompt generated', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to generate prompt'
@@ -144,7 +146,7 @@ export function useImageStudio({
     setError(null)
     try {
       await selectShotAsset({ data: { assetId } })
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Image selected', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to select image'
@@ -161,7 +163,7 @@ export function useImageStudio({
     try {
       await deleteAsset({ data: { assetId } })
       if (expandedImageId === assetId) setExpandedImageId(null)
-      await router.invalidate()
+      await queryClient.invalidateQueries({ queryKey: projectKeys.project(projectId) })
       toast('Image deleted', 'success')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete image'
