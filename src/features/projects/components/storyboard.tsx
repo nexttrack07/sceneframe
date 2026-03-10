@@ -266,6 +266,7 @@ export function Storyboard({
         } else if (result.status === 'error') {
           clearInterval(interval)
           setIsGeneratingVideo(false)
+          await deleteTransitionVideo({ data: { transitionVideoId } })
           await router.invalidate()
           toast(result.errorMessage ?? 'Video generation failed', 'error')
         }
@@ -706,6 +707,7 @@ export function Storyboard({
             } else if (result.status === 'error') {
               settled = true
               clearInterval(interval)
+              await deleteTransitionVideo({ data: { transitionVideoId } }).catch(() => {})
               reject(new Error(result.errorMessage ?? 'Video generation failed'))
             }
           } catch {

@@ -41,7 +41,7 @@ export function GalleryImageCard({
           <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
-            <GeneratingTimer />
+            <GeneratingTimer createdAt={asset.createdAt} />
           </div>
         </div>
       )}
