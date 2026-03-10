@@ -797,8 +797,8 @@ export function Storyboard({
                             {/* Centered pill */}
                             <div className={`relative z-10 mx-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
                               selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
-                                ? 'bg-primary/10 border-primary/30 text-primary'
-                                : 'bg-background border-border/60 text-muted-foreground group-hover:border-border group-hover:text-foreground'
+                                ? 'bg-card border-primary/40 text-primary shadow-sm'
+                                : 'bg-card border-border/60 text-muted-foreground group-hover:border-border group-hover:text-foreground'
                             }`}>
                               <Play size={8} className="fill-current" />
                               Video
