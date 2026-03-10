@@ -901,6 +901,7 @@ export function Storyboard({
               onRegenerate={handleGenerate}
               expandedImageId={expandedImageId}
               onExpandImage={setExpandedImageId}
+              pendingCount={isGenerating ? settingsOverrides.batchCount : 0}
               onLightboxChange={setIsLightboxOpen}
             />
           ) : studioMode === 'video' && selectedTransitionPair ? (
