@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { Loader2, Film, RefreshCw, Trash2, AlertTriangle } from 'lucide-react'
 import type { Shot } from '@/db/schema'
@@ -43,6 +43,71 @@ export function TransitionConnector({
   const selectedTransition = pairTransitions.find((tv) => tv.isSelected && tv.status === 'done')
   const generatingTransition = pairTransitions.find((tv) => tv.status === 'generating')
   const staleTransition = selectedTransition?.stale ? selectedTransition : null
+
+  // Auto-resume polling for any stuck generating transition on mount
+  useEffect(() => {
+    if (!generatingTransition || isGenerating) return
+    const transitionVideoId = generatingTransition.id
+    cancelRef.current = false
+    setIsGenerating(true)
+    setGeneratingPhase('video')
+
+    const POLL_TIMEOUT_MS = 12 * 60 * 1000
+    const deadline = Date.now() + POLL_TIMEOUT_MS
+
+    const interval = setInterval(async () => {
+      if (cancelRef.current || Date.now() > deadline) {
+        clearInterval(interval)
+        setIsGenerating(false)
+        setGeneratingPhase(null)
+        return
+      }
+      try {
+        const result = await pollTransitionVideo({ data: { transitionVideoId } })
+        if (result.status === 'done') {
+          if (!selectedTransition) {
+            await selectTransitionVideo({ data: { transitionVideoId } })
+          }
+          clearInterval(interval)
+          setIsGenerating(false)
+          setGeneratingPhase(null)
+          await router.invalidate()
+          toast('Transition video ready', 'success')
+        } else if (result.status === 'error') {
+          clearInterval(interval)
+          setIsGenerating(false)
+          setGeneratingPhase(null)
+          await router.invalidate()
+          toast(result.errorMessage ?? 'Video generation failed', 'error')
+        }
+      } catch {
+        clearInterval(interval)
+        setIsGenerating(false)
+        setGeneratingPhase(null)
+      }
+    }, 5000)
+
+    return () => {
+      clearInterval(interval)
+      cancelRef.current = true
+    }
+  }, [generatingTransition?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleCancelStuck() {
+    // Cancel local polling
+    cancelRef.current = true
+    // Delete the stuck DB record so it stops blocking the UI
+    if (generatingTransition) {
+      try {
+        await deleteTransitionVideo({ data: { transitionVideoId: generatingTransition.id } })
+        await router.invalidate()
+      } catch {
+        // best effort
+      }
+    }
+    setIsGenerating(false)
+    setGeneratingPhase(null)
+  }
 
   async function handleGenerate() {
     setIsGenerating(true)
@@ -134,7 +199,7 @@ export function TransitionConnector({
           </div>
           <button
             type="button"
-            onClick={() => { cancelRef.current = true }}
+            onClick={handleCancelStuck}
             className="text-xs text-muted-foreground hover:text-foreground border border-border/60 rounded-full px-2 py-0.5 hover:bg-muted/50 transition-colors"
           >
             Cancel
