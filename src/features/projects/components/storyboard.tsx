@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from '@tanstack/react-router'
+import { useRouter, useNavigate } from '@tanstack/react-router'
 import {
   AlertCircle,
   Download,
@@ -42,6 +42,9 @@ export function Storyboard({
   projectSettings,
   scenePlan,
   transitionVideos: allTransitionVideos,
+  initialShotId,
+  initialFromShotId,
+  initialToShotId,
 }: {
   projectId: string
   scenes: Scene[]
@@ -50,15 +53,41 @@ export function Storyboard({
   projectSettings: ProjectSettings | null
   scenePlan: ScenePlanEntry[]
   transitionVideos: TransitionVideoSummary[]
+  initialShotId?: string
+  initialFromShotId?: string
+  initialToShotId?: string
 }) {
   const router = useRouter()
+  const navigate = useNavigate({ from: '/projects/$projectId' })
   const { toast } = useToast()
   const [isResetting, setIsResetting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
-  const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
-  const [selectedTransitionPair, setSelectedTransitionPair] = useState<{ fromShotId: string; toShotId: string } | null>(null)
+  const [selectedShotId, setSelectedShotIdState] = useState<string | null>(initialShotId ?? null)
+  const [selectedTransitionPair, setSelectedTransitionPairState] = useState<{ fromShotId: string; toShotId: string } | null>(
+    initialFromShotId && initialToShotId ? { fromShotId: initialFromShotId, toShotId: initialToShotId } : null,
+  )
+
+  function selectShot(id: string | null) {
+    setSelectedShotIdState(id)
+    setSelectedTransitionPairState(null)
+    if (id) {
+      void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, shot: undefined, from: undefined, to: undefined }) })
+    }
+  }
+
+  function selectTransition(pair: { fromShotId: string; toShotId: string } | null) {
+    setSelectedTransitionPairState(pair)
+    setSelectedShotIdState(null)
+    if (pair) {
+      void navigate({ search: (prev) => ({ ...prev, from: pair.fromShotId, to: pair.toShotId, shot: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, from: undefined, to: undefined, shot: undefined }) })
+    }
+  }
 
   // Drag-to-reorder state
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null)
@@ -258,8 +287,7 @@ export function Storyboard({
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
       if (isLightboxOpen) return
       if (e.key === 'Escape') {
-        setSelectedShotId(null)
-        setSelectedTransitionPair(null)
+        selectShot(null)
         setSelectedSceneId(null)
       }
     }
@@ -348,7 +376,7 @@ export function Storyboard({
       await deleteScene({ data: { sceneId } })
       if (selectedSceneId === sceneId) {
         setSelectedSceneId(null)
-        setSelectedShotId(null)
+        selectShot(null)
       }
       router.invalidate()
     } catch (err) {
@@ -361,7 +389,7 @@ export function Storyboard({
     try {
       await deleteShot({ data: { shotId } })
       if (selectedShotId === shotId) {
-        setSelectedShotId(null)
+        selectShot(null)
         setSelectedSceneId(null)
       }
       router.invalidate()
@@ -698,7 +726,7 @@ export function Storyboard({
             {/* Back button */}
             <button
               type="button"
-              onClick={() => { setSelectedShotId(null); setSelectedTransitionPair(null) }}
+              onClick={() => { selectShot(null) }}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3"
             >
               ← Back to storyboard
@@ -730,7 +758,7 @@ export function Storyboard({
                         {/* Shot card */}
                         <button
                           type="button"
-                          onClick={() => { setSelectedShotId(shot.id); setSelectedTransitionPair(null) }}
+                          onClick={() => { selectShot(shot.id) }}
                           className={`w-full rounded-lg border p-2 text-left transition-colors mb-1 ${
                             isSelectedShot || isInTransition
                               ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
@@ -755,8 +783,7 @@ export function Storyboard({
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedTransitionPair({ fromShotId: shot.id, toShotId: nextShot.id })
-                              setSelectedShotId(null)
+                              selectTransition({ fromShotId: shot.id, toShotId: nextShot.id })
                             }}
                             className={`w-full flex items-center gap-2 py-0.5 px-2 text-[10px] mb-1 rounded transition-colors ${
                               selectedTransitionPair?.fromShotId === shot.id &&
@@ -962,8 +989,7 @@ export function Storyboard({
                               assets={assetsByShotId.get(shot.id) ?? []}
                               isSelected={selectedShotId === shot.id}
                               onSelect={() => {
-                                setSelectedShotId(shot.id)
-                                setSelectedTransitionPair(null)
+                                selectShot(shot.id)
                                 setSelectedSceneId(null)
                               }}
                               onDelete={() => handleDeleteShot(shot.id)}
@@ -1111,7 +1137,7 @@ export function Storyboard({
           onSceneChange={setSelectedSceneId}
           onClose={() => {
             setSelectedSceneId(null)
-            setSelectedShotId(null)
+            selectShot(null)
           }}
         />
       )}

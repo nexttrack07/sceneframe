@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2, Play, Trash2, AlertTriangle } from 'lucide-react'
+import { Film, Loader2, Play, Trash2, AlertTriangle } from 'lucide-react'
 import type { TransitionVideoSummary } from '../../project-types'
 
 export function VideoGrid({
@@ -75,9 +75,15 @@ export function VideoGrid({
                 </div>
               </>
             ) : tv.status === 'generating' ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-                <Loader2 size={16} className="animate-spin text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground">Generating...</span>
+              <div className="absolute inset-0 bg-muted overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted animate-pulse" />
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                  <Film size={14} className="text-muted-foreground/40" />
+                  <div className="space-y-1 flex flex-col items-center">
+                    <div className="h-1.5 w-16 rounded-full bg-muted-foreground/20 animate-pulse" />
+                    <span className="text-[10px] text-muted-foreground/50">Generating video...</span>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-2 gap-1">

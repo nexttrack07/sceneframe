@@ -111,6 +111,7 @@ function ProjectCard({ project }: { project: Project }) {
     <Link
       to="/projects/$projectId"
       params={{ projectId: project.id }}
+      search={{ shot: undefined, from: undefined, to: undefined }}
       className="group block bg-card rounded-xl border p-5 hover:border-primary/40 hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-2 mb-3">

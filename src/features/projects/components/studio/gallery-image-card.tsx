@@ -33,12 +33,16 @@ export function GalleryImageCard({
           alt="Generated image"
           className="w-full aspect-video object-cover block"
         />
+      ) : asset.status === 'error' ? (
+        <div className="w-full aspect-video bg-destructive/10" />
       ) : (
-        <div
-          className={`w-full aspect-video ${
-            asset.status === 'error' ? 'bg-destructive/10' : 'bg-muted animate-pulse'
-          }`}
-        />
+        <div className="w-full aspect-video relative overflow-hidden bg-muted">
+          <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted bg-[length:200%_100%] animate-pulse" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/50 animate-spin" />
+            <span className="text-[10px] text-muted-foreground/60 font-medium">Generating...</span>
+          </div>
+        </div>
       )}
 
       {/* Hover overlay */}
