@@ -55,6 +55,7 @@ export function TransitionConnector({
     const POLL_TIMEOUT_MS = 12 * 60 * 1000
     const deadline = Date.now() + POLL_TIMEOUT_MS
 
+    let consecutiveErrors = 0
     const interval = setInterval(async () => {
       if (cancelRef.current || Date.now() > deadline) {
         clearInterval(interval)
@@ -64,6 +65,7 @@ export function TransitionConnector({
       }
       try {
         const result = await pollTransitionVideo({ data: { transitionVideoId } })
+        consecutiveErrors = 0
         if (result.status === 'done') {
           if (!selectedTransition) {
             await selectTransitionVideo({ data: { transitionVideoId } })
@@ -80,8 +82,15 @@ export function TransitionConnector({
           await router.invalidate()
           toast(result.errorMessage ?? 'Video generation failed', 'error')
         }
-      } catch {
-        // transient error — keep polling, don't stop
+      } catch (err) {
+        consecutiveErrors++
+        if (consecutiveErrors >= 3) {
+          clearInterval(interval)
+          setIsGenerating(false)
+          setGeneratingPhase(null)
+          const msg = err instanceof Error ? err.message : 'Polling failed repeatedly — check your connection'
+          toast(msg, 'error')
+        }
       }
     }, 5000)
 

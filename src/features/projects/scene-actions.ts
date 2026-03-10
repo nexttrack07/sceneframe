@@ -1254,7 +1254,11 @@ export const pollTransitionVideo = createServerFn({ method: 'POST' })
     }
 
     if (prediction.status === 'failed' || prediction.status === 'canceled') {
-      const errorMessage = prediction.error ? String(prediction.error) : 'Video generation failed'
+      const rawErr = prediction.error
+      const errorMessage = rawErr
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (typeof rawErr === 'string' ? rawErr : ((rawErr as any).detail ?? JSON.stringify(rawErr)))
+        : 'Video generation failed'
       await db
         .update(transitionVideos)
         .set({ status: 'error', errorMessage })
