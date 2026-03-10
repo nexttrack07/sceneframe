@@ -678,6 +678,8 @@ You MUST use this exact structured format:
 Rules:
 - Each section 1-2 sentences, extremely specific
 - CRITICAL: The subject and visual style must be consistent with the project concept and other shots — do NOT invent new subjects or themes not present in the project
+- If the shot description mentions text, calligraphy, or inscriptions visible in the scene, include them verbatim in [Environment] as a physical element
+- If the shot describes a subject as small/tiny/distant relative to the environment, encode that scale relationship explicitly in [Subject] and [Cinematography]
 - Use professional cinematic language
 - Do NOT include meta-instructions like "generate an image of"
 
@@ -709,6 +711,135 @@ Return ONLY the structured prompt, nothing else.`
       if (!generatedPrompt) throw new Error('AI returned an empty response — please try again')
 
       return { prompt: generatedPrompt }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// enhanceShotImagePrompt
+// ---------------------------------------------------------------------------
+
+export const enhanceShotImagePrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { shotId: string; userPrompt: string }) => data)
+  .handler(async ({ data: { shotId, userPrompt } }) => {
+    const { userId, shot, scene, project } = await assertShotOwner(shotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    const intake = settings?.intake
+    const projectContext = [
+      intake?.concept ? `Project concept: ${intake.concept}` : null,
+      intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : null,
+      intake?.mood?.length ? `Mood: ${intake.mood.join(', ')}` : null,
+    ].filter(Boolean).join('\n')
+
+    const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
+The user has written a natural language description of what they want. Reformat and enhance it into the structured prompt format below — adding technical cinematic details while preserving every element the user mentioned, especially text/calligraphy, scale relationships, and specific visual details.
+
+You MUST use this exact structured format:
+
+[Subject]: Main subject(s) with appearance, expression, pose. Preserve any scale relationships exactly (tiny, enormous, silhouette, etc.).
+
+[Action]: What the subject is doing.
+
+[Environment]: The setting. If the user mentioned text, calligraphy, inscriptions, or overlays, include them verbatim here as physically present in the scene.
+
+[Cinematography]: Camera angle, lens, depth of field, framing, composition.
+
+[Lighting/Style]: Lighting, color grading, mood, artistic style.
+
+[Technical]: Photography/rendering style and quality descriptors.
+
+Rules:
+- Preserve ALL elements the user mentioned — do not drop anything
+- Add technical details to enrich but never override the user's intent
+- Use professional cinematic language
+${projectContext ? `\nProject context:\n${projectContext}` : ''}
+${`Shot: ${shot.description}`}
+${`Scene: ${scene.description}`}
+
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const enhanced = chunks.join('').trim()
+      if (!enhanced) throw new Error('AI returned an empty response — please try again')
+      return { prompt: enhanced }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// enhanceTransitionVideoPrompt
+// ---------------------------------------------------------------------------
+
+export const enhanceTransitionVideoPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { fromShotId: string; toShotId: string; userPrompt: string }) => data)
+  .handler(async ({ data: { fromShotId, toShotId, userPrompt } }) => {
+    const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    const toShot = await db.query.shots.findFirst({
+      where: and(eq(shots.id, toShotId), isNull(shots.deletedAt)),
+    })
+    if (!toShot) throw new Error('Next shot not found')
+
+    const intake = settings?.intake
+    const styleCtx = intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : ''
+
+    const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+The user has written a natural language motion description. Reformat and enhance it into the structured video prompt format below — adding technical motion details while preserving the user's intent exactly.
+
+Use this exact structured format:
+
+[Cinematography]: Camera movement direction, speed, technique.
+
+[Subject]: How subjects move or transform during the transition.
+
+[Action]: The specific motion arc from the start frame to the end frame.
+
+[Context]: Environmental elements and how they shift.
+
+[Style & Ambiance]: Visual feel, lighting changes, mood continuity.
+
+Rules:
+- Preserve ALL motion elements the user mentioned
+- Add specific direction/speed details to enrich but not override intent
+- Write in present tense
+${styleCtx}
+
+Transition context:
+From: ${fromShot.description}
+To: ${toShot.description}
+
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const enhanced = chunks.join('').trim()
+      if (!enhanced) throw new Error('AI returned an empty response — please try again')
+      return { prompt: enhanced }
     } finally {
       clearTimeout(timeout)
     }

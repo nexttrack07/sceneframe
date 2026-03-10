@@ -13,6 +13,8 @@ export function ShotStudioLeftPanel({
   onPromptChange,
   onGeneratePrompt,
   isGeneratingPrompt,
+  onEnhancePrompt,
+  isEnhancingPrompt,
   settingsOverrides,
   onSettingsChange,
   isGenerating,
@@ -25,6 +27,8 @@ export function ShotStudioLeftPanel({
   onPromptChange: (value: string) => void
   onGeneratePrompt: () => void
   isGeneratingPrompt: boolean
+  onEnhancePrompt?: () => void
+  isEnhancingPrompt?: boolean
   settingsOverrides: ImageDefaults
   onSettingsChange: (settings: ImageDefaults) => void
   isGenerating: boolean
@@ -47,6 +51,8 @@ export function ShotStudioLeftPanel({
             onPromptChange={onPromptChange}
             onGeneratePrompt={onGeneratePrompt}
             isGeneratingPrompt={isGeneratingPrompt}
+            onEnhancePrompt={onEnhancePrompt}
+            isEnhancingPrompt={isEnhancingPrompt}
           />
 
           <InlineSettingsRow

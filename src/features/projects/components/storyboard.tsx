@@ -13,7 +13,7 @@ import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
 import { exportProjectHandoff } from '../project-queries'
 import { resetWorkshop } from '../project-mutations'
-import { reorderScene, addScene, deleteScene, addShot, deleteShot, generateShotImages, generateShotImagePrompt, selectShotAsset, deleteAsset, generateTransitionVideo, generateTransitionVideoPrompt, pollTransitionVideo, selectTransitionVideo, deleteTransitionVideo } from '../scene-actions'
+import { reorderScene, addScene, deleteScene, addShot, deleteShot, generateShotImages, generateShotImagePrompt, enhanceShotImagePrompt, selectShotAsset, deleteAsset, generateTransitionVideo, generateTransitionVideoPrompt, enhanceTransitionVideoPrompt, pollTransitionVideo, selectTransitionVideo, deleteTransitionVideo } from '../scene-actions'
 import { normalizeImageDefaults } from '../project-normalize'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -104,6 +104,8 @@ export function Storyboard({
   const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(normalizeImageDefaults(null))
   const [isGenerating, setIsGenerating] = useState(false)
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
+  const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false)
+  const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false)
   const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null)
   const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
@@ -559,6 +561,42 @@ export function Storyboard({
     }
   }
 
+  async function handleEnhancePrompt() {
+    if (!selectedShotId || !prompt.trim()) return
+    setIsEnhancingPrompt(true)
+    setError(null)
+    try {
+      const result = await enhanceShotImagePrompt({ data: { shotId: selectedShotId, userPrompt: prompt } })
+      setPrompt(result.prompt)
+      toast('Prompt enhanced', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to enhance prompt'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsEnhancingPrompt(false)
+    }
+  }
+
+  async function handleEnhanceVideoPrompt() {
+    if (!selectedTransitionPair || !videoPrompt.trim()) return
+    setIsEnhancingVideoPrompt(true)
+    setError(null)
+    try {
+      const result = await enhanceTransitionVideoPrompt({
+        data: { fromShotId: selectedTransitionPair.fromShotId, toShotId: selectedTransitionPair.toShotId, userPrompt: videoPrompt },
+      })
+      setVideoPrompt(result.prompt)
+      toast('Video prompt enhanced', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to enhance prompt'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsEnhancingVideoPrompt(false)
+    }
+  }
+
   async function handleSelectAsset(assetId: string) {
     setIsSelectingAssetId(assetId)
     setError(null)
@@ -823,6 +861,8 @@ export function Storyboard({
               prompt={prompt}
               onPromptChange={setPrompt}
               onGeneratePrompt={handleGeneratePrompt}
+              onEnhancePrompt={handleEnhancePrompt}
+              isEnhancingPrompt={isEnhancingPrompt}
               isGeneratingPrompt={isGeneratingPrompt}
               settingsOverrides={settingsOverrides}
               onSettingsChange={setSettingsOverrides}
@@ -837,6 +877,8 @@ export function Storyboard({
               onVideoPromptChange={setVideoPrompt}
               onGeneratePrompt={handleGenerateVideoPrompt}
               isGeneratingPrompt={isGeneratingVideoPrompt}
+              onEnhancePrompt={handleEnhanceVideoPrompt}
+              isEnhancingPrompt={isEnhancingVideoPrompt}
               videoMode={videoMode}
               onVideoModeChange={setVideoMode}
               generateAudio={generateAudio}

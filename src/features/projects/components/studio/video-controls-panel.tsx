@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2, Film, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Film, ChevronDown, ChevronUp, Sparkles, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Shot } from '@/db/schema'
 
@@ -10,6 +10,8 @@ export function VideoControlsPanel({
   onVideoPromptChange,
   onGeneratePrompt,
   isGeneratingPrompt,
+  onEnhancePrompt,
+  isEnhancingPrompt,
   videoMode,
   onVideoModeChange,
   generateAudio,
@@ -23,6 +25,8 @@ export function VideoControlsPanel({
   onVideoPromptChange: (v: string) => void
   onGeneratePrompt: () => void
   isGeneratingPrompt: boolean
+  onEnhancePrompt?: () => void
+  isEnhancingPrompt?: boolean
   videoMode: 'standard' | 'pro'
   onVideoModeChange: (m: 'standard' | 'pro') => void
   generateAudio: boolean
@@ -31,6 +35,7 @@ export function VideoControlsPanel({
   onGenerate: () => void
 }) {
   const [showDescriptions, setShowDescriptions] = useState(true)
+  const isBusy = isGeneratingPrompt || isEnhancingPrompt
 
   return (
     <div className="flex flex-col h-full">
@@ -47,12 +52,8 @@ export function VideoControlsPanel({
           </button>
           {showDescriptions && (
             <div className="space-y-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
-              <div>
-                <span className="font-medium text-foreground">From:</span> {fromShot.description}
-              </div>
-              <div>
-                <span className="font-medium text-foreground">To:</span> {toShot.description}
-              </div>
+              <div><span className="font-medium text-foreground">From:</span> {fromShot.description}</div>
+              <div><span className="font-medium text-foreground">To:</span> {toShot.description}</div>
             </div>
           )}
         </div>
@@ -63,29 +64,19 @@ export function VideoControlsPanel({
             <div className="flex items-center gap-1.5 flex-1">
               <label className="text-xs font-medium text-muted-foreground">Resolution</label>
               <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
-                <button
-                  type="button"
-                  onClick={() => onVideoModeChange('standard')}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                >
+                <button type="button" onClick={() => onVideoModeChange('standard')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
                   720p
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onVideoModeChange('pro')}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                >
+                <button type="button" onClick={() => onVideoModeChange('pro')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
                   1080p
                 </button>
               </div>
             </div>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={generateAudio}
-                onChange={(e) => onGenerateAudioChange(e.target.checked)}
-                className="h-3.5 w-3.5 rounded accent-primary"
-              />
+              <input type="checkbox" checked={generateAudio} onChange={(e) => onGenerateAudioChange(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-primary" />
               <span className="text-xs font-medium text-muted-foreground">Audio</span>
             </label>
           </div>
@@ -94,15 +85,22 @@ export function VideoControlsPanel({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-muted-foreground">Motion prompt</label>
-              <button
-                type="button"
-                onClick={onGeneratePrompt}
-                disabled={isGeneratingPrompt}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-              >
-                {isGeneratingPrompt ? <Loader2 size={11} className="animate-spin" /> : null}
-                {isGeneratingPrompt ? 'Generating...' : 'Generate'}
-              </button>
+              <div className="flex items-center gap-1">
+                {onEnhancePrompt && (
+                  <button type="button" onClick={onEnhancePrompt}
+                    disabled={isBusy || !videoPrompt.trim()}
+                    title="Enhance your prompt"
+                    className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors disabled:opacity-40">
+                    {isEnhancingPrompt ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                  </button>
+                )}
+                <button type="button" onClick={onGeneratePrompt}
+                  disabled={isBusy}
+                  title="Generate prompt from scratch"
+                  className="p-1.5 rounded-md bg-foreground text-background hover:bg-foreground/80 transition-colors disabled:opacity-50">
+                  {isGeneratingPrompt ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                </button>
+              </div>
             </div>
             <textarea
               rows={8}
@@ -117,12 +115,7 @@ export function VideoControlsPanel({
 
       {/* Sticky generate button */}
       <div className="p-4 border-t bg-card">
-        <Button
-          onClick={onGenerate}
-          disabled={isGenerating || !videoPrompt.trim()}
-          className="w-full gap-2"
-          size="lg"
-        >
+        <Button onClick={onGenerate} disabled={isGenerating || !videoPrompt.trim()} className="w-full gap-2" size="lg">
           {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}
           {isGenerating ? 'Generating video...' : 'Generate video'}
         </Button>
