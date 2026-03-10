@@ -795,7 +795,7 @@ export function Storyboard({
                                 : 'bg-border/50 group-hover:bg-border'
                             }`} />
                             {/* Centered pill */}
-                            <div className={`relative mx-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
+                            <div className={`relative z-10 mx-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
                               selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
                                 ? 'bg-primary/10 border-primary/30 text-primary'
                                 : 'bg-background border-border/60 text-muted-foreground group-hover:border-border group-hover:text-foreground'
