@@ -76,10 +76,10 @@ export function VideoGrid({
                 </div>
               </>
             ) : tv.status === 'generating' ? (
-              <div className="absolute inset-0 bg-muted overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted animate-pulse" />
+              <div className="absolute inset-0 border border-border bg-card overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                  <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/60 animate-spin" />
+                  <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
                   <GeneratingTimer />
                 </div>
               </div>

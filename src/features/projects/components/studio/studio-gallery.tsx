@@ -86,10 +86,10 @@ export function StudioGallery({
           <div className="grid grid-cols-3 gap-2">
             {/* Optimistic pending skeletons shown immediately when generating */}
             {Array.from({ length: pendingCount }).map((_, i) => (
-              <div key={`pending-${i}`} className="relative rounded-lg overflow-hidden bg-muted aspect-video">
-                <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted animate-pulse" />
+              <div key={`pending-${i}`} className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video">
+                <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                  <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/60 animate-spin" />
+                  <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
                   <GeneratingTimer />
                 </div>
               </div>

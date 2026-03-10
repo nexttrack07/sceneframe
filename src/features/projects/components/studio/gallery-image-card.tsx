@@ -37,10 +37,10 @@ export function GalleryImageCard({
       ) : asset.status === 'error' ? (
         <div className="w-full aspect-video bg-destructive/10" />
       ) : (
-        <div className="w-full aspect-video relative overflow-hidden rounded-md bg-muted">
-          <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/5 to-muted animate-pulse" />
+        <div className="w-full aspect-video relative overflow-hidden rounded-md border border-border bg-card">
+          <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/60 animate-spin" />
+            <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
             <GeneratingTimer />
           </div>
         </div>

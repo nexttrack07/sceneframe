@@ -18,7 +18,7 @@ export function GeneratingTimer() {
   }, [])
 
   return (
-    <span className="text-sm font-mono font-medium text-muted-foreground/70 tabular-nums">
+    <span className="text-sm font-mono font-medium text-foreground/70 tabular-nums">
       {elapsed.toFixed(1)}s
     </span>
   )
