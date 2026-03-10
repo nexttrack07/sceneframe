@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Loader2, Play, Trash2, AlertTriangle, Check, Clock, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Loader2, Play, Trash2, AlertTriangle } from 'lucide-react'
 import type { TransitionVideoSummary } from '../../project-types'
 import { GeneratingTimer } from './generating-timer'
+import { VideoDetailDrawer } from './video-detail-drawer'
 
 export function VideoGrid({
   transitionVideos,
@@ -113,56 +113,13 @@ export function VideoGrid({
       </div>
 
       {/* Metadata side drawer */}
-      {expandedVideo && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setExpandedId(null)} />
-          <div className="fixed top-0 right-0 bottom-0 z-50 w-[340px] border-l bg-card flex flex-col overflow-y-auto shadow-xl animate-in slide-in-from-right duration-200">
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <h4 className="text-sm font-semibold">Video Details</h4>
-              <Button size="sm" variant="ghost" onClick={() => setExpandedId(null)} className="h-7 w-7 p-0">
-                <X size={14} />
-              </Button>
-            </div>
-            <div className="p-4 space-y-4">
-              {expandedVideo.url && (
-                <video src={expandedVideo.url} controls className="w-full rounded-lg border border-border" />
-              )}
-              <div className="flex items-center gap-2">
-                {!expandedVideo.isSelected && expandedVideo.status === 'done' && (
-                  <Button size="sm" onClick={() => { onSelect(expandedVideo.id); setExpandedId(null) }} className="gap-1.5 flex-1">
-                    <Check size={12} /> Select
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={() => { onDelete(expandedVideo.id); setExpandedId(null) }}
-                  disabled={deletingVideoId === expandedVideo.id}
-                  className="gap-1.5 text-red-600 hover:text-red-600 flex-1">
-                  <Trash2 size={12} /> Delete
-                </Button>
-              </div>
-              <div className="space-y-3 text-xs">
-                <MetaRow icon={<Clock size={12} />} label="Generated" value={new Date(expandedVideo.createdAt).toLocaleString()} />
-                {expandedVideo.model && <MetaRow label="Model" value={expandedVideo.model.split('/').pop() ?? expandedVideo.model} />}
-                {expandedVideo.modelSettings?.duration && <MetaRow label="Duration" value={`${expandedVideo.modelSettings.duration}s`} />}
-                {expandedVideo.modelSettings?.mode && <MetaRow label="Resolution" value={expandedVideo.modelSettings.mode === 'pro' ? '1080p' : '720p'} />}
-                {expandedVideo.modelSettings?.negativePrompt && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Negative prompt</p>
-                    <p className="text-foreground/80 leading-relaxed bg-muted/50 rounded-lg px-3 py-2">{expandedVideo.modelSettings.negativePrompt}</p>
-                  </div>
-                )}
-                {expandedVideo.prompt && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Motion prompt</p>
-                    <p className="text-foreground/80 leading-relaxed bg-muted/50 rounded-lg px-3 py-2">{expandedVideo.prompt}</p>
-                  </div>
-                )}
-                {expandedVideo.isSelected && <MetaRow label="Status" value="Selected" />}
-                {expandedVideo.stale && <MetaRow label="Warning" value="Stale — source images changed" />}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+      <VideoDetailDrawer
+        video={expandedVideo}
+        deletingVideoId={deletingVideoId}
+        onClose={() => setExpandedId(null)}
+        onDelete={(id) => { onDelete(id); setExpandedId(null) }}
+        onSelect={onSelect}
+      />
 
       {/* Lightbox */}
       {lightboxUrl && (
@@ -176,17 +133,6 @@ export function VideoGrid({
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function MetaRow({ icon, label, value }: { icon?: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-2">
-      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-        {icon}{label}
-      </span>
-      <span className="text-foreground text-right max-w-[180px] break-words">{value}</span>
     </div>
   )
 }

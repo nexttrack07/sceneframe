@@ -10,11 +10,10 @@ import {
   Play,
 } from 'lucide-react'
 import type { Scene, Shot } from '@/db/schema'
-import type { ImageDefaults, ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
+import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
 import { exportProjectHandoff } from '../project-queries'
 import { resetWorkshop } from '../project-mutations'
-import { reorderScene, addScene, deleteScene, addShot, deleteShot, generateShotImages, generateShotImagePrompt, enhanceShotImagePrompt, selectShotAsset, deleteAsset, generateTransitionVideo, generateTransitionVideoPrompt, enhanceTransitionVideoPrompt, pollTransitionVideo, selectTransitionVideo, deleteTransitionVideo } from '../scene-actions'
-import { normalizeImageDefaults } from '../project-normalize'
+import { reorderScene, addScene, deleteScene, addShot, deleteShot } from '../scene-actions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
@@ -25,8 +24,10 @@ import { ShotCard } from './shot-card'
 import { SceneHeader } from './scene-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
 import { StudioGallery } from './studio/studio-gallery'
-import { VideoControlsPanel, type VideoModel } from './studio/video-controls-panel'
+import { VideoControlsPanel } from './studio/video-controls-panel'
 import { VideoGrid } from './studio/video-grid'
+import { useImageStudio } from '../hooks/use-image-studio'
+import { useVideoStudio } from '../hooks/use-video-studio'
 
 function formatTimestamp(seconds: number | null): string {
   if (seconds == null) return '--:--'
@@ -70,29 +71,6 @@ export function Storyboard({
     initialFromShotId && initialToShotId ? { fromShotId: initialFromShotId, toShotId: initialToShotId } : null,
   )
 
-  function selectShot(id: string | null) {
-    setSelectedShotIdState(id)
-    setSelectedTransitionPairState(null)
-    setUseRefImage(false)
-    setUseProjectContext(true)
-    setUsePrevShotContext(true)
-    if (id) {
-      void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
-    } else {
-      void navigate({ search: (prev) => ({ ...prev, shot: undefined, from: undefined, to: undefined }) })
-    }
-  }
-
-  function selectTransition(pair: { fromShotId: string; toShotId: string } | null) {
-    setSelectedTransitionPairState(pair)
-    setSelectedShotIdState(null)
-    if (pair) {
-      void navigate({ search: (prev) => ({ ...prev, from: pair.fromShotId, to: pair.toShotId, shot: undefined }) })
-    } else {
-      void navigate({ search: (prev) => ({ ...prev, from: undefined, to: undefined, shot: undefined }) })
-    }
-  }
-
   // Drag-to-reorder state
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -101,36 +79,6 @@ export function Storyboard({
   const [showAddForm, setShowAddForm] = useState(false)
   const [newSceneDescription, setNewSceneDescription] = useState('')
   const [isAddingScene, setIsAddingScene] = useState(false)
-
-  // Image studio state (for selected shot)
-  const [prompt, setPrompt] = useState('')
-  const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(normalizeImageDefaults(null))
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
-  const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false)
-  const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false)
-  const [useRefImage, setUseRefImage] = useState(false)
-  const [useProjectContext, setUseProjectContext] = useState(true)
-  const [usePrevShotContext, setUsePrevShotContext] = useState(true)
-  const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
-  const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null)
-  const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
-  const [isLightboxOpen, setIsLightboxOpen] = useState(false)
-
-  // Video studio state (for selected transition)
-  const [videoPrompt, setVideoPrompt] = useState('')
-  const [videoModel, setVideoModel] = useState<VideoModel>('v3-omni')
-  const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
-  const [generateAudio, setGenerateAudio] = useState(false)
-  const [negativePrompt, setNegativePrompt] = useState('')
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
-  const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
-  const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
-  const cancelVideoRef = useRef(false)
-  const allTransitionVideosRef = useRef(allTransitionVideos)
-  allTransitionVideosRef.current = allTransitionVideos
-  const selectShotRef = useRef(selectShot)
-  selectShotRef.current = selectShot
 
   const hasShotsMode = storyShots.length > 0
 
@@ -187,6 +135,47 @@ export function Storyboard({
     return grouped
   }, [sceneAssets])
 
+  const imageStudio = useImageStudio({
+    selectedShotId,
+    storyShots,
+    assetsByShotId,
+    router,
+    toast,
+    setError,
+  })
+
+  const videoStudio = useVideoStudio({
+    selectedTransitionPair,
+    allTransitionVideos,
+    router,
+    toast,
+    setError,
+  })
+
+  function selectShot(id: string | null) {
+    setSelectedShotIdState(id)
+    setSelectedTransitionPairState(null)
+    imageStudio.resetForShot(false)
+    if (id) {
+      void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, shot: undefined, from: undefined, to: undefined }) })
+    }
+  }
+
+  function selectTransition(pair: { fromShotId: string; toShotId: string } | null) {
+    setSelectedTransitionPairState(pair)
+    setSelectedShotIdState(null)
+    if (pair) {
+      void navigate({ search: (prev) => ({ ...prev, from: pair.fromShotId, to: pair.toShotId, shot: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, from: undefined, to: undefined, shot: undefined }) })
+    }
+  }
+
+  const selectShotRef = useRef(selectShot)
+  selectShotRef.current = selectShot
+
   const hasGeneratingAssets = sceneAssets.some((asset) => asset.status === 'generating')
 
   // Suppress polling while studio is open — studio manages its own invalidation
@@ -199,109 +188,13 @@ export function Storyboard({
     return () => clearInterval(interval)
   }, [hasGeneratingAssets, selectedSceneId, selectedShotId, selectedTransitionPair, router])
 
-  // Reset image studio state when selected shot changes
-  useEffect(() => {
-    if (!selectedShotId) return
-    const shot = storyShots.find((s) => s.id === selectedShotId)
-    const shotAssets = assetsByShotId.get(selectedShotId) ?? []
-    const lastAssetSettings =
-      [...shotAssets]
-        .filter((a) => a.status === 'done' && a.modelSettings)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
-        ?.modelSettings ?? null
-    setPrompt(shot?.imagePrompt ?? '')
-    setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
-    setExpandedImageId(null)
-    setIsGenerating(false)
-    setIsGeneratingPrompt(false)
-    setIsSelectingAssetId(null)
-    setDeletingAssetId(null)
-  }, [selectedShotId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reset video studio state when selected transition pair changes
-  useEffect(() => {
-    if (!selectedTransitionPair) return
-    setVideoPrompt('')
-    setIsGeneratingVideo(false)
-    setIsGeneratingVideoPrompt(false)
-    setDeletingVideoId(null)
-    cancelVideoRef.current = false
-  }, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-resume polling for any stuck generating transition when transition pair is selected
-  useEffect(() => {
-    if (!selectedTransitionPair) return
-    const generatingTv = allTransitionVideosRef.current.find(
-      (tv) =>
-        tv.fromShotId === selectedTransitionPair.fromShotId &&
-        tv.toShotId === selectedTransitionPair.toShotId &&
-        tv.status === 'generating',
-    )
-    if (!generatingTv || isGeneratingVideo) return
-
-    const transitionVideoId = generatingTv.id
-    cancelVideoRef.current = false
-    setIsGeneratingVideo(true)
-
-    const POLL_TIMEOUT_MS = 12 * 60 * 1000
-    const deadline = Date.now() + POLL_TIMEOUT_MS
-    let consecutiveErrors = 0
-
-    const interval = setInterval(async () => {
-      if (cancelVideoRef.current || Date.now() > deadline) {
-        clearInterval(interval)
-        setIsGeneratingVideo(false)
-        return
-      }
-      try {
-        const result = await pollTransitionVideo({ data: { transitionVideoId } })
-        consecutiveErrors = 0
-        if (result.status === 'done') {
-          const isSelected = allTransitionVideosRef.current.find(
-            (tv) =>
-              tv.fromShotId === selectedTransitionPair.fromShotId &&
-              tv.toShotId === selectedTransitionPair.toShotId &&
-              tv.isSelected &&
-              tv.status === 'done',
-          )
-          if (!isSelected) {
-            await selectTransitionVideo({ data: { transitionVideoId } })
-          }
-          clearInterval(interval)
-          setIsGeneratingVideo(false)
-          await router.invalidate()
-          toast('Transition video ready', 'success')
-        } else if (result.status === 'error') {
-          clearInterval(interval)
-          setIsGeneratingVideo(false)
-          await deleteTransitionVideo({ data: { transitionVideoId } })
-          await router.invalidate()
-          toast(result.errorMessage ?? 'Video generation failed', 'error')
-        }
-      } catch (err) {
-        consecutiveErrors++
-        if (consecutiveErrors >= 3) {
-          clearInterval(interval)
-          setIsGeneratingVideo(false)
-          const msg = err instanceof Error ? err.message : 'Polling failed'
-          toast(msg, 'error')
-        }
-      }
-    }, 5000)
-
-    return () => {
-      clearInterval(interval)
-      cancelVideoRef.current = true
-    }
-  }, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Keyboard shortcut: Escape closes studio
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement
       const tag = target.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
-      if (isLightboxOpen) return
+      if (imageStudio.isLightboxOpen) return
       if (e.key === 'Escape') {
         selectShotRef.current(null)
         setSelectedSceneId(null)
@@ -309,7 +202,7 @@ export function Storyboard({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isLightboxOpen])
+  }, [imageStudio.isLightboxOpen])
 
   const filteredScenes = storyScenes
 
@@ -525,262 +418,12 @@ export function Storyboard({
     return `${formatTimestamp(first.timestampStart)}-${formatTimestamp(last.timestampEnd)}`
   }
 
-  // Image generation handlers
-  async function handleGenerate() {
-    if (!selectedShotId) return
-    const promptOverride = prompt.trim()
-    setIsGenerating(true)
-    setError(null)
-    try {
-      const result = await generateShotImages({
-        data: {
-          shotId: selectedShotId,
-          lane: 'start',
-          promptOverride: promptOverride || undefined,
-          settingsOverrides,
-          referenceImageUrls: useRefImage && prevShotSelectedImageUrl ? [prevShotSelectedImageUrl] : [],
-        },
-      })
-      await router.invalidate()
-      toast(
-        `Generated ${result.completedCount} image${result.completedCount !== 1 ? 's' : ''}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ''}`,
-        result.failedCount > 0 ? 'error' : 'success',
-      )
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate images'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  async function handleGeneratePrompt() {
-    if (!selectedShotId) return
-    setIsGeneratingPrompt(true)
-    setError(null)
-    try {
-      const result = await generateShotImagePrompt({
-        data: { shotId: selectedShotId, useProjectContext, usePrevShotContext },
-      })
-      setPrompt(result.prompt)
-      await router.invalidate()
-      toast('Prompt generated', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate prompt'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGeneratingPrompt(false)
-    }
-  }
-
-  async function handleEnhancePrompt() {
-    if (!selectedShotId || !prompt.trim()) return
-    setIsEnhancingPrompt(true)
-    setError(null)
-    try {
-      const result = await enhanceShotImagePrompt({ data: { shotId: selectedShotId, userPrompt: prompt, useProjectContext, usePrevShotContext } })
-      setPrompt(result.prompt)
-      toast('Prompt enhanced', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to enhance prompt'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsEnhancingPrompt(false)
-    }
-  }
-
-  async function handleEnhanceVideoPrompt() {
-    if (!selectedTransitionPair || !videoPrompt.trim()) return
-    setIsEnhancingVideoPrompt(true)
-    setError(null)
-    try {
-      const result = await enhanceTransitionVideoPrompt({
-        data: { fromShotId: selectedTransitionPair.fromShotId, toShotId: selectedTransitionPair.toShotId, userPrompt: videoPrompt },
-      })
-      setVideoPrompt(result.prompt)
-      toast('Video prompt enhanced', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to enhance prompt'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsEnhancingVideoPrompt(false)
-    }
-  }
-
-  async function handleSelectAsset(assetId: string) {
-    setIsSelectingAssetId(assetId)
-    setError(null)
-    try {
-      await selectShotAsset({ data: { assetId } })
-      await router.invalidate()
-      toast('Image selected', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to select image'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsSelectingAssetId(null)
-    }
-  }
-
-  async function handleDeleteAsset(assetId: string) {
-    setDeletingAssetId(assetId)
-    setError(null)
-    try {
-      await deleteAsset({ data: { assetId } })
-      if (expandedImageId === assetId) setExpandedImageId(null)
-      await router.invalidate()
-      toast('Image deleted', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete image'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setDeletingAssetId(null)
-    }
-  }
-
-  // Video generation handlers
-  async function handleGenerateVideoPrompt() {
-    if (!selectedTransitionPair) return
-    setIsGeneratingVideoPrompt(true)
-    setError(null)
-    try {
-      const result = await generateTransitionVideoPrompt({
-        data: { fromShotId: selectedTransitionPair.fromShotId, toShotId: selectedTransitionPair.toShotId },
-      })
-      setVideoPrompt(result.prompt)
-      toast('Prompt generated', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate prompt'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGeneratingVideoPrompt(false)
-    }
-  }
-
-  async function handleGenerateVideo() {
-    if (!selectedTransitionPair || !videoPrompt.trim()) return
-    setIsGeneratingVideo(true)
-    cancelVideoRef.current = false
-    setError(null)
-    try {
-      const { transitionVideoId } = await generateTransitionVideo({
-        data: {
-          fromShotId: selectedTransitionPair.fromShotId,
-          toShotId: selectedTransitionPair.toShotId,
-          prompt: videoPrompt.trim(),
-          videoModel,
-          mode: videoMode,
-          generateAudio,
-          negativePrompt,
-        },
-      })
-
-      const POLL_TIMEOUT_MS = 12 * 60 * 1000
-      const deadline = Date.now() + POLL_TIMEOUT_MS
-
-      await new Promise<void>((resolve, reject) => {
-        let settled = false
-        const interval = setInterval(async () => {
-          if (settled) return
-          if (Date.now() > deadline || cancelVideoRef.current) {
-            settled = true
-            clearInterval(interval)
-            reject(new Error(cancelVideoRef.current ? 'Cancelled' : 'Video generation timed out'))
-            return
-          }
-          try {
-            const result = await pollTransitionVideo({ data: { transitionVideoId } })
-            if (result.status === 'done') {
-              // Auto-select if nothing is selected yet
-              const hasSelected = allTransitionVideos.some(
-                (tv) =>
-                  tv.fromShotId === selectedTransitionPair.fromShotId &&
-                  tv.toShotId === selectedTransitionPair.toShotId &&
-                  tv.isSelected &&
-                  tv.status === 'done',
-              )
-              if (!hasSelected) {
-                await selectTransitionVideo({ data: { transitionVideoId } })
-              }
-              settled = true
-              clearInterval(interval)
-              resolve()
-            } else if (result.status === 'error') {
-              settled = true
-              clearInterval(interval)
-              await deleteTransitionVideo({ data: { transitionVideoId } }).catch(() => {})
-              reject(new Error(result.errorMessage ?? 'Video generation failed'))
-            }
-          } catch {
-            // transient error — keep polling
-          }
-        }, 5000)
-      })
-
-      await router.invalidate()
-      toast('Transition video generated', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate video'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGeneratingVideo(false)
-      cancelVideoRef.current = false
-    }
-  }
-
-  async function handleSelectTransitionVideo(transitionVideoId: string) {
-    setError(null)
-    try {
-      await selectTransitionVideo({ data: { transitionVideoId } })
-      await router.invalidate()
-      toast('Video selected', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to select video'
-      setError(msg)
-      toast(msg, 'error')
-    }
-  }
-
-  async function handleDeleteTransitionVideo(transitionVideoId: string) {
-    setDeletingVideoId(transitionVideoId)
-    setError(null)
-    try {
-      await deleteTransitionVideo({ data: { transitionVideoId } })
-      await router.invalidate()
-      toast('Video deleted', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete video'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setDeletingVideoId(null)
-    }
-  }
-
   // Determine studio mode
   const studioMode: 'image' | 'video' = selectedTransitionPair ? 'video' : 'image'
   const selectedShot = selectedShotId ? storyShots.find((s) => s.id === selectedShotId) ?? null : null
   const fromShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.fromShotId) ?? null : null
   const toShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null : null
   const shotParentScene = selectedShot ? storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null : null
-
-  // Previous shot globally (across scenes) — for reference image
-  const prevShot = useMemo(() => {
-    if (!selectedShot) return null
-    const idx = storyShots.findIndex((s) => s.id === selectedShot.id)
-    return idx > 0 ? storyShots[idx - 1] : null
-  }, [selectedShot, storyShots])
-  const prevShotSelectedImageUrl = prevShot
-    ? (assetsByShotId.get(prevShot.id) ?? []).find((a) => a.isSelected && a.status === 'done')?.url ?? null
-    : null
 
   // 3-column layout when shot or transition is selected
   if (selectedShotId || selectedTransitionPair) {
@@ -888,44 +531,44 @@ export function Storyboard({
             <ShotStudioLeftPanel
               shot={selectedShot}
               parentScene={shotParentScene}
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              onGeneratePrompt={handleGeneratePrompt}
-              onEnhancePrompt={handleEnhancePrompt}
-              isEnhancingPrompt={isEnhancingPrompt}
-              refImageUrl={prevShotSelectedImageUrl}
-              useRefImage={useRefImage}
-              onUseRefImageChange={setUseRefImage}
-              useProjectContext={useProjectContext}
-              onUseProjectContextChange={setUseProjectContext}
-              usePrevShotContext={usePrevShotContext}
-              onUsePrevShotContextChange={setUsePrevShotContext}
-              isGeneratingPrompt={isGeneratingPrompt}
-              settingsOverrides={settingsOverrides}
-              onSettingsChange={setSettingsOverrides}
-              isGenerating={isGenerating}
-              onGenerate={handleGenerate}
+              prompt={imageStudio.prompt}
+              onPromptChange={imageStudio.setPrompt}
+              onGeneratePrompt={imageStudio.handleGeneratePrompt}
+              onEnhancePrompt={imageStudio.handleEnhancePrompt}
+              isEnhancingPrompt={imageStudio.isEnhancingPrompt}
+              refImageUrl={imageStudio.prevShotSelectedImageUrl}
+              useRefImage={imageStudio.useRefImage}
+              onUseRefImageChange={imageStudio.setUseRefImage}
+              useProjectContext={imageStudio.useProjectContext}
+              onUseProjectContextChange={imageStudio.setUseProjectContext}
+              usePrevShotContext={imageStudio.usePrevShotContext}
+              onUsePrevShotContextChange={imageStudio.setUsePrevShotContext}
+              isGeneratingPrompt={imageStudio.isGeneratingPrompt}
+              settingsOverrides={imageStudio.settingsOverrides}
+              onSettingsChange={imageStudio.setSettingsOverrides}
+              isGenerating={imageStudio.isGenerating}
+              onGenerate={imageStudio.handleGenerate}
             />
           ) : studioMode === 'video' && fromShot && toShot ? (
             <VideoControlsPanel
               fromShot={fromShot}
               toShot={toShot}
-              videoPrompt={videoPrompt}
-              onVideoPromptChange={setVideoPrompt}
-              onGeneratePrompt={handleGenerateVideoPrompt}
-              isGeneratingPrompt={isGeneratingVideoPrompt}
-              onEnhancePrompt={handleEnhanceVideoPrompt}
-              isEnhancingPrompt={isEnhancingVideoPrompt}
-              videoModel={videoModel}
-              onVideoModelChange={setVideoModel}
-              videoMode={videoMode}
-              onVideoModeChange={setVideoMode}
-              generateAudio={generateAudio}
-              onGenerateAudioChange={setGenerateAudio}
-              negativePrompt={negativePrompt}
-              onNegativePromptChange={setNegativePrompt}
-              isGenerating={isGeneratingVideo}
-              onGenerate={handleGenerateVideo}
+              videoPrompt={videoStudio.videoPrompt}
+              onVideoPromptChange={videoStudio.setVideoPrompt}
+              onGeneratePrompt={videoStudio.handleGenerateVideoPrompt}
+              isGeneratingPrompt={videoStudio.isGeneratingVideoPrompt}
+              onEnhancePrompt={videoStudio.handleEnhanceVideoPrompt}
+              isEnhancingPrompt={videoStudio.isEnhancingVideoPrompt}
+              videoModel={videoStudio.videoModel}
+              onVideoModelChange={videoStudio.setVideoModel}
+              videoMode={videoStudio.videoMode}
+              onVideoModeChange={videoStudio.setVideoMode}
+              generateAudio={videoStudio.generateAudio}
+              onGenerateAudioChange={videoStudio.setGenerateAudio}
+              negativePrompt={videoStudio.negativePrompt}
+              onNegativePromptChange={videoStudio.setNegativePrompt}
+              isGenerating={videoStudio.isGeneratingVideo}
+              onGenerate={videoStudio.handleGenerateVideo}
             />
           ) : null}
         </div>
@@ -935,15 +578,15 @@ export function Storyboard({
           {studioMode === 'image' && selectedShot ? (
             <StudioGallery
               sceneAssets={assetsByShotId.get(selectedShot.id) ?? []}
-              selectingAssetId={isSelectingAssetId}
-              deletingAssetId={deletingAssetId}
-              onSelectAsset={handleSelectAsset}
-              onDeleteAsset={handleDeleteAsset}
-              onRegenerate={handleGenerate}
-              expandedImageId={expandedImageId}
-              onExpandImage={setExpandedImageId}
-              pendingCount={isGenerating ? settingsOverrides.batchCount : 0}
-              onLightboxChange={setIsLightboxOpen}
+              selectingAssetId={imageStudio.isSelectingAssetId}
+              deletingAssetId={imageStudio.deletingAssetId}
+              onSelectAsset={imageStudio.handleSelectAsset}
+              onDeleteAsset={imageStudio.handleDeleteAsset}
+              onRegenerate={imageStudio.handleGenerate}
+              expandedImageId={imageStudio.expandedImageId}
+              onExpandImage={imageStudio.setExpandedImageId}
+              pendingCount={imageStudio.isGenerating ? imageStudio.settingsOverrides.batchCount : 0}
+              onLightboxChange={imageStudio.setIsLightboxOpen}
             />
           ) : studioMode === 'video' && selectedTransitionPair ? (
             <VideoGrid
@@ -952,10 +595,10 @@ export function Storyboard({
                   tv.fromShotId === selectedTransitionPair.fromShotId &&
                   tv.toShotId === selectedTransitionPair.toShotId,
               )}
-              deletingVideoId={deletingVideoId}
-              onDelete={handleDeleteTransitionVideo}
-              onSelect={handleSelectTransitionVideo}
-              isGenerating={isGeneratingVideo}
+              deletingVideoId={videoStudio.deletingVideoId}
+              onDelete={videoStudio.handleDeleteTransitionVideo}
+              onSelect={videoStudio.handleSelectTransitionVideo}
+              isGenerating={videoStudio.isGeneratingVideo}
             />
           ) : null}
         </div>
