@@ -73,6 +73,7 @@ export function Storyboard({
   function selectShot(id: string | null) {
     setSelectedShotIdState(id)
     setSelectedTransitionPairState(null)
+    setUseRefImage(false)
     if (id) {
       void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
     } else {
@@ -106,6 +107,7 @@ export function Storyboard({
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
   const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false)
   const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false)
+  const [useRefImage, setUseRefImage] = useState(false)
   const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null)
   const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
@@ -525,6 +527,7 @@ export function Storyboard({
           lane: 'start',
           promptOverride: promptOverride || undefined,
           settingsOverrides,
+          referenceImageUrls: useRefImage && prevShotSelectedImageUrl ? [prevShotSelectedImageUrl] : [],
         },
       })
       await router.invalidate()
@@ -755,6 +758,17 @@ export function Storyboard({
   const toShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null : null
   const shotParentScene = selectedShot ? storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null : null
 
+  // Previous shot in the same scene (for reference image)
+  const prevShot = useMemo(() => {
+    if (!selectedShot) return null
+    const sceneShots = shotsBySceneId.get(selectedShot.sceneId) ?? []
+    const idx = sceneShots.findIndex((s) => s.id === selectedShot.id)
+    return idx > 0 ? sceneShots[idx - 1] : null
+  }, [selectedShot, shotsBySceneId])
+  const prevShotSelectedImageUrl = prevShot
+    ? (assetsByShotId.get(prevShot.id) ?? []).find((a) => a.isSelected && a.status === 'done')?.url ?? null
+    : null
+
   // 3-column layout when shot or transition is selected
   if (selectedShotId || selectedTransitionPair) {
     return (
@@ -863,6 +877,9 @@ export function Storyboard({
               onGeneratePrompt={handleGeneratePrompt}
               onEnhancePrompt={handleEnhancePrompt}
               isEnhancingPrompt={isEnhancingPrompt}
+              refImageUrl={prevShotSelectedImageUrl}
+              useRefImage={useRefImage}
+              onUseRefImageChange={setUseRefImage}
               isGeneratingPrompt={isGeneratingPrompt}
               settingsOverrides={settingsOverrides}
               onSettingsChange={setSettingsOverrides}

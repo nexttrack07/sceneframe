@@ -850,16 +850,17 @@ Return ONLY the structured prompt, nothing else.`
 // ---------------------------------------------------------------------------
 
 export const generateShotImages = createServerFn({ method: 'POST' })
-  .inputValidator((data: { shotId: string; lane: 'start' | 'end'; promptOverride?: string; settingsOverrides?: { model?: string; aspectRatio?: string; qualityPreset?: string; batchCount?: number } }) => {
+  .inputValidator((data: { shotId: string; lane: 'start' | 'end'; promptOverride?: string; settingsOverrides?: { model?: string; aspectRatio?: string; qualityPreset?: string; batchCount?: number }; referenceImageUrls?: string[] }) => {
     const lane = data.lane === 'end' ? 'end' as const : 'start' as const
     return {
       shotId: data.shotId,
       lane,
       promptOverride: data.promptOverride?.trim() || undefined,
       settingsOverrides: data.settingsOverrides,
+      referenceImageUrls: data.referenceImageUrls?.filter(Boolean) ?? [],
     }
   })
-  .handler(async ({ data: { shotId, lane, promptOverride, settingsOverrides } }) => {
+  .handler(async ({ data: { shotId, lane, promptOverride, settingsOverrides, referenceImageUrls } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
 
@@ -927,6 +928,7 @@ export const generateShotImages = createServerFn({ method: 'POST' })
           prompt: finalPrompt,
           aspect_ratio: imageDefaults.aspectRatio,
           output_format: 'png' as const,
+          ...(referenceImageUrls.length > 0 ? { image_input: referenceImageUrls } : {}),
         }
       : {
           prompt: finalPrompt,

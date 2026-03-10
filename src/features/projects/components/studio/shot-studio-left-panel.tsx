@@ -16,6 +16,9 @@ export function ShotStudioLeftPanel({
   onEnhancePrompt,
   isEnhancingPrompt,
   settingsOverrides,
+  refImageUrl,
+  useRefImage,
+  onUseRefImageChange,
   onSettingsChange,
   isGenerating,
   onGenerate,
@@ -30,6 +33,9 @@ export function ShotStudioLeftPanel({
   onEnhancePrompt?: () => void
   isEnhancingPrompt?: boolean
   settingsOverrides: ImageDefaults
+  refImageUrl?: string | null
+  useRefImage?: boolean
+  onUseRefImageChange?: (v: boolean) => void
   onSettingsChange: (settings: ImageDefaults) => void
   isGenerating: boolean
   onGenerate: () => void
@@ -59,6 +65,28 @@ export function ShotStudioLeftPanel({
             settings={settingsOverrides}
             onSettingsChange={onSettingsChange}
           />
+
+          {/* Reference image from previous shot */}
+          {refImageUrl && onUseRefImageChange && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useRefImage ?? false}
+                  onChange={(e) => onUseRefImageChange(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded accent-primary"
+                />
+                <span className="text-xs font-medium text-muted-foreground">Use previous shot as reference</span>
+              </label>
+              {useRefImage && (
+                <img
+                  src={refImageUrl}
+                  alt="Reference image"
+                  className="w-full rounded-lg border border-border object-cover aspect-video opacity-80"
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
 
