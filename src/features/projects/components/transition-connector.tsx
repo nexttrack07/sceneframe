@@ -81,9 +81,7 @@ export function TransitionConnector({
           toast(result.errorMessage ?? 'Video generation failed', 'error')
         }
       } catch {
-        clearInterval(interval)
-        setIsGenerating(false)
-        setGeneratingPhase(null)
+        // transient error — keep polling, don't stop
       }
     }, 5000)
 
@@ -149,9 +147,8 @@ export function TransitionConnector({
               clearInterval(interval)
               reject(new Error(result.errorMessage ?? 'Video generation failed'))
             }
-          } catch (pollErr) {
-            clearInterval(interval)
-            reject(pollErr)
+          } catch {
+            // transient error — keep polling
           }
         }, 5000)
       })
