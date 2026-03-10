@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { Loader2, Film, RefreshCw, Trash2, AlertTriangle } from 'lucide-react'
+import { Loader2, Film, RefreshCw, Trash2, AlertTriangle, Play } from 'lucide-react'
 import type { Shot } from '@/db/schema'
 import type { SceneAssetSummary, TransitionVideoSummary } from '../project-types'
 import {
@@ -30,6 +30,7 @@ export function TransitionConnector({
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatingPhase, setGeneratingPhase] = useState<'prompt' | 'video' | null>(null)
   const cancelRef = useRef(false)
+  const [showLightbox, setShowLightbox] = useState(false)
   const [videoPrompt, setVideoPrompt] = useState('')
   const [showPromptInput, setShowPromptInput] = useState(false)
 
@@ -224,6 +225,7 @@ export function TransitionConnector({
 
   if (selectedTransition) {
     return (
+      <>
       <div className="flex items-center gap-2 py-1.5 ml-6 mr-2">
         <div className="flex-1 border-t border-border/40" />
         <div className="flex items-center gap-1.5 shrink-0">
@@ -234,11 +236,16 @@ export function TransitionConnector({
             </span>
           )}
           {selectedTransition.url && (
-            <video
-              src={selectedTransition.url}
-              className="h-8 rounded border border-border aspect-video object-cover"
-              preload="metadata"
-            />
+            <button
+              type="button"
+              onClick={() => setShowLightbox(true)}
+              className="relative group h-10 aspect-video rounded border border-border overflow-hidden bg-black/10 hover:border-primary/50 transition-colors"
+            >
+              <video src={selectedTransition.url} preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/50 transition-colors">
+                <Play size={12} className="text-white fill-white" />
+              </div>
+            </button>
           )}
           <button
             type="button"
@@ -259,6 +266,20 @@ export function TransitionConnector({
         </div>
         <div className="flex-1 border-t border-border/40" />
       </div>
+      {showLightbox && selectedTransition.url && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90" onClick={() => setShowLightbox(false)}>
+          <button type="button" onClick={() => setShowLightbox(false)} className="absolute top-4 right-4 text-white/70 hover:text-white z-10">✕</button>
+          <div onClick={(e) => e.stopPropagation()} className="max-w-[90vw] max-h-[85vh] flex flex-col gap-3">
+            <video src={selectedTransition.url} controls autoPlay className="max-w-full max-h-[75vh] rounded-lg" />
+            <div className="flex items-center gap-4 text-xs text-white/60">
+              <span>Transition video</span>
+              {selectedTransition.modelSettings?.duration && <span>{String(selectedTransition.modelSettings.duration)}s</span>}
+              {selectedTransition.modelSettings?.mode && <span>{selectedTransition.modelSettings.mode === 'pro' ? '1080p' : '720p'}</span>}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
     )
   }
 
