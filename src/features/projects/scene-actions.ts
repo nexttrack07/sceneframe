@@ -634,50 +634,64 @@ export const generateShotImagePrompt = createServerFn({ method: 'POST' })
   .inputValidator(
     (data: { shotId: string; lane: 'start' | 'end' }) => data,
   )
-  .handler(async ({ data: { shotId, lane } }) => {
-    const { userId, shot, project } = await assertShotOwner(shotId)
+  .handler(async ({ data: { shotId } }) => {
+    const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
 
-    const isStart = lane === 'start'
-    const frameLabel = isStart ? 'FIRST (start) frame' : 'LAST (end) frame'
-    const momentInstruction = isStart
-      ? 'This is the FIRST frame — describe the scene at T=0, before any action has occurred. Capture the initial state: where subjects are positioned, their starting pose and expression, the environment as it looks at the very beginning of the shot.'
-      : 'This is the LAST frame — describe the scene at the end of the shot, after all action has completed. Capture the final state: where subjects have moved to, their ending pose and expression, any environmental changes that occurred during the shot.'
+    // Load all shots in this scene for context
+    const sceneShots = await db.query.shots.findMany({
+      where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+      orderBy: asc(shots.order),
+    })
+    const shotIdx = sceneShots.findIndex((s) => s.id === shotId)
+    const prevShot = shotIdx > 0 ? sceneShots[shotIdx - 1] : null
+    const nextShot = shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null
+
+    const intake = settings?.intake
+    const projectContext = [
+      intake?.concept ? `Project concept: ${intake.concept}` : null,
+      intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+      intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : null,
+      intake?.mood?.length ? `Mood: ${intake.mood.join(', ')}` : null,
+      intake?.audience ? `Target audience: ${intake.audience}` : null,
+      intake?.viewerAction ? `Viewer action goal: ${intake.viewerAction}` : null,
+    ].filter(Boolean).join('\n')
 
     const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
-You are generating the ${frameLabel} of a video shot. This image will be used as a keyframe in Kling AI video generation — the start and end frames must be visually distinct enough for the AI to interpolate meaningful motion between them.
-
-${momentInstruction}
-
-First, silently reason about the shot's motion arc: what changes between the beginning and end of this shot? Then write the image prompt for the ${frameLabel} only.
+You are generating a keyframe image for one shot in a video series. The images across all shots must be VISUALLY CONSISTENT — same subjects, same style, same world.
 
 You MUST use this exact structured format:
 
-[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing. Be specific about their state at this exact moment in the shot.
+[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing. Must be consistent with the project's established subjects.
 
-[Action]: What the subject is doing at this precise moment (not during the shot — at this frame specifically).
+[Action]: What the subject is doing in this specific moment.
 
-[Environment]: The setting and surrounding elements at this moment.
+[Environment]: The setting and surrounding elements.
 
 [Cinematography]: Camera angle, lens, depth of field, framing, composition.
 
-[Lighting/Style]: Lighting, color grading, mood, artistic style.
+[Lighting/Style]: Lighting, color grading, mood, artistic style. Must match the project's visual style.
 
 [Technical]: Photography/rendering style and quality descriptors.
 
 Rules:
 - Each section 1-2 sentences, extremely specific
-- The subject's pose/position/expression must reflect the ${isStart ? 'beginning' : 'end'} of the action — not a neutral or generic state
+- CRITICAL: The subject and visual style must be consistent with the project concept and other shots — do NOT invent new subjects or themes not present in the project
 - Use professional cinematic language
-- Do NOT reference the other frame or describe motion — only describe this single frozen moment
 - Do NOT include meta-instructions like "generate an image of"
-${settings?.intake?.audience ? `- Target audience: ${settings.intake.audience}` : ''}
-${settings?.intake?.viewerAction ? `- Video goal: ${settings.intake.viewerAction}` : ''}
 
 Return ONLY the structured prompt, nothing else.`
 
-    const userMessage = `Shot description: ${shot.description}`
+    const contextParts = [
+      `PROJECT CONTEXT:\n${projectContext || `Project: ${project.name}`}`,
+      `SCENE CONTEXT:\nScene description: ${scene.description}`,
+      prevShot ? `PREVIOUS SHOT: ${prevShot.description}` : null,
+      `CURRENT SHOT (generate prompt for this): ${shot.description}`,
+      nextShot ? `NEXT SHOT: ${nextShot.description}` : null,
+    ].filter(Boolean).join('\n\n')
+
+    const userMessage = contextParts
 
     const replicate = new Replicate({ auth: apiKey })
     const controller = new AbortController()
