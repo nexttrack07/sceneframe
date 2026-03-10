@@ -758,13 +758,12 @@ export function Storyboard({
   const toShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null : null
   const shotParentScene = selectedShot ? storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null : null
 
-  // Previous shot in the same scene (for reference image)
+  // Previous shot globally (across scenes) — for reference image
   const prevShot = useMemo(() => {
     if (!selectedShot) return null
-    const sceneShots = shotsBySceneId.get(selectedShot.sceneId) ?? []
-    const idx = sceneShots.findIndex((s) => s.id === selectedShot.id)
-    return idx > 0 ? sceneShots[idx - 1] : null
-  }, [selectedShot, shotsBySceneId])
+    const idx = storyShots.findIndex((s) => s.id === selectedShot.id)
+    return idx > 0 ? storyShots[idx - 1] : null
+  }, [selectedShot, storyShots])
   const prevShotSelectedImageUrl = prevShot
     ? (assetsByShotId.get(prevShot.id) ?? []).find((a) => a.isSelected && a.status === 'done')?.url ?? null
     : null
