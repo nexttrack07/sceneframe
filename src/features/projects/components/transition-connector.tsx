@@ -28,6 +28,7 @@ export function TransitionConnector({
   const router = useRouter()
   const { toast } = useToast()
   const [isGenerating, setIsGenerating] = useState(false)
+  const [generatingPhase, setGeneratingPhase] = useState<'prompt' | 'video' | null>(null)
   const [videoPrompt, setVideoPrompt] = useState('')
   const [showPromptInput, setShowPromptInput] = useState(false)
 
@@ -47,18 +48,28 @@ export function TransitionConnector({
     try {
       let prompt = videoPrompt.trim()
       if (!prompt) {
+        setGeneratingPhase('prompt')
         const result = await generateTransitionVideoPrompt({
           data: { fromShotId: fromShot.id, toShotId: toShot.id },
         })
         prompt = result.prompt
       }
 
+      setGeneratingPhase('video')
       const { transitionVideoId } = await generateTransitionVideo({
         data: { fromShotId: fromShot.id, toShotId: toShot.id, prompt },
       })
 
+      const POLL_TIMEOUT_MS = 12 * 60 * 1000 // 12 minutes
+      const deadline = Date.now() + POLL_TIMEOUT_MS
+
       await new Promise<void>((resolve, reject) => {
         const interval = setInterval(async () => {
+          if (Date.now() > deadline) {
+            clearInterval(interval)
+            reject(new Error('Video generation timed out — Kling may still be processing. Refresh to check status.'))
+            return
+          }
           try {
             const result = await pollTransitionVideo({ data: { transitionVideoId } })
             if (result.status === 'done') {
@@ -87,6 +98,7 @@ export function TransitionConnector({
       toast(msg, 'error')
     } finally {
       setIsGenerating(false)
+      setGeneratingPhase(null)
     }
   }
 
@@ -114,7 +126,7 @@ export function TransitionConnector({
         <div className="flex-1 border-t border-border/40" />
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border/60 rounded-full px-3 py-1 shrink-0">
           <Loader2 size={11} className="animate-spin" />
-          Generating transition...
+          {generatingPhase === 'prompt' ? 'Writing motion prompt...' : generatingPhase === 'video' ? 'Generating video (3–7 min)...' : 'Generating transition...'}
         </div>
         <div className="flex-1 border-t border-border/40" />
       </div>
