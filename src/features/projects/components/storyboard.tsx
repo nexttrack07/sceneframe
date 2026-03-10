@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Plus,
   Info,
+  Play,
 } from 'lucide-react'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
@@ -785,16 +786,23 @@ export function Storyboard({
                             onClick={() => {
                               selectTransition({ fromShotId: shot.id, toShotId: nextShot.id })
                             }}
-                            className={`w-full flex items-center gap-2 py-0.5 px-2 text-[10px] mb-1 rounded transition-colors ${
-                              selectedTransitionPair?.fromShotId === shot.id &&
-                              selectedTransitionPair?.toShotId === nextShot.id
-                                ? 'text-primary bg-primary/5'
-                                : 'text-muted-foreground hover:text-primary hover:bg-primary/5'
-                            }`}
+                            className="w-full relative flex items-center py-1.5 px-2 mb-1 group"
                           >
-                            <div className="flex-1 border-t border-dashed border-current opacity-40" />
-                            <span className="font-medium shrink-0">Video →</span>
-                            <div className="flex-1 border-t border-dashed border-current opacity-40" />
+                            {/* Line */}
+                            <div className={`absolute left-2 right-2 top-1/2 -translate-y-1/2 h-px transition-colors ${
+                              selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
+                                ? 'bg-primary/40'
+                                : 'bg-border/50 group-hover:bg-border'
+                            }`} />
+                            {/* Centered pill */}
+                            <div className={`relative mx-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
+                              selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
+                                ? 'bg-primary/10 border-primary/30 text-primary'
+                                : 'bg-background border-border/60 text-muted-foreground group-hover:border-border group-hover:text-foreground'
+                            }`}>
+                              <Play size={8} className="fill-current" />
+                              Video
+                            </div>
                           </button>
                         )}
                       </div>
