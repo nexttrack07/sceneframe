@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { Loader2, Film, RefreshCw, Trash2, AlertTriangle } from 'lucide-react'
 import type { Shot } from '@/db/schema'
@@ -29,6 +29,7 @@ export function TransitionConnector({
   const { toast } = useToast()
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatingPhase, setGeneratingPhase] = useState<'prompt' | 'video' | null>(null)
+  const cancelRef = useRef(false)
   const [videoPrompt, setVideoPrompt] = useState('')
   const [showPromptInput, setShowPromptInput] = useState(false)
 
@@ -45,6 +46,7 @@ export function TransitionConnector({
 
   async function handleGenerate() {
     setIsGenerating(true)
+    cancelRef.current = false
     try {
       let prompt = videoPrompt.trim()
       if (!prompt) {
@@ -65,9 +67,9 @@ export function TransitionConnector({
 
       await new Promise<void>((resolve, reject) => {
         const interval = setInterval(async () => {
-          if (Date.now() > deadline) {
+          if (Date.now() > deadline || cancelRef.current) {
             clearInterval(interval)
-            reject(new Error('Video generation timed out — Kling may still be processing. Refresh to check status.'))
+            reject(new Error(cancelRef.current ? 'Cancelled' : 'Video generation timed out — Kling may still be processing. Refresh to check status.'))
             return
           }
           try {
@@ -99,6 +101,7 @@ export function TransitionConnector({
     } finally {
       setIsGenerating(false)
       setGeneratingPhase(null)
+      cancelRef.current = false
     }
   }
 
@@ -124,9 +127,18 @@ export function TransitionConnector({
     return (
       <div className="flex items-center gap-2 py-1.5 ml-6 mr-2">
         <div className="flex-1 border-t border-border/40" />
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border/60 rounded-full px-3 py-1 shrink-0">
-          <Loader2 size={11} className="animate-spin" />
-          {generatingPhase === 'prompt' ? 'Writing motion prompt...' : generatingPhase === 'video' ? 'Generating video (3–7 min)...' : 'Generating transition...'}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border/60 rounded-full px-3 py-1">
+            <Loader2 size={11} className="animate-spin" />
+            {generatingPhase === 'prompt' ? 'Writing prompt...' : generatingPhase === 'video' ? 'Generating video (3–7 min)...' : 'Generating...'}
+          </div>
+          <button
+            type="button"
+            onClick={() => { cancelRef.current = true }}
+            className="text-xs text-muted-foreground hover:text-foreground border border-border/60 rounded-full px-2 py-0.5 hover:bg-muted/50 transition-colors"
+          >
+            Cancel
+          </button>
         </div>
         <div className="flex-1 border-t border-border/40" />
       </div>
