@@ -933,6 +933,7 @@ export function Storyboard({
               deletingVideoId={deletingVideoId}
               onDelete={handleDeleteTransitionVideo}
               onSelect={handleSelectTransitionVideo}
+              isGenerating={isGeneratingVideo}
             />
           ) : null}
         </div>

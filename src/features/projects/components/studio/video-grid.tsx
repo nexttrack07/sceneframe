@@ -8,17 +8,19 @@ export function VideoGrid({
   deletingVideoId,
   onDelete,
   onSelect,
+  isGenerating = false,
 }: {
   transitionVideos: TransitionVideoSummary[]
   deletingVideoId: string | null
   onDelete: (id: string) => void
   onSelect: (id: string) => void
+  isGenerating?: boolean
 }) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
 
   const sorted = [...transitionVideos].reverse()
 
-  if (sorted.length === 0) {
+  if (sorted.length === 0 && !isGenerating) {
     return (
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="text-center space-y-2">
@@ -33,6 +35,16 @@ export function VideoGrid({
     <div className="p-4">
       <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Videos</p>
       <div className="grid grid-cols-3 gap-2">
+        {/* Optimistic skeleton while video generation is in flight */}
+        {isGenerating && (
+          <div className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video">
+            <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+              <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
+              <GeneratingTimer />
+            </div>
+          </div>
+        )}
         {sorted.map((tv) => (
           <div key={tv.id} className="relative rounded-lg overflow-hidden bg-muted group aspect-video">
             {tv.status === 'done' && tv.url ? (
