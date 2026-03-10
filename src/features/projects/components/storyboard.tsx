@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import {
   AlertCircle,
@@ -9,19 +9,23 @@ import {
   Info,
 } from 'lucide-react'
 import type { Scene, Shot } from '@/db/schema'
-import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
+import type { ImageDefaults, ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
 import { exportProjectHandoff } from '../project-queries'
 import { resetWorkshop } from '../project-mutations'
-import { reorderScene, addScene, deleteScene, addShot, deleteShot } from '../scene-actions'
+import { reorderScene, addScene, deleteScene, addShot, deleteShot, generateShotImages, generateShotImagePrompt, selectShotAsset, deleteAsset, generateTransitionVideo, generateTransitionVideoPrompt, pollTransitionVideo, selectTransitionVideo, deleteTransitionVideo } from '../scene-actions'
+import { normalizeImageDefaults } from '../project-normalize'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/components/ui/toast'
 import { SceneImageStudio } from './scene-image-studio'
-import { ShotImageStudio } from './shot-image-studio'
 import { ResetDialog } from './reset-dialog'
 import { StoryboardCard } from './storyboard-card'
 import { ShotCard } from './shot-card'
 import { SceneHeader } from './scene-header'
-import { TransitionConnector } from './transition-connector'
+import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
+import { StudioGallery } from './studio/studio-gallery'
+import { VideoControlsPanel } from './studio/video-controls-panel'
+import { VideoGrid } from './studio/video-grid'
 
 function formatTimestamp(seconds: number | null): string {
   if (seconds == null) return '--:--'
@@ -37,7 +41,7 @@ export function Storyboard({
   assets: sceneAssets,
   projectSettings,
   scenePlan,
-  transitionVideos,
+  transitionVideos: allTransitionVideos,
 }: {
   projectId: string
   scenes: Scene[]
@@ -48,11 +52,14 @@ export function Storyboard({
   transitionVideos: TransitionVideoSummary[]
 }) {
   const router = useRouter()
+  const { toast } = useToast()
   const [isResetting, setIsResetting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
+  const [selectedTransitionPair, setSelectedTransitionPair] = useState<{ fromShotId: string; toShotId: string } | null>(null)
+
   // Drag-to-reorder state
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -61,6 +68,25 @@ export function Storyboard({
   const [showAddForm, setShowAddForm] = useState(false)
   const [newSceneDescription, setNewSceneDescription] = useState('')
   const [isAddingScene, setIsAddingScene] = useState(false)
+
+  // Image studio state (for selected shot)
+  const [prompt, setPrompt] = useState('')
+  const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(normalizeImageDefaults(null))
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
+  const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
+  const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null)
+  const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false)
+
+  // Video studio state (for selected transition)
+  const [videoPrompt, setVideoPrompt] = useState('')
+  const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
+  const [generateAudio, setGenerateAudio] = useState(false)
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
+  const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
+  const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
+  const cancelVideoRef = useRef(false)
 
   const hasShotsMode = storyShots.length > 0
 
@@ -122,12 +148,124 @@ export function Storyboard({
   // Suppress polling while studio is open — studio manages its own invalidation
   useEffect(() => {
     if (!hasGeneratingAssets) return
-    if (selectedSceneId !== null || selectedShotId !== null) return
+    if (selectedSceneId !== null || selectedShotId !== null || selectedTransitionPair !== null) return
     const interval = setInterval(() => {
       void router.invalidate()
     }, 2500)
     return () => clearInterval(interval)
-  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, router])
+  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, selectedTransitionPair, router])
+
+  // Reset image studio state when selected shot changes
+  useEffect(() => {
+    if (!selectedShotId) return
+    const shot = storyShots.find((s) => s.id === selectedShotId)
+    const shotAssets = assetsByShotId.get(selectedShotId) ?? []
+    const lastAssetSettings =
+      [...shotAssets]
+        .filter((a) => a.status === 'done' && a.modelSettings)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+        ?.modelSettings ?? null
+    setPrompt(shot?.imagePrompt ?? '')
+    setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
+    setExpandedImageId(null)
+    setIsGenerating(false)
+    setIsGeneratingPrompt(false)
+    setIsSelectingAssetId(null)
+    setDeletingAssetId(null)
+  }, [selectedShotId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset video studio state when selected transition pair changes
+  useEffect(() => {
+    if (!selectedTransitionPair) return
+    setVideoPrompt('')
+    setIsGeneratingVideo(false)
+    setIsGeneratingVideoPrompt(false)
+    setDeletingVideoId(null)
+    cancelVideoRef.current = false
+  }, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-resume polling for any stuck generating transition when transition pair is selected
+  useEffect(() => {
+    if (!selectedTransitionPair) return
+    const generatingTv = allTransitionVideos.find(
+      (tv) =>
+        tv.fromShotId === selectedTransitionPair.fromShotId &&
+        tv.toShotId === selectedTransitionPair.toShotId &&
+        tv.status === 'generating',
+    )
+    if (!generatingTv || isGeneratingVideo) return
+
+    const transitionVideoId = generatingTv.id
+    cancelVideoRef.current = false
+    setIsGeneratingVideo(true)
+
+    const POLL_TIMEOUT_MS = 12 * 60 * 1000
+    const deadline = Date.now() + POLL_TIMEOUT_MS
+    let consecutiveErrors = 0
+
+    const interval = setInterval(async () => {
+      if (cancelVideoRef.current || Date.now() > deadline) {
+        clearInterval(interval)
+        setIsGeneratingVideo(false)
+        return
+      }
+      try {
+        const result = await pollTransitionVideo({ data: { transitionVideoId } })
+        consecutiveErrors = 0
+        if (result.status === 'done') {
+          const isSelected = allTransitionVideos.find(
+            (tv) =>
+              tv.fromShotId === selectedTransitionPair.fromShotId &&
+              tv.toShotId === selectedTransitionPair.toShotId &&
+              tv.isSelected &&
+              tv.status === 'done',
+          )
+          if (!isSelected) {
+            await selectTransitionVideo({ data: { transitionVideoId } })
+          }
+          clearInterval(interval)
+          setIsGeneratingVideo(false)
+          await router.invalidate()
+          toast('Transition video ready', 'success')
+        } else if (result.status === 'error') {
+          clearInterval(interval)
+          setIsGeneratingVideo(false)
+          await router.invalidate()
+          toast(result.errorMessage ?? 'Video generation failed', 'error')
+        }
+      } catch (err) {
+        consecutiveErrors++
+        if (consecutiveErrors >= 3) {
+          clearInterval(interval)
+          setIsGeneratingVideo(false)
+          const msg = err instanceof Error ? err.message : 'Polling failed'
+          toast(msg, 'error')
+        }
+      }
+    }, 5000)
+
+    return () => {
+      clearInterval(interval)
+      cancelVideoRef.current = true
+    }
+  }, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcut: Escape closes studio
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
+      if (isLightboxOpen) return
+      if (e.key === 'Escape') {
+        setSelectedShotId(null)
+        setSelectedTransitionPair(null)
+        setSelectedSceneId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isLightboxOpen])
 
   const filteredScenes = storyScenes
 
@@ -277,11 +415,6 @@ export function Storyboard({
     }
   }
 
-  function handleShotSelect(shot: Shot) {
-    setSelectedShotId(shot.id)
-    setSelectedSceneId(null)
-  }
-
   function handleDragStart(e: React.DragEvent, sceneId: string) {
     setDraggedSceneId(sceneId)
     e.dataTransfer.effectAllowed = 'move'
@@ -346,6 +479,368 @@ export function Storyboard({
     const first = shots[0]
     const last = shots[shots.length - 1]
     return `${formatTimestamp(first.timestampStart)}-${formatTimestamp(last.timestampEnd)}`
+  }
+
+  // Image generation handlers
+  async function handleGenerate() {
+    if (!selectedShotId) return
+    const promptOverride = prompt.trim()
+    setIsGenerating(true)
+    setError(null)
+    try {
+      const result = await generateShotImages({
+        data: {
+          shotId: selectedShotId,
+          lane: 'start',
+          promptOverride: promptOverride || undefined,
+          settingsOverrides,
+        },
+      })
+      await router.invalidate()
+      toast(
+        `Generated ${result.completedCount} image${result.completedCount !== 1 ? 's' : ''}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ''}`,
+        result.failedCount > 0 ? 'error' : 'success',
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate images'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  async function handleGeneratePrompt() {
+    if (!selectedShotId) return
+    setIsGeneratingPrompt(true)
+    setError(null)
+    try {
+      const result = await generateShotImagePrompt({
+        data: { shotId: selectedShotId, lane: 'start' },
+      })
+      setPrompt(result.prompt)
+      await router.invalidate()
+      toast('Prompt generated', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate prompt'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGeneratingPrompt(false)
+    }
+  }
+
+  async function handleSelectAsset(assetId: string) {
+    setIsSelectingAssetId(assetId)
+    setError(null)
+    try {
+      await selectShotAsset({ data: { assetId } })
+      await router.invalidate()
+      toast('Image selected', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to select image'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsSelectingAssetId(null)
+    }
+  }
+
+  async function handleDeleteAsset(assetId: string) {
+    setDeletingAssetId(assetId)
+    setError(null)
+    try {
+      await deleteAsset({ data: { assetId } })
+      if (expandedImageId === assetId) setExpandedImageId(null)
+      await router.invalidate()
+      toast('Image deleted', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete image'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setDeletingAssetId(null)
+    }
+  }
+
+  // Video generation handlers
+  async function handleGenerateVideoPrompt() {
+    if (!selectedTransitionPair) return
+    setIsGeneratingVideoPrompt(true)
+    setError(null)
+    try {
+      const result = await generateTransitionVideoPrompt({
+        data: { fromShotId: selectedTransitionPair.fromShotId, toShotId: selectedTransitionPair.toShotId },
+      })
+      setVideoPrompt(result.prompt)
+      toast('Prompt generated', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate prompt'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGeneratingVideoPrompt(false)
+    }
+  }
+
+  async function handleGenerateVideo() {
+    if (!selectedTransitionPair || !videoPrompt.trim()) return
+    setIsGeneratingVideo(true)
+    cancelVideoRef.current = false
+    setError(null)
+    try {
+      const { transitionVideoId } = await generateTransitionVideo({
+        data: {
+          fromShotId: selectedTransitionPair.fromShotId,
+          toShotId: selectedTransitionPair.toShotId,
+          prompt: videoPrompt.trim(),
+          mode: videoMode,
+          generateAudio,
+        },
+      })
+
+      const POLL_TIMEOUT_MS = 12 * 60 * 1000
+      const deadline = Date.now() + POLL_TIMEOUT_MS
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const interval = setInterval(async () => {
+          if (settled) return
+          if (Date.now() > deadline || cancelVideoRef.current) {
+            settled = true
+            clearInterval(interval)
+            reject(new Error(cancelVideoRef.current ? 'Cancelled' : 'Video generation timed out'))
+            return
+          }
+          try {
+            const result = await pollTransitionVideo({ data: { transitionVideoId } })
+            if (result.status === 'done') {
+              // Auto-select if nothing is selected yet
+              const hasSelected = allTransitionVideos.some(
+                (tv) =>
+                  tv.fromShotId === selectedTransitionPair.fromShotId &&
+                  tv.toShotId === selectedTransitionPair.toShotId &&
+                  tv.isSelected &&
+                  tv.status === 'done',
+              )
+              if (!hasSelected) {
+                await selectTransitionVideo({ data: { transitionVideoId } })
+              }
+              settled = true
+              clearInterval(interval)
+              resolve()
+            } else if (result.status === 'error') {
+              settled = true
+              clearInterval(interval)
+              reject(new Error(result.errorMessage ?? 'Video generation failed'))
+            }
+          } catch {
+            // transient error — keep polling
+          }
+        }, 5000)
+      })
+
+      await router.invalidate()
+      toast('Transition video generated', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to generate video'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setIsGeneratingVideo(false)
+      cancelVideoRef.current = false
+    }
+  }
+
+  async function handleSelectTransitionVideo(transitionVideoId: string) {
+    setError(null)
+    try {
+      await selectTransitionVideo({ data: { transitionVideoId } })
+      await router.invalidate()
+      toast('Video selected', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to select video'
+      setError(msg)
+      toast(msg, 'error')
+    }
+  }
+
+  async function handleDeleteTransitionVideo(transitionVideoId: string) {
+    setDeletingVideoId(transitionVideoId)
+    setError(null)
+    try {
+      await deleteTransitionVideo({ data: { transitionVideoId } })
+      await router.invalidate()
+      toast('Video deleted', 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete video'
+      setError(msg)
+      toast(msg, 'error')
+    } finally {
+      setDeletingVideoId(null)
+    }
+  }
+
+  // Determine studio mode
+  const studioMode: 'image' | 'video' = selectedTransitionPair ? 'video' : 'image'
+  const selectedShot = selectedShotId ? storyShots.find((s) => s.id === selectedShotId) ?? null : null
+  const fromShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.fromShotId) ?? null : null
+  const toShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null : null
+  const shotParentScene = selectedShot ? storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null : null
+
+  // 3-column layout when shot or transition is selected
+  if (selectedShotId || selectedTransitionPair) {
+    return (
+      <div className="flex h-full min-h-0 overflow-hidden">
+        {/* Col 1: Storyboard sidebar */}
+        <div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
+          <div className="p-3 space-y-2">
+            {/* Back button */}
+            <button
+              type="button"
+              onClick={() => { setSelectedShotId(null); setSelectedTransitionPair(null) }}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3"
+            >
+              ← Back to storyboard
+            </button>
+
+            {/* Scenes + shots */}
+            {filteredScenes.map((scene) => {
+              const sceneShots = shotsBySceneId.get(scene.id) ?? []
+              return (
+                <div key={scene.id}>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide px-1 py-1">
+                    {scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
+                  </p>
+                  {sceneShots.map((shot, shotIdx) => {
+                    const nextShot = sceneShots[shotIdx + 1] ?? null
+                    const isSelectedShot = selectedShotId === shot.id
+                    const isInTransition =
+                      selectedTransitionPair?.fromShotId === shot.id ||
+                      selectedTransitionPair?.toShotId === shot.id
+                    const shotAssetsList = assetsByShotId.get(shot.id) ?? []
+                    const hasSelectedImage = shotAssetsList.some((a) => a.isSelected && a.status === 'done')
+                    const nextHasSelectedImage = nextShot
+                      ? (assetsByShotId.get(nextShot.id) ?? []).some((a) => a.isSelected && a.status === 'done')
+                      : false
+                    const selectedImageUrl = shotAssetsList.find((a) => a.isSelected && a.status === 'done')?.url ?? null
+
+                    return (
+                      <div key={shot.id}>
+                        {/* Shot card */}
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedShotId(shot.id); setSelectedTransitionPair(null) }}
+                          className={`w-full rounded-lg border p-2 text-left transition-colors mb-1 ${
+                            isSelectedShot || isInTransition
+                              ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
+                              : 'border-border hover:border-border/80 hover:bg-muted/30'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {selectedImageUrl ? (
+                              <img src={selectedImageUrl} alt="" className="w-12 h-8 object-cover rounded flex-shrink-0" />
+                            ) : (
+                              <div className="w-12 h-8 bg-muted rounded flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-medium text-muted-foreground">Shot {globalShotIndex.get(shot.id)}</p>
+                              <p className="text-xs text-foreground line-clamp-2 leading-tight">{shot.description}</p>
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Video connector pill between shots */}
+                        {nextShot && hasSelectedImage && nextHasSelectedImage && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTransitionPair({ fromShotId: shot.id, toShotId: nextShot.id })
+                              setSelectedShotId(null)
+                            }}
+                            className={`w-full flex items-center gap-2 py-0.5 px-2 text-[10px] mb-1 rounded transition-colors ${
+                              selectedTransitionPair?.fromShotId === shot.id &&
+                              selectedTransitionPair?.toShotId === nextShot.id
+                                ? 'text-primary bg-primary/5'
+                                : 'text-muted-foreground hover:text-primary hover:bg-primary/5'
+                            }`}
+                          >
+                            <div className="flex-1 border-t border-dashed border-current opacity-40" />
+                            <span className="font-medium shrink-0">Video →</span>
+                            <div className="flex-1 border-t border-dashed border-current opacity-40" />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Col 2: Controls panel */}
+        <div className="w-[360px] border-r flex-shrink-0 flex flex-col bg-card overflow-hidden">
+          {studioMode === 'image' && selectedShot && shotParentScene ? (
+            <ShotStudioLeftPanel
+              shot={selectedShot}
+              parentScene={shotParentScene}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              onGeneratePrompt={handleGeneratePrompt}
+              isGeneratingPrompt={isGeneratingPrompt}
+              settingsOverrides={settingsOverrides}
+              onSettingsChange={setSettingsOverrides}
+              isGenerating={isGenerating}
+              onGenerate={handleGenerate}
+            />
+          ) : studioMode === 'video' && fromShot && toShot ? (
+            <VideoControlsPanel
+              fromShot={fromShot}
+              toShot={toShot}
+              videoPrompt={videoPrompt}
+              onVideoPromptChange={setVideoPrompt}
+              onGeneratePrompt={handleGenerateVideoPrompt}
+              isGeneratingPrompt={isGeneratingVideoPrompt}
+              videoMode={videoMode}
+              onVideoModeChange={setVideoMode}
+              generateAudio={generateAudio}
+              onGenerateAudioChange={setGenerateAudio}
+              isGenerating={isGeneratingVideo}
+              onGenerate={handleGenerateVideo}
+            />
+          ) : null}
+        </div>
+
+        {/* Col 3: Gallery / Video grid */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {studioMode === 'image' && selectedShot ? (
+            <StudioGallery
+              sceneAssets={assetsByShotId.get(selectedShot.id) ?? []}
+              selectingAssetId={isSelectingAssetId}
+              deletingAssetId={deletingAssetId}
+              onSelectAsset={handleSelectAsset}
+              onDeleteAsset={handleDeleteAsset}
+              onRegenerate={handleGenerate}
+              expandedImageId={expandedImageId}
+              onExpandImage={setExpandedImageId}
+              onLightboxChange={setIsLightboxOpen}
+            />
+          ) : studioMode === 'video' && selectedTransitionPair ? (
+            <VideoGrid
+              transitionVideos={allTransitionVideos.filter(
+                (tv) =>
+                  tv.fromShotId === selectedTransitionPair.fromShotId &&
+                  tv.toShotId === selectedTransitionPair.toShotId,
+              )}
+              deletingVideoId={deletingVideoId}
+              onDelete={handleDeleteTransitionVideo}
+              onSelect={handleSelectTransitionVideo}
+            />
+          ) : null}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -458,8 +953,7 @@ export function Storyboard({
 
                   {!isCollapsed && (
                     <div className="ml-6 mt-2 space-y-2">
-                      {sceneShots.map((shot, shotIdx) => {
-                        const nextShot = sceneShots[shotIdx + 1] ?? null
+                      {sceneShots.map((shot) => {
                         return (
                           <div key={shot.id}>
                             <ShotCard
@@ -467,20 +961,13 @@ export function Storyboard({
                               globalIndex={globalShotIndex.get(shot.id) ?? 0}
                               assets={assetsByShotId.get(shot.id) ?? []}
                               isSelected={selectedShotId === shot.id}
-                              onSelect={() => handleShotSelect(shot)}
+                              onSelect={() => {
+                                setSelectedShotId(shot.id)
+                                setSelectedTransitionPair(null)
+                                setSelectedSceneId(null)
+                              }}
                               onDelete={() => handleDeleteShot(shot.id)}
                             />
-                            {nextShot && (
-                              <TransitionConnector
-                                fromShot={shot}
-                                toShot={nextShot}
-                                fromShotAssets={assetsByShotId.get(shot.id) ?? []}
-                                toShotAssets={assetsByShotId.get(nextShot.id) ?? []}
-                                transitionVideos={transitionVideos.filter(
-                                  (tv) => tv.sceneId === scene.id,
-                                )}
-                              />
-                            )}
                           </div>
                         )
                       })}
@@ -610,30 +1097,6 @@ export function Storyboard({
           )}
         </div>
       </div>
-
-      {/* Full-screen shot studio */}
-      {selectedShotId && (() => {
-        const selectedShot = storyShots.find((s) => s.id === selectedShotId)
-        if (!selectedShot) return null
-        const shotParentScene = storyScenes.find((s) => s.id === selectedShot.sceneId)
-        if (!shotParentScene) return null
-        const shotIdx = storyShots.indexOf(selectedShot)
-        return (
-          <ShotImageStudio
-            shot={selectedShot}
-            shotIndex={shotIdx}
-            parentScene={shotParentScene}
-            allShots={storyShots}
-            shotAssets={assetsByShotId.get(selectedShot.id) ?? []}
-            allAssets={sceneAssets}
-            onShotChange={(id) => setSelectedShotId(id)}
-            onClose={() => {
-              setSelectedShotId(null)
-              setSelectedSceneId(null)
-            }}
-          />
-        )
-      })()}
 
       {/* Full-screen scene studio (legacy — no shots) */}
       {selectedScene && !selectedShotId && (

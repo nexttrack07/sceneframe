@@ -1,0 +1,132 @@
+import { useState } from 'react'
+import { Loader2, Film, ChevronDown, ChevronUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import type { Shot } from '@/db/schema'
+
+export function VideoControlsPanel({
+  fromShot,
+  toShot,
+  videoPrompt,
+  onVideoPromptChange,
+  onGeneratePrompt,
+  isGeneratingPrompt,
+  videoMode,
+  onVideoModeChange,
+  generateAudio,
+  onGenerateAudioChange,
+  isGenerating,
+  onGenerate,
+}: {
+  fromShot: Shot
+  toShot: Shot
+  videoPrompt: string
+  onVideoPromptChange: (v: string) => void
+  onGeneratePrompt: () => void
+  isGeneratingPrompt: boolean
+  videoMode: 'standard' | 'pro'
+  onVideoModeChange: (m: 'standard' | 'pro') => void
+  generateAudio: boolean
+  onGenerateAudioChange: (v: boolean) => void
+  isGenerating: boolean
+  onGenerate: () => void
+}) {
+  const [showDescriptions, setShowDescriptions] = useState(true)
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Shot descriptions */}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => setShowDescriptions(!showDescriptions)}
+            className="flex items-center gap-2 w-full text-left"
+          >
+            {showDescriptions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Transition context</span>
+          </button>
+          {showDescriptions && (
+            <div className="space-y-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
+              <div>
+                <span className="font-medium text-foreground">From:</span> {fromShot.description}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">To:</span> {toShot.description}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t pt-4 space-y-4">
+          {/* Settings */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 flex-1">
+              <label className="text-xs font-medium text-muted-foreground">Resolution</label>
+              <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => onVideoModeChange('standard')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  720p
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onVideoModeChange('pro')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  1080p
+                </button>
+              </div>
+            </div>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={generateAudio}
+                onChange={(e) => onGenerateAudioChange(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-primary"
+              />
+              <span className="text-xs font-medium text-muted-foreground">Audio</span>
+            </label>
+          </div>
+
+          {/* Motion prompt */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground">Motion prompt</label>
+              <button
+                type="button"
+                onClick={onGeneratePrompt}
+                disabled={isGeneratingPrompt}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                {isGeneratingPrompt ? <Loader2 size={11} className="animate-spin" /> : null}
+                {isGeneratingPrompt ? 'Generating...' : 'Generate'}
+              </button>
+            </div>
+            <textarea
+              rows={8}
+              value={videoPrompt}
+              onChange={(e) => onVideoPromptChange(e.target.value)}
+              placeholder="Describe the motion — camera movement, subject action, speed..."
+              className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Sticky generate button */}
+      <div className="p-4 border-t bg-card">
+        <Button
+          onClick={onGenerate}
+          disabled={isGenerating || !videoPrompt.trim()}
+          className="w-full gap-2"
+          size="lg"
+        >
+          {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}
+          {isGenerating ? 'Generating video...' : 'Generate video'}
+        </Button>
+      </div>
+    </div>
+  )
+}
