@@ -108,6 +108,7 @@ export function TransitionConnector({
   }
 
   async function handleGenerate() {
+    if (isGenerating) return
     setIsGenerating(true)
     cancelRef.current = false
     try {
@@ -129,8 +130,11 @@ export function TransitionConnector({
       const deadline = Date.now() + POLL_TIMEOUT_MS
 
       await new Promise<void>((resolve, reject) => {
+        let settled = false
         const interval = setInterval(async () => {
+          if (settled) return
           if (Date.now() > deadline || cancelRef.current) {
+            settled = true
             clearInterval(interval)
             reject(new Error(cancelRef.current ? 'Cancelled' : 'Video generation timed out — Kling may still be processing. Refresh to check status.'))
             return
@@ -141,9 +145,11 @@ export function TransitionConnector({
               if (!selectedTransition) {
                 await selectTransitionVideo({ data: { transitionVideoId } })
               }
+              settled = true
               clearInterval(interval)
               resolve()
             } else if (result.status === 'error') {
+              settled = true
               clearInterval(interval)
               reject(new Error(result.errorMessage ?? 'Video generation failed'))
             }

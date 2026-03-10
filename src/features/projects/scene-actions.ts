@@ -524,6 +524,17 @@ export const deleteShot = createServerFn({ method: 'POST' })
       .set({ deletedAt: now })
       .where(and(eq(assets.shotId, shotId), isNull(assets.deletedAt)))
 
+    // Clean up R2 storage for transition videos involving this shot
+    const tvToDelete = await db
+      .select({ storageKey: transitionVideos.storageKey })
+      .from(transitionVideos)
+      .where(and(
+        or(eq(transitionVideos.fromShotId, shotId), eq(transitionVideos.toShotId, shotId)),
+        isNull(transitionVideos.deletedAt),
+      ))
+    const tvStorageKeys = tvToDelete.map((r) => r.storageKey).filter((k): k is string => k !== null)
+    await Promise.allSettled(tvStorageKeys.map((key) => deleteObject(key)))
+
     // Soft-delete any transition videos involving this shot
     await db
       .update(transitionVideos)
@@ -1148,6 +1159,17 @@ export const generateTransitionVideo = createServerFn({ method: 'POST' })
     })
     if (!toImage?.url) throw new Error('No selected image for destination shot — select an image first')
 
+    // Kling requires jpg/jpeg/png — webp is not supported
+    function isKlingSupportedFormat(url: string): boolean {
+      return /\.(jpg|jpeg|png)(\?|$)/i.test(url)
+    }
+    if (!isKlingSupportedFormat(fromImage.url)) {
+      throw new Error('Start frame image is in WebP format. Kling requires PNG or JPEG. Re-generate images and select a PNG image.')
+    }
+    if (!isKlingSupportedFormat(toImage.url)) {
+      throw new Error('End frame image is in WebP format. Kling requires PNG or JPEG. Re-generate images and select a PNG image.')
+    }
+
     // Submit to Replicate — fire and forget
     const replicate = new Replicate({ auth: apiKey })
     const prediction = await replicate.predictions.create({
@@ -1199,14 +1221,14 @@ export const pollTransitionVideo = createServerFn({ method: 'POST' })
     })
     if (!tv) throw new Error('Transition video not found')
 
+    // Assert ownership before returning any data
+    const { userId, project } = await assertShotOwner(tv.fromShotId)
+    const apiKey = await getUserApiKey(userId)
+
     if (tv.status === 'done') return { status: 'done' as const, url: tv.url }
     if (tv.status === 'error') return { status: 'error' as const, errorMessage: tv.errorMessage }
 
     if (!tv.generationId) throw new Error('No generation ID found')
-
-    // Get ownership for API key
-    const { userId, project } = await assertShotOwner(tv.fromShotId)
-    const apiKey = await getUserApiKey(userId)
     const replicate = new Replicate({ auth: apiKey })
 
     const prediction = await replicate.predictions.get(tv.generationId)
@@ -1292,6 +1314,10 @@ export const deleteTransitionVideo = createServerFn({ method: 'POST' })
     if (!tv) throw new Error('Transition video not found')
 
     await assertShotOwner(tv.fromShotId)
+
+    if (tv.storageKey) {
+      await deleteObject(tv.storageKey).catch(() => {})
+    }
 
     await db
       .update(transitionVideos)

@@ -3,9 +3,7 @@ import { Check, Clock, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide
 import { Button } from '@/components/ui/button'
 import type { SceneAssetSummary } from '../../project-types'
 import { GalleryImageCard } from './gallery-image-card'
-import { GalleryVideoCard } from './gallery-video-card'
 import { ImageLightbox } from '../image-lightbox'
-import { VideoLightbox } from '../video-lightbox'
 
 export function StudioGallery({
   sceneAssets,
@@ -36,15 +34,6 @@ export function StudioGallery({
     [sceneAssets],
   )
 
-  // Videos are now in transitionVideos, not sceneAssets - this will always be empty
-  const videoAssets = useMemo(
-    () => [] as typeof sceneAssets,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  )
-
-  const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)
-  const selectedVideo = expandedVideoId ? videoAssets.find((a) => a.id === expandedVideoId) ?? null : null
   // Most recent first
   const sortedAssets = useMemo(
     () => [...laneAssets].reverse(),
@@ -107,23 +96,6 @@ export function StudioGallery({
           </div>
         </div>
 
-        {/* Videos section */}
-        {videoAssets.length > 0 && (
-          <div className="shrink-0 border-t p-4 bg-muted/20 space-y-3">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Videos</p>
-            <div className="grid grid-cols-3 gap-2">
-              {videoAssets.map((asset) => (
-                <GalleryVideoCard
-                  key={asset.id}
-                  asset={asset}
-                  deletingAssetId={deletingAssetId}
-                  onExpand={() => setExpandedVideoId(asset.id === expandedVideoId ? null : asset.id)}
-                  onDelete={() => onDeleteAsset(asset.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Side drawer — overlay */}
@@ -236,16 +208,6 @@ export function StudioGallery({
           </div>
         </div>
         </>
-      )}
-
-      {/* Video lightbox */}
-      {selectedVideo && selectedVideo.url && (
-        <VideoLightbox
-          asset={selectedVideo}
-          assets={videoAssets.filter((a) => a.status === 'done' && a.url)}
-          onNavigate={setExpandedVideoId}
-          onClose={() => setExpandedVideoId(null)}
-        />
       )}
 
       {/* Lightbox */}
