@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
-import { assets, scenes, shots, messages } from '@/db/schema'
+import { assets, scenes, shots, messages, transitionVideos } from '@/db/schema'
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
 import { assertProjectOwner } from '@/lib/assert-project-owner.server'
 import { normalizeProjectSettings } from './project-normalize'
@@ -49,7 +49,7 @@ export const loadProject = createServerFn({ method: 'GET' })
         ? []
         : await db.query.assets.findMany({
             where: and(
-              inArray(assets.stage, ['images', 'video']),
+              eq(assets.stage, 'images'),
               isNull(assets.deletedAt),
               shotIds.length > 0
                 ? or(
@@ -61,6 +61,17 @@ export const loadProject = createServerFn({ method: 'GET' })
             orderBy: asc(assets.createdAt),
           })
 
+    const projectTransitionVideos =
+      sceneIds.length === 0
+        ? []
+        : await db.query.transitionVideos.findMany({
+            where: and(
+              inArray(transitionVideos.sceneId, sceneIds),
+              isNull(transitionVideos.deletedAt),
+            ),
+            orderBy: asc(transitionVideos.createdAt),
+          })
+
     return {
       project: {
         ...project,
@@ -70,8 +81,8 @@ export const loadProject = createServerFn({ method: 'GET' })
       shots: projectShots,
       messages: projectMessages,
       assets: projectAssets
-        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' | 'image' | 'video' } =>
-          asset.type === 'start_image' || asset.type === 'end_image' || asset.type === 'image' || asset.type === 'video',
+        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' | 'image' } =>
+          asset.type === 'start_image' || asset.type === 'end_image' || asset.type === 'image',
         )
         .filter(
           (asset): asset is typeof asset & { status: 'generating' | 'done' | 'error' } =>
@@ -92,6 +103,24 @@ export const loadProject = createServerFn({ method: 'GET' })
           createdAt: asset.createdAt.toISOString(),
           modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
         })),
+      transitionVideos: projectTransitionVideos.map((tv) => ({
+        id: tv.id,
+        sceneId: tv.sceneId,
+        fromShotId: tv.fromShotId,
+        toShotId: tv.toShotId,
+        fromImageId: tv.fromImageId,
+        toImageId: tv.toImageId,
+        status: tv.status,
+        url: tv.url,
+        errorMessage: tv.errorMessage,
+        prompt: tv.prompt,
+        model: tv.model,
+        isSelected: tv.isSelected,
+        stale: tv.stale,
+        generationId: tv.generationId,
+        modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
+        createdAt: tv.createdAt.toISOString(),
+      })),
     }
   })
 

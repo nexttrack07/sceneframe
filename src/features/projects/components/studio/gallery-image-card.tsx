@@ -1,5 +1,6 @@
 import { Loader2, Maximize2, Trash2 } from 'lucide-react'
 import type { SceneAssetSummary } from '../../project-types'
+import { GeneratingTimer } from './generating-timer'
 
 export function GalleryImageCard({
   asset,
@@ -33,12 +34,16 @@ export function GalleryImageCard({
           alt="Generated image"
           className="w-full aspect-video object-cover block"
         />
+      ) : asset.status === 'error' ? (
+        <div className="w-full aspect-video bg-destructive/10" />
       ) : (
-        <div
-          className={`w-full aspect-video ${
-            asset.status === 'error' ? 'bg-destructive/10' : 'bg-muted animate-pulse'
-          }`}
-        />
+        <div className="w-full aspect-video relative overflow-hidden rounded-md border border-border bg-card">
+          <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
+            <GeneratingTimer createdAt={asset.createdAt} />
+          </div>
+        </div>
       )}
 
       {/* Hover overlay */}
@@ -87,8 +92,6 @@ export function GalleryImageCard({
           <span className="bg-primary text-primary-foreground text-xs font-medium px-2 py-0.5 rounded-md">
             Selected
           </span>
-        ) : asset.status === 'generating' ? (
-          <Loader2 size={14} className="text-white drop-shadow animate-spin" />
         ) : asset.status === 'error' ? (
           <span className="bg-destructive text-white text-xs font-medium px-2 py-0.5 rounded-md">
             Error

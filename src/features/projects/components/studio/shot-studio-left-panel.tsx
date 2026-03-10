@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { Loader2, Wand2, Film } from 'lucide-react'
+import { Check, Loader2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults } from '../../project-types'
@@ -7,61 +6,88 @@ import { ShotContextSection } from './shot-context-section'
 import { PromptEditor } from './prompt-editor'
 import { InlineSettingsRow } from './inline-settings-row'
 
+function ContextToggleCard({
+  label,
+  description,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      className={`flex items-start gap-2 p-2 rounded-lg border text-left transition-all w-full disabled:opacity-40 disabled:cursor-not-allowed ${
+        checked
+          ? 'border-primary/40 bg-primary/5'
+          : 'border-border/50 bg-muted/20 hover:border-border hover:bg-muted/40'
+      }`}
+    >
+      <div className={`mt-0.5 h-3.5 w-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+        checked ? 'bg-primary border-primary' : 'border-muted-foreground/40'
+      }`}>
+        {checked && <Check size={9} className="text-primary-foreground" />}
+      </div>
+      <div>
+        <p className={`text-xs font-medium leading-tight ${checked ? 'text-foreground' : 'text-muted-foreground'}`}>{label}</p>
+        <p className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">{description}</p>
+      </div>
+    </button>
+  )
+}
+
 export function ShotStudioLeftPanel({
   shot,
   parentScene,
-  promptMode,
-  onPromptModeChange,
   prompt,
   onPromptChange,
   onGeneratePrompt,
   isGeneratingPrompt,
+  onEnhancePrompt,
+  isEnhancingPrompt,
   settingsOverrides,
   onSettingsChange,
   isGenerating,
   onGenerate,
   onDescriptionSaved,
-  selectedImageUrl,
-  videoPrompt,
-  onVideoPromptChange,
-  onGenerateVideoPrompt,
-  isGeneratingVideoPrompt,
-  isGeneratingVideo,
-  onGenerateVideo,
-  videoMode,
-  onVideoModeChange,
-  generateAudio,
-  onGenerateAudioChange,
+  refImageUrl,
+  useRefImage,
+  onUseRefImageChange,
+  useProjectContext,
+  onUseProjectContextChange,
+  usePrevShotContext,
+  onUsePrevShotContextChange,
 }: {
   shot: Shot
   parentScene: Scene
-  promptMode: 'start' | 'end'
-  onPromptModeChange?: (mode: 'start' | 'end') => void
   prompt: string
   onPromptChange: (value: string) => void
   onGeneratePrompt: () => void
   isGeneratingPrompt: boolean
+  onEnhancePrompt?: () => void
+  isEnhancingPrompt?: boolean
   settingsOverrides: ImageDefaults
   onSettingsChange: (settings: ImageDefaults) => void
   isGenerating: boolean
   onGenerate: () => void
   onDescriptionSaved?: (newDescription: string) => void
-  selectedImageUrl: string | null
-  videoPrompt: string
-  onVideoPromptChange: (value: string) => void
-  onGenerateVideoPrompt: () => void
-  isGeneratingVideoPrompt: boolean
-  isGeneratingVideo: boolean
-  onGenerateVideo: () => void
-  videoMode: 'standard' | 'pro'
-  onVideoModeChange: (mode: 'standard' | 'pro') => void
-  generateAudio: boolean
-  onGenerateAudioChange: (value: boolean) => void
+  refImageUrl?: string | null
+  useRefImage?: boolean
+  onUseRefImageChange?: (v: boolean) => void
+  useProjectContext?: boolean
+  onUseProjectContextChange?: (v: boolean) => void
+  usePrevShotContext?: boolean
+  onUsePrevShotContextChange?: (v: boolean) => void
 }) {
-  const [mediaTab, setMediaTab] = useState<'image' | 'video'>('image')
-
   return (
-    <div className="w-[380px] border-r flex flex-col shrink-0 bg-card">
+    <div className="flex flex-col h-full bg-card">
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <ShotContextSection
@@ -70,176 +96,65 @@ export function ShotStudioLeftPanel({
           onDescriptionSaved={onDescriptionSaved}
         />
 
-        <div className="border-t pt-4 space-y-4">
-          {/* Media type tabs */}
-          <div className="flex gap-1 border-b pb-3">
-            <button
-              type="button"
-              onClick={() => setMediaTab('image')}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                mediaTab === 'image'
-                  ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
-                  : 'bg-muted/50 text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Image
-            </button>
-            <button
-              type="button"
-              onClick={() => setMediaTab('video')}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                mediaTab === 'video'
-                  ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
-                  : 'bg-muted/50 text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Video
-            </button>
-          </div>
-
-          {mediaTab === 'image' && (
-            <>
-              {/* Opening / Closing frame toggle */}
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">Frame</span>
-                <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => onPromptModeChange?.('start')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                      promptMode === 'start'
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    Opening
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onPromptModeChange?.('end')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                      promptMode === 'end'
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    Closing
-                  </button>
-                </div>
-              </div>
-
-              <PromptEditor
-                prompt={prompt}
-                onPromptChange={onPromptChange}
-
-                onGeneratePrompt={onGeneratePrompt}
-                isGeneratingPrompt={isGeneratingPrompt}
+        <div className="border-t pt-4 space-y-3">
+          {/* Context toggle cards */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Prompt context</p>
+            <div className="space-y-1.5">
+              <ContextToggleCard
+                label="Project context"
+                description="Include project concept, style, mood, and scene"
+                checked={useProjectContext ?? true}
+                onChange={(v) => onUseProjectContextChange?.(v)}
               />
-
-              <InlineSettingsRow
-                settings={settingsOverrides}
-                onSettingsChange={onSettingsChange}
+              <ContextToggleCard
+                label="Previous shot context"
+                description="Include adjacent shot descriptions for continuity"
+                checked={usePrevShotContext ?? true}
+                onChange={(v) => onUsePrevShotContextChange?.(v)}
               />
-            </>
-          )}
-
-          {mediaTab === 'video' && (
-            <div className="space-y-3">
-              {!selectedImageUrl ? (
-                <div className="rounded-lg border border-dashed border-border p-4 text-center">
-                  <p className="text-xs text-muted-foreground">
-                    Select a start frame image from the gallery first.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Start frame thumbnail */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-muted-foreground">Start frame</label>
-                    <img
-                      src={selectedImageUrl}
-                      alt="Start frame"
-                      className="w-full rounded-lg border border-border object-cover aspect-video"
-                    />
-                  </div>
-
-                  {/* Video settings */}
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 flex-1">
-                      <label className="text-xs font-medium text-muted-foreground">Resolution</label>
-                      <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
-                        <button type="button" onClick={() => onVideoModeChange('standard')}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                          720p
-                        </button>
-                        <button type="button" onClick={() => onVideoModeChange('pro')}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                          1080p
-                        </button>
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" checked={generateAudio} onChange={(e) => onGenerateAudioChange(e.target.checked)}
-                        className="h-3.5 w-3.5 rounded accent-primary" />
-                      <span className="text-xs font-medium text-muted-foreground">Audio</span>
-                    </label>
-                  </div>
-
-                  {/* Motion prompt */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-medium text-muted-foreground">Motion prompt</label>
-                      <button
-                        type="button"
-                        onClick={onGenerateVideoPrompt}
-                        disabled={isGeneratingVideoPrompt}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                      >
-                        {isGeneratingVideoPrompt ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : (
-                          <Wand2 size={11} />
-                        )}
-                        {isGeneratingVideoPrompt ? 'Generating...' : 'Generate'}
-                      </button>
-                    </div>
-                    <textarea
-                      rows={5}
-                      value={videoPrompt}
-                      onChange={(e) => onVideoPromptChange(e.target.value)}
-                      placeholder="Describe the motion — camera movement, subject action, speed..."
-                      className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
-                    />
-                  </div>
-                </>
+              {refImageUrl && onUseRefImageChange && (
+                <ContextToggleCard
+                  label="Previous shot as reference image"
+                  description="Feed the previous shot's image to the model"
+                  checked={useRefImage ?? false}
+                  onChange={onUseRefImageChange}
+                />
               )}
             </div>
-          )}
+            {/* Reference image thumbnail */}
+            {useRefImage && refImageUrl && (
+              <img
+                src={refImageUrl}
+                alt="Reference image"
+                className="w-full rounded-lg border border-border object-cover aspect-video opacity-80 mt-1"
+              />
+            )}
+          </div>
+
+          <PromptEditor
+            prompt={prompt}
+            onPromptChange={onPromptChange}
+            onGeneratePrompt={onGeneratePrompt}
+            isGeneratingPrompt={isGeneratingPrompt}
+            onEnhancePrompt={onEnhancePrompt}
+            isEnhancingPrompt={isEnhancingPrompt}
+          />
+
+          <InlineSettingsRow
+            settings={settingsOverrides}
+            onSettingsChange={onSettingsChange}
+          />
         </div>
       </div>
 
       {/* Sticky generate button */}
-      {mediaTab === 'image' && (
-        <div className="p-4 border-t bg-card">
-          <Button onClick={onGenerate} disabled={isGenerating} className="w-full gap-2" size="lg">
-            {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
-            {isGenerating ? 'Generating...' : 'Generate images'}
-          </Button>
-        </div>
-      )}
-      {mediaTab === 'video' && selectedImageUrl && (
-        <div className="p-4 border-t bg-card">
-          <Button
-            onClick={onGenerateVideo}
-            disabled={isGeneratingVideo || !videoPrompt.trim()}
-            className="w-full gap-2"
-            size="lg"
-          >
-            {isGeneratingVideo ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}
-            {isGeneratingVideo ? 'Generating video...' : 'Generate video'}
-          </Button>
-        </div>
-      )}
+      <div className="p-4 border-t bg-card">
+        <Button onClick={onGenerate} disabled={isGenerating} className="w-full gap-2" size="lg">
+          {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+          {isGenerating ? 'Generating...' : 'Generate images'}
+        </Button>
+      </div>
     </div>
   )
 }

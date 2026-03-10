@@ -3,9 +3,8 @@ import { Check, Clock, ImageIcon, Maximize2, RefreshCw, Trash2, X } from 'lucide
 import { Button } from '@/components/ui/button'
 import type { SceneAssetSummary } from '../../project-types'
 import { GalleryImageCard } from './gallery-image-card'
-import { GalleryVideoCard } from './gallery-video-card'
 import { ImageLightbox } from '../image-lightbox'
-import { VideoLightbox } from '../video-lightbox'
+import { GeneratingTimer } from './generating-timer'
 
 export function StudioGallery({
   sceneAssets,
@@ -17,6 +16,7 @@ export function StudioGallery({
   expandedImageId,
   onExpandImage,
   onLightboxChange,
+  pendingCount = 0,
 }: {
   sceneAssets: SceneAssetSummary[]
   selectingAssetId: string | null
@@ -27,6 +27,7 @@ export function StudioGallery({
   expandedImageId: string | null
   onExpandImage: (assetId: string | null) => void
   onLightboxChange?: (open: boolean) => void
+  pendingCount?: number
 }) {
   const [showLightbox, setShowLightbox] = useState(false)
   const [lightboxStartIndex, setLightboxStartIndex] = useState(0)
@@ -36,13 +37,6 @@ export function StudioGallery({
     [sceneAssets],
   )
 
-  const videoAssets = useMemo(
-    () => [...sceneAssets.filter((a) => a.type === 'video')].reverse(),
-    [sceneAssets],
-  )
-
-  const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)
-  const selectedVideo = expandedVideoId ? videoAssets.find((a) => a.id === expandedVideoId) ?? null : null
   // Most recent first
   const sortedAssets = useMemo(
     () => [...laneAssets].reverse(),
@@ -68,7 +62,7 @@ export function StudioGallery({
     onLightboxChange?.(false)
   }
 
-  if (sortedAssets.length === 0) {
+  if (sortedAssets.length === 0 && pendingCount === 0) {
     return (
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="text-center space-y-2">
@@ -90,6 +84,16 @@ export function StudioGallery({
         <div className="flex-1 overflow-y-auto p-4">
           <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">Images</p>
           <div className="grid grid-cols-3 gap-2">
+            {/* Optimistic pending skeletons shown immediately when generating */}
+            {Array.from({ length: pendingCount }).map((_, i) => (
+              <div key={`pending-${i}`} className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video">
+                <div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                  <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
+                  <GeneratingTimer />
+                </div>
+              </div>
+            ))}
             {sortedAssets.map((asset) => (
               <GalleryImageCard
                 key={asset.id}
@@ -105,23 +109,6 @@ export function StudioGallery({
           </div>
         </div>
 
-        {/* Videos section */}
-        {videoAssets.length > 0 && (
-          <div className="shrink-0 border-t p-4 bg-muted/20 space-y-3">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Videos</p>
-            <div className="grid grid-cols-3 gap-2">
-              {videoAssets.map((asset) => (
-                <GalleryVideoCard
-                  key={asset.id}
-                  asset={asset}
-                  deletingAssetId={deletingAssetId}
-                  onExpand={() => setExpandedVideoId(asset.id === expandedVideoId ? null : asset.id)}
-                  onDelete={() => onDeleteAsset(asset.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Side drawer — overlay */}
@@ -234,16 +221,6 @@ export function StudioGallery({
           </div>
         </div>
         </>
-      )}
-
-      {/* Video lightbox */}
-      {selectedVideo && selectedVideo.url && (
-        <VideoLightbox
-          asset={selectedVideo}
-          assets={videoAssets.filter((a) => a.status === 'done' && a.url)}
-          onNavigate={setExpandedVideoId}
-          onClose={() => setExpandedVideoId(null)}
-        />
       )}
 
       {/* Lightbox */}

@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '@/db/index'
-import { assets, scenes, shots } from '@/db/schema'
-import { and, asc, eq, inArray, isNull, desc } from 'drizzle-orm'
+import { assets, scenes, shots, transitionVideos } from '@/db/schema'
+import { and, asc, eq, inArray, isNull, desc, or } from 'drizzle-orm'
 import Replicate from 'replicate'
 import { uploadFromUrl, deleteObject } from '@/lib/r2.server'
 import { randomUUID } from 'node:crypto'
@@ -524,6 +524,31 @@ export const deleteShot = createServerFn({ method: 'POST' })
       .set({ deletedAt: now })
       .where(and(eq(assets.shotId, shotId), isNull(assets.deletedAt)))
 
+    // Clean up R2 storage for transition videos involving this shot
+    const tvToDelete = await db
+      .select({ storageKey: transitionVideos.storageKey })
+      .from(transitionVideos)
+      .where(and(
+        or(eq(transitionVideos.fromShotId, shotId), eq(transitionVideos.toShotId, shotId)),
+        isNull(transitionVideos.deletedAt),
+      ))
+    const tvStorageKeys = tvToDelete.map((r) => r.storageKey).filter((k): k is string => k !== null)
+    await Promise.allSettled(tvStorageKeys.map((key) => deleteObject(key)))
+
+    // Soft-delete any transition videos involving this shot
+    await db
+      .update(transitionVideos)
+      .set({ deletedAt: now })
+      .where(
+        and(
+          or(
+            eq(transitionVideos.fromShotId, shotId),
+            eq(transitionVideos.toShotId, shotId),
+          ),
+          isNull(transitionVideos.deletedAt),
+        ),
+      )
+
     // Soft-delete the shot
     await db.update(shots).set({ deletedAt: now }).where(eq(shots.id, shotId))
 
@@ -607,33 +632,45 @@ export const saveShotPrompt = createServerFn({ method: 'POST' })
 
 export const generateShotImagePrompt = createServerFn({ method: 'POST' })
   .inputValidator(
-    (data: { shotId: string; lane: 'start' | 'end' }) => data,
+    (data: { shotId: string; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data,
   )
-  .handler(async ({ data: { shotId, lane } }) => {
-    const { userId, shot, project } = await assertShotOwner(shotId)
+  .handler(async ({ data: { shotId, useProjectContext = true, usePrevShotContext = true } }) => {
+    const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
 
-    const isStart = lane === 'start'
-    const frameLabel = isStart ? 'FIRST (start) frame' : 'LAST (end) frame'
-    const momentInstruction = isStart
-      ? 'This is the FIRST frame — describe the scene at T=0, before any action has occurred. Capture the initial state: where subjects are positioned, their starting pose and expression, the environment as it looks at the very beginning of the shot.'
-      : 'This is the LAST frame — describe the scene at the end of the shot, after all action has completed. Capture the final state: where subjects have moved to, their ending pose and expression, any environmental changes that occurred during the shot.'
+    // Load all shots in this scene for context
+    const sceneShots = await db.query.shots.findMany({
+      where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+      orderBy: asc(shots.order),
+    })
+    const shotIdx = sceneShots.findIndex((s) => s.id === shotId)
+    const prevShot = shotIdx > 0 ? sceneShots[shotIdx - 1] : null
+    const nextShot = shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null
+
+    const intake = settings?.intake
+    const projectContext = [
+      intake?.concept ? `Project concept: ${intake.concept}` : null,
+      intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+      intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : null,
+      intake?.mood?.length ? `Mood: ${intake.mood.join(', ')}` : null,
+      intake?.audience ? `Target audience: ${intake.audience}` : null,
+      intake?.viewerAction ? `Viewer action goal: ${intake.viewerAction}` : null,
+    ].filter(Boolean).join('\n')
+
+    const consistencyRules = useProjectContext
+      ? '- CRITICAL: The subject and visual style must be consistent with the project concept — do NOT invent new subjects or themes not present in the project'
+      : '- Generate a vivid, specific image prompt based solely on the shot description provided'
 
     const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
-You are generating the ${frameLabel} of a video shot. This image will be used as a keyframe in Kling AI video generation — the start and end frames must be visually distinct enough for the AI to interpolate meaningful motion between them.
-
-${momentInstruction}
-
-First, silently reason about the shot's motion arc: what changes between the beginning and end of this shot? Then write the image prompt for the ${frameLabel} only.
 
 You MUST use this exact structured format:
 
-[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing. Be specific about their state at this exact moment in the shot.
+[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing.
 
-[Action]: What the subject is doing at this precise moment (not during the shot — at this frame specifically).
+[Action]: What the subject is doing in this specific moment.
 
-[Environment]: The setting and surrounding elements at this moment.
+[Environment]: The setting and surrounding elements.
 
 [Cinematography]: Camera angle, lens, depth of field, framing, composition.
 
@@ -643,16 +680,23 @@ You MUST use this exact structured format:
 
 Rules:
 - Each section 1-2 sentences, extremely specific
-- The subject's pose/position/expression must reflect the ${isStart ? 'beginning' : 'end'} of the action — not a neutral or generic state
+${consistencyRules}
+- If the shot description mentions text, calligraphy, or inscriptions visible in the scene, include them verbatim in [Environment] as a physical element
+- If the shot describes a subject as small/tiny/distant relative to the environment, encode that scale relationship explicitly in [Subject] and [Cinematography]
 - Use professional cinematic language
-- Do NOT reference the other frame or describe motion — only describe this single frozen moment
 - Do NOT include meta-instructions like "generate an image of"
-${settings?.intake?.audience ? `- Target audience: ${settings.intake.audience}` : ''}
-${settings?.intake?.viewerAction ? `- Video goal: ${settings.intake.viewerAction}` : ''}
 
 Return ONLY the structured prompt, nothing else.`
 
-    const userMessage = `Shot description: ${shot.description}`
+    const contextParts = [
+      useProjectContext ? `PROJECT CONTEXT:\n${projectContext || `Project: ${project.name}`}` : null,
+      useProjectContext ? `SCENE CONTEXT:\nScene description: ${scene.description}` : null,
+      usePrevShotContext && prevShot ? `PREVIOUS SHOT: ${prevShot.description}` : null,
+      `CURRENT SHOT (generate prompt for this): ${shot.description}`,
+      usePrevShotContext && nextShot ? `NEXT SHOT: ${nextShot.description}` : null,
+    ].filter(Boolean).join('\n\n')
+
+    const userMessage = contextParts
 
     const replicate = new Replicate({ auth: apiKey })
     const controller = new AbortController()
@@ -676,20 +720,161 @@ Return ONLY the structured prompt, nothing else.`
   })
 
 // ---------------------------------------------------------------------------
+// enhanceShotImagePrompt
+// ---------------------------------------------------------------------------
+
+export const enhanceShotImagePrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { shotId: string; userPrompt: string; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data)
+  .handler(async ({ data: { shotId, userPrompt, useProjectContext = true, usePrevShotContext = true } }) => {
+    const { userId, shot, scene, project } = await assertShotOwner(shotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    // Load adjacent shots for context
+    const sceneShots = await db.query.shots.findMany({
+      where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+      orderBy: asc(shots.order),
+    })
+    const shotIdx = sceneShots.findIndex((s) => s.id === shotId)
+    const prevShot = shotIdx > 0 ? sceneShots[shotIdx - 1] : null
+    const nextShot = shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null
+
+    const intake = settings?.intake
+    const projectContext = [
+      intake?.concept ? `Project concept: ${intake.concept}` : null,
+      intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : null,
+      intake?.mood?.length ? `Mood: ${intake.mood.join(', ')}` : null,
+    ].filter(Boolean).join('\n')
+
+    const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
+The user has written a natural language description of what they want. Reformat and enhance it into the structured prompt format below — adding technical cinematic details while preserving every element the user mentioned, especially text/calligraphy, scale relationships, and specific visual details.
+
+You MUST use this exact structured format:
+
+[Subject]: Main subject(s) with appearance, expression, pose. Preserve any scale relationships exactly (tiny, enormous, silhouette, etc.).
+
+[Action]: What the subject is doing.
+
+[Environment]: The setting. If the user mentioned text, calligraphy, inscriptions, or overlays, include them verbatim here as physically present in the scene.
+
+[Cinematography]: Camera angle, lens, depth of field, framing, composition.
+
+[Lighting/Style]: Lighting, color grading, mood, artistic style.
+
+[Technical]: Photography/rendering style and quality descriptors.
+
+Rules:
+- Preserve ALL elements the user mentioned — do not drop anything
+- Add technical details to enrich but never override the user's intent
+- Use professional cinematic language
+${useProjectContext && projectContext ? `\nProject context:\n${projectContext}` : ''}
+${useProjectContext ? `Scene: ${scene.description}` : ''}
+Shot: ${shot.description}
+${usePrevShotContext && prevShot ? `\nPrevious shot: ${prevShot.description}` : ''}
+${usePrevShotContext && nextShot ? `\nNext shot: ${nextShot.description}` : ''}
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const enhanced = chunks.join('').trim()
+      if (!enhanced) throw new Error('AI returned an empty response — please try again')
+      return { prompt: enhanced }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// enhanceTransitionVideoPrompt
+// ---------------------------------------------------------------------------
+
+export const enhanceTransitionVideoPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { fromShotId: string; toShotId: string; userPrompt: string }) => data)
+  .handler(async ({ data: { fromShotId, toShotId, userPrompt } }) => {
+    const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    const toShot = await db.query.shots.findFirst({
+      where: and(eq(shots.id, toShotId), isNull(shots.deletedAt)),
+    })
+    if (!toShot) throw new Error('Next shot not found')
+
+    const intake = settings?.intake
+    const styleCtx = intake?.style?.length ? `Visual style: ${intake.style.join(', ')}` : ''
+
+    const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+The user has written a natural language motion description. Reformat and enhance it into the structured video prompt format below — adding technical motion details while preserving the user's intent exactly.
+
+Use this exact structured format:
+
+[Cinematography]: Camera movement direction, speed, technique.
+
+[Subject]: How subjects move or transform during the transition.
+
+[Action]: The specific motion arc from the start frame to the end frame.
+
+[Context]: Environmental elements and how they shift.
+
+[Style & Ambiance]: Visual feel, lighting changes, mood continuity.
+
+Rules:
+- Preserve ALL motion elements the user mentioned
+- Add specific direction/speed details to enrich but not override intent
+- Write in present tense
+${styleCtx}
+
+Transition context:
+From: ${fromShot.description}
+To: ${toShot.description}
+
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const enhanced = chunks.join('').trim()
+      if (!enhanced) throw new Error('AI returned an empty response — please try again')
+      return { prompt: enhanced }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
 // generateShotImages
 // ---------------------------------------------------------------------------
 
 export const generateShotImages = createServerFn({ method: 'POST' })
-  .inputValidator((data: { shotId: string; lane: 'start' | 'end'; promptOverride?: string; settingsOverrides?: { model?: string; aspectRatio?: string; qualityPreset?: string; batchCount?: number } }) => {
+  .inputValidator((data: { shotId: string; lane: 'start' | 'end'; promptOverride?: string; settingsOverrides?: { model?: string; aspectRatio?: string; qualityPreset?: string; batchCount?: number }; referenceImageUrls?: string[] }) => {
     const lane = data.lane === 'end' ? 'end' as const : 'start' as const
     return {
       shotId: data.shotId,
       lane,
       promptOverride: data.promptOverride?.trim() || undefined,
       settingsOverrides: data.settingsOverrides,
+      referenceImageUrls: data.referenceImageUrls?.filter(Boolean) ?? [],
     }
   })
-  .handler(async ({ data: { shotId, lane, promptOverride, settingsOverrides } }) => {
+  .handler(async ({ data: { shotId, lane, promptOverride, settingsOverrides, referenceImageUrls } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
 
@@ -757,6 +942,7 @@ export const generateShotImages = createServerFn({ method: 'POST' })
           prompt: finalPrompt,
           aspect_ratio: imageDefaults.aspectRatio,
           output_format: 'png' as const,
+          ...(referenceImageUrls.length > 0 ? { image_input: referenceImageUrls } : {}),
         }
       : {
           prompt: finalPrompt,
@@ -1001,4 +1187,326 @@ export const selectShotAsset = createServerFn({ method: 'POST' })
         ))
       await tx.update(assets).set({ isSelected: true }).where(eq(assets.id, asset.id))
     })
+
+    // Mark transition videos stale if they used an image from this shot
+    if (asset.shotId) {
+      await db
+        .update(transitionVideos)
+        .set({ stale: true })
+        .where(
+          and(
+            or(
+              eq(transitionVideos.fromShotId, asset.shotId),
+              eq(transitionVideos.toShotId, asset.shotId),
+            ),
+            isNull(transitionVideos.deletedAt),
+            eq(transitionVideos.stale, false),
+          ),
+        )
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// generateTransitionVideoPrompt
+// ---------------------------------------------------------------------------
+
+export const generateTransitionVideoPrompt = createServerFn({ method: 'POST' })
+  .inputValidator((data: { fromShotId: string; toShotId: string }) => data)
+  .handler(async ({ data: { fromShotId, toShotId } }) => {
+    // Assert ownership via from shot
+    const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
+    const apiKey = await getUserApiKey(userId)
+    const settings = normalizeProjectSettings(project.settings)
+
+    // Get to shot for context
+    const toShot = await db.query.shots.findFirst({
+      where: and(eq(shots.id, toShotId), isNull(shots.deletedAt)),
+    })
+    if (!toShot) throw new Error('Next shot not found')
+
+    const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+You are generating a motion prompt for a video transition between two consecutive shots.
+
+The video will start at the first frame image of Shot A and end at the first frame image of Shot B.
+Your prompt must describe the MOTION and CAMERA MOVEMENT that naturally bridges these two shots.
+
+Shot A (start): ${fromShot.description}
+Shot B (end): ${toShot.description}
+
+Focus on:
+1. Camera movement direction and speed (zoom, pan, tilt, dolly, aerial ascent/descent, etc.)
+2. How the visual composition evolves from Shot A's state to Shot B's state
+3. Subject motion during the transition
+4. Environmental continuity
+
+Use this exact structured format:
+
+[Cinematography]: Camera movement from Shot A composition to Shot B composition — direction, speed, technique.
+
+[Subject]: How subjects move or transform during the transition.
+
+[Action]: The specific motion arc — what changes between the two frames.
+
+[Context]: Environmental elements and how they shift during the transition.
+
+[Style & Ambiance]: Visual feel, lighting changes, mood continuity.
+
+Rules:
+- Write in present tense
+- Be specific about direction and speed
+- The motion must feel like a NATURAL continuation from Shot A into Shot B
+- Do NOT describe static elements — focus on what MOVES
+${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(', ')}` : ''}
+
+Return ONLY the structured prompt, nothing else.`
+
+    const replicate = new Replicate({ auth: apiKey })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS)
+
+    try {
+      const chunks: string[] = []
+      for await (const event of replicate.stream('anthropic/claude-4.5-haiku', {
+        input: { prompt: systemPrompt, max_tokens: 1024, temperature: 0.7 },
+        signal: controller.signal,
+      })) {
+        chunks.push(String(event))
+      }
+      const generatedPrompt = chunks.join('').trim()
+      if (!generatedPrompt) throw new Error('AI returned an empty response — please try again')
+      return { prompt: generatedPrompt }
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// generateTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const generateTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: {
+    fromShotId: string
+    toShotId: string
+    prompt: string
+    videoModel?: 'v3-omni' | 'v2.5-turbo'
+    mode?: 'standard' | 'pro'
+    generateAudio?: boolean
+    negativePrompt?: string
+  }) => data)
+  .handler(async ({ data: { fromShotId, toShotId, prompt, videoModel = 'v3-omni', mode = 'pro', generateAudio = false, negativePrompt = '' } }) => {
+    const { userId, shot: fromShot, scene } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
+    const apiKey = await getUserApiKey(userId)
+
+    // Get selected image for from shot
+    const fromImage = await db.query.assets.findFirst({
+      where: and(
+        eq(assets.shotId, fromShotId),
+        inArray(assets.type, ['start_image', 'end_image', 'image']),
+        eq(assets.isSelected, true),
+        eq(assets.status, 'done'),
+        isNull(assets.deletedAt),
+      ),
+    })
+    if (!fromImage?.url) throw new Error('No selected image for source shot — select an image first')
+
+    // Get selected image for to shot
+    const toImage = await db.query.assets.findFirst({
+      where: and(
+        eq(assets.shotId, toShotId),
+        inArray(assets.type, ['start_image', 'end_image', 'image']),
+        eq(assets.isSelected, true),
+        eq(assets.status, 'done'),
+        isNull(assets.deletedAt),
+      ),
+    })
+    if (!toImage?.url) throw new Error('No selected image for destination shot — select an image first')
+
+    // Kling requires jpg/jpeg/png — webp is not supported
+    function isKlingSupportedFormat(url: string): boolean {
+      return /\.(jpg|jpeg|png)(\?|$)/i.test(url)
+    }
+    if (!isKlingSupportedFormat(fromImage.url)) {
+      throw new Error('Start frame image is in WebP format. Kling requires PNG or JPEG. Re-generate images and select a PNG image.')
+    }
+    if (!isKlingSupportedFormat(toImage.url)) {
+      throw new Error('End frame image is in WebP format. Kling requires PNG or JPEG. Re-generate images and select a PNG image.')
+    }
+
+    // Build model-specific input
+    const replicate = new Replicate({ auth: apiKey })
+    const isV25Turbo = videoModel === 'v2.5-turbo'
+    const modelId = isV25Turbo ? 'kwaivgi/kling-v2.5-turbo-pro' : 'kwaivgi/kling-v3-omni-video'
+    // V2.5 Turbo only supports duration 5 or 10
+    const v25Duration = fromShot.durationSec <= 7 ? 5 : 10
+
+    const replicateInput = isV25Turbo
+      ? {
+          prompt,
+          start_image: fromImage.url,
+          end_image: toImage.url,
+          duration: v25Duration,
+          negative_prompt: negativePrompt || undefined,
+        }
+      : {
+          prompt,
+          start_image: fromImage.url,
+          end_image: toImage.url,
+          duration: Math.max(3, Math.min(15, fromShot.durationSec)),
+          mode,
+          generate_audio: generateAudio,
+        }
+
+    const prediction = await replicate.predictions.create({
+      model: modelId as `${string}/${string}`,
+      input: replicateInput,
+    })
+
+    const [placeholder] = await db
+      .insert(transitionVideos)
+      .values({
+        sceneId: scene.id,
+        fromShotId,
+        toShotId,
+        fromImageId: fromImage.id,
+        toImageId: toImage.id,
+        prompt,
+        model: modelId,
+        modelSettings: isV25Turbo
+          ? { duration: v25Duration, negativePrompt }
+          : { duration: fromShot.durationSec, mode, generateAudio },
+        generationId: prediction.id,
+        status: 'generating',
+        isSelected: false,
+        stale: false,
+      })
+      .returning({ id: transitionVideos.id })
+
+    return { transitionVideoId: placeholder.id }
+  })
+
+// ---------------------------------------------------------------------------
+// pollTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const pollTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    // Get the transition video
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(
+        eq(transitionVideos.id, transitionVideoId),
+        isNull(transitionVideos.deletedAt),
+      ),
+    })
+    if (!tv) throw new Error('Transition video not found')
+
+    // Assert ownership before returning any data
+    const { userId, project } = await assertShotOwner(tv.fromShotId)
+    const apiKey = await getUserApiKey(userId)
+
+    if (tv.status === 'done') return { status: 'done' as const, url: tv.url }
+    if (tv.status === 'error') return { status: 'error' as const, errorMessage: tv.errorMessage }
+
+    if (!tv.generationId) throw new Error('No generation ID found')
+    const replicate = new Replicate({ auth: apiKey })
+
+    const prediction = await replicate.predictions.get(tv.generationId)
+
+    if (prediction.status === 'succeeded') {
+      const output = prediction.output
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = output as any
+      const str = typeof raw === 'string' ? raw : String(raw)
+      if (!str.startsWith('http')) {
+        throw new Error(`Unexpected output format from Kling: ${summarizeReplicateOutput(output)}`)
+      }
+
+      const storageKey = `projects/${project.id}/scenes/${tv.sceneId}/transitions/${transitionVideoId}.mp4`
+      const storedUrl = await uploadFromUrl(str, storageKey, 'video/mp4')
+
+      await db
+        .update(transitionVideos)
+        .set({ url: storedUrl, storageKey, status: 'done', errorMessage: null })
+        .where(eq(transitionVideos.id, transitionVideoId))
+
+      return { status: 'done' as const, url: storedUrl }
+    }
+
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      const rawErr = prediction.error
+      const errorMessage = rawErr
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (typeof rawErr === 'string' ? rawErr : ((rawErr as any).detail ?? JSON.stringify(rawErr)))
+        : 'Video generation failed'
+      await db
+        .update(transitionVideos)
+        .set({ status: 'error', errorMessage })
+        .where(eq(transitionVideos.id, transitionVideoId))
+      return { status: 'error' as const, errorMessage }
+    }
+
+    return { status: 'generating' as const }
+  })
+
+// ---------------------------------------------------------------------------
+// selectTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const selectTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(eq(transitionVideos.id, transitionVideoId), isNull(transitionVideos.deletedAt)),
+    })
+    if (!tv) throw new Error('Transition video not found')
+    if (tv.status !== 'done') throw new Error('Only completed transition videos can be selected')
+
+    // Assert ownership
+    await assertShotOwner(tv.fromShotId)
+
+    await db.transaction(async (tx) => {
+      // Deselect all for this (from, to) pair
+      await tx
+        .update(transitionVideos)
+        .set({ isSelected: false })
+        .where(
+          and(
+            eq(transitionVideos.fromShotId, tv.fromShotId),
+            eq(transitionVideos.toShotId, tv.toShotId),
+            isNull(transitionVideos.deletedAt),
+          ),
+        )
+      // Select this one
+      await tx
+        .update(transitionVideos)
+        .set({ isSelected: true })
+        .where(eq(transitionVideos.id, transitionVideoId))
+    })
+  })
+
+// ---------------------------------------------------------------------------
+// deleteTransitionVideo
+// ---------------------------------------------------------------------------
+
+export const deleteTransitionVideo = createServerFn({ method: 'POST' })
+  .inputValidator((data: { transitionVideoId: string }) => data)
+  .handler(async ({ data: { transitionVideoId } }) => {
+    const tv = await db.query.transitionVideos.findFirst({
+      where: and(eq(transitionVideos.id, transitionVideoId), isNull(transitionVideos.deletedAt)),
+    })
+    if (!tv) throw new Error('Transition video not found')
+
+    await assertShotOwner(tv.fromShotId)
+
+    if (tv.storageKey) {
+      await deleteObject(tv.storageKey).catch(() => {})
+    }
+
+    await db
+      .update(transitionVideos)
+      .set({ deletedAt: new Date() })
+      .where(eq(transitionVideos.id, transitionVideoId))
   })

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from '@tanstack/react-router'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useNavigate } from '@tanstack/react-router'
 import {
   AlertCircle,
   Download,
@@ -7,20 +7,27 @@ import {
   CheckCircle2,
   Plus,
   Info,
+  Play,
 } from 'lucide-react'
 import type { Scene, Shot } from '@/db/schema'
-import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry } from '../project-types'
+import type { ProjectSettings, SceneAssetSummary, ScenePlanEntry, TransitionVideoSummary } from '../project-types'
 import { exportProjectHandoff } from '../project-queries'
 import { resetWorkshop } from '../project-mutations'
 import { reorderScene, addScene, deleteScene, addShot, deleteShot } from '../scene-actions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/components/ui/toast'
 import { SceneImageStudio } from './scene-image-studio'
-import { ShotImageStudio } from './shot-image-studio'
 import { ResetDialog } from './reset-dialog'
 import { StoryboardCard } from './storyboard-card'
 import { ShotCard } from './shot-card'
 import { SceneHeader } from './scene-header'
+import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
+import { StudioGallery } from './studio/studio-gallery'
+import { VideoControlsPanel } from './studio/video-controls-panel'
+import { VideoGrid } from './studio/video-grid'
+import { useImageStudio } from '../hooks/use-image-studio'
+import { useVideoStudio } from '../hooks/use-video-studio'
 
 function formatTimestamp(seconds: number | null): string {
   if (seconds == null) return '--:--'
@@ -36,6 +43,10 @@ export function Storyboard({
   assets: sceneAssets,
   projectSettings,
   scenePlan,
+  transitionVideos: allTransitionVideos,
+  initialShotId,
+  initialFromShotId,
+  initialToShotId,
 }: {
   projectId: string
   scenes: Scene[]
@@ -43,13 +54,23 @@ export function Storyboard({
   assets: SceneAssetSummary[]
   projectSettings: ProjectSettings | null
   scenePlan: ScenePlanEntry[]
+  transitionVideos: TransitionVideoSummary[]
+  initialShotId?: string
+  initialFromShotId?: string
+  initialToShotId?: string
 }) {
   const router = useRouter()
+  const navigate = useNavigate({ from: '/projects/$projectId' })
+  const { toast } = useToast()
   const [isResetting, setIsResetting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
-  const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
+  const [selectedShotId, setSelectedShotIdState] = useState<string | null>(initialShotId ?? null)
+  const [selectedTransitionPair, setSelectedTransitionPairState] = useState<{ fromShotId: string; toShotId: string } | null>(
+    initialFromShotId && initialToShotId ? { fromShotId: initialFromShotId, toShotId: initialToShotId } : null,
+  )
+
   // Drag-to-reorder state
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -114,17 +135,74 @@ export function Storyboard({
     return grouped
   }, [sceneAssets])
 
+  const imageStudio = useImageStudio({
+    selectedShotId,
+    storyShots,
+    assetsByShotId,
+    router,
+    toast,
+    setError,
+  })
+
+  const videoStudio = useVideoStudio({
+    selectedTransitionPair,
+    allTransitionVideos,
+    router,
+    toast,
+    setError,
+  })
+
+  function selectShot(id: string | null) {
+    setSelectedShotIdState(id)
+    setSelectedTransitionPairState(null)
+    imageStudio.resetForShot(false)
+    if (id) {
+      void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, shot: undefined, from: undefined, to: undefined }) })
+    }
+  }
+
+  function selectTransition(pair: { fromShotId: string; toShotId: string } | null) {
+    setSelectedTransitionPairState(pair)
+    setSelectedShotIdState(null)
+    if (pair) {
+      void navigate({ search: (prev) => ({ ...prev, from: pair.fromShotId, to: pair.toShotId, shot: undefined }) })
+    } else {
+      void navigate({ search: (prev) => ({ ...prev, from: undefined, to: undefined, shot: undefined }) })
+    }
+  }
+
+  const selectShotRef = useRef(selectShot)
+  selectShotRef.current = selectShot
+
   const hasGeneratingAssets = sceneAssets.some((asset) => asset.status === 'generating')
 
   // Suppress polling while studio is open — studio manages its own invalidation
   useEffect(() => {
     if (!hasGeneratingAssets) return
-    if (selectedSceneId !== null || selectedShotId !== null) return
+    if (selectedSceneId !== null || selectedShotId !== null || selectedTransitionPair !== null) return
     const interval = setInterval(() => {
       void router.invalidate()
     }, 2500)
     return () => clearInterval(interval)
-  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, router])
+  }, [hasGeneratingAssets, selectedSceneId, selectedShotId, selectedTransitionPair, router])
+
+  // Keyboard shortcut: Escape closes studio
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
+      if (imageStudio.isLightboxOpen) return
+      if (e.key === 'Escape') {
+        selectShotRef.current(null)
+        setSelectedSceneId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [imageStudio.isLightboxOpen])
 
   const filteredScenes = storyScenes
 
@@ -207,7 +285,7 @@ export function Storyboard({
       await deleteScene({ data: { sceneId } })
       if (selectedSceneId === sceneId) {
         setSelectedSceneId(null)
-        setSelectedShotId(null)
+        selectShot(null)
       }
       router.invalidate()
     } catch (err) {
@@ -220,7 +298,7 @@ export function Storyboard({
     try {
       await deleteShot({ data: { shotId } })
       if (selectedShotId === shotId) {
-        setSelectedShotId(null)
+        selectShot(null)
         setSelectedSceneId(null)
       }
       router.invalidate()
@@ -272,11 +350,6 @@ export function Storyboard({
     } finally {
       setIsAddingScene(false)
     }
-  }
-
-  function handleShotSelect(shot: Shot) {
-    setSelectedShotId(shot.id)
-    setSelectedSceneId(null)
   }
 
   function handleDragStart(e: React.DragEvent, sceneId: string) {
@@ -343,6 +416,194 @@ export function Storyboard({
     const first = shots[0]
     const last = shots[shots.length - 1]
     return `${formatTimestamp(first.timestampStart)}-${formatTimestamp(last.timestampEnd)}`
+  }
+
+  // Determine studio mode
+  const studioMode: 'image' | 'video' = selectedTransitionPair ? 'video' : 'image'
+  const selectedShot = selectedShotId ? storyShots.find((s) => s.id === selectedShotId) ?? null : null
+  const fromShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.fromShotId) ?? null : null
+  const toShot = selectedTransitionPair ? storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null : null
+  const shotParentScene = selectedShot ? storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null : null
+
+  // 3-column layout when shot or transition is selected
+  if (selectedShotId || selectedTransitionPair) {
+    return (
+      <div className="flex h-full min-h-0 overflow-hidden">
+        {/* Col 1: Storyboard sidebar */}
+        <div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
+          <div className="p-3 space-y-2">
+            {/* Back button */}
+            <button
+              type="button"
+              onClick={() => { selectShot(null) }}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3"
+            >
+              ← Back to storyboard
+            </button>
+
+            {/* Scenes + shots */}
+            {filteredScenes.map((scene, sceneIdx) => {
+              const sceneShots = shotsBySceneId.get(scene.id) ?? []
+              const nextScene = filteredScenes[sceneIdx + 1] ?? null
+              const nextSceneFirstShot = nextScene ? (shotsBySceneId.get(nextScene.id) ?? [])[0] ?? null : null
+              return (
+                <div key={scene.id}>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide px-1 py-1">
+                    {scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
+                  </p>
+                  {sceneShots.map((shot, shotIdx) => {
+                    const isLastInScene = shotIdx === sceneShots.length - 1
+                    const nextShot = sceneShots[shotIdx + 1] ?? (isLastInScene ? nextSceneFirstShot : null)
+                    const isSelectedShot = selectedShotId === shot.id
+                    const isInTransition =
+                      selectedTransitionPair?.fromShotId === shot.id ||
+                      selectedTransitionPair?.toShotId === shot.id
+                    const shotAssetsList = assetsByShotId.get(shot.id) ?? []
+                    const hasSelectedImage = shotAssetsList.some((a) => a.isSelected && a.status === 'done')
+                    const nextHasSelectedImage = nextShot
+                      ? (assetsByShotId.get(nextShot.id) ?? []).some((a) => a.isSelected && a.status === 'done')
+                      : false
+                    const selectedImageUrl = shotAssetsList.find((a) => a.isSelected && a.status === 'done')?.url ?? null
+
+                    return (
+                      <div key={shot.id}>
+                        {/* Shot card */}
+                        <button
+                          type="button"
+                          onClick={() => { selectShot(shot.id) }}
+                          className={`w-full rounded-lg border p-2 text-left transition-colors mb-1 ${
+                            isSelectedShot || isInTransition
+                              ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
+                              : 'border-border hover:border-border/80 hover:bg-muted/30'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {selectedImageUrl ? (
+                              <img src={selectedImageUrl} alt="" className="w-12 h-8 object-cover rounded flex-shrink-0" />
+                            ) : (
+                              <div className="w-12 h-8 bg-muted rounded flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-medium text-muted-foreground">Shot {globalShotIndex.get(shot.id)}</p>
+                              <p className="text-xs text-foreground line-clamp-2 leading-tight">{shot.description}</p>
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Video connector pill between shots */}
+                        {nextShot && hasSelectedImage && nextHasSelectedImage && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              selectTransition({ fromShotId: shot.id, toShotId: nextShot.id })
+                            }}
+                            className="w-full relative flex items-center py-1.5 px-2 mb-1 group"
+                          >
+                            {/* Line */}
+                            <div className={`absolute left-2 right-2 top-1/2 -translate-y-1/2 h-px transition-colors ${
+                              selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
+                                ? 'bg-primary/40'
+                                : 'bg-border/50 group-hover:bg-border'
+                            }`} />
+                            {/* Centered pill */}
+                            <div className={`relative z-10 mx-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
+                              selectedTransitionPair?.fromShotId === shot.id && selectedTransitionPair?.toShotId === nextShot.id
+                                ? 'bg-card border-primary/40 text-primary shadow-sm'
+                                : 'bg-card border-border/60 text-muted-foreground group-hover:border-border group-hover:text-foreground'
+                            }`}>
+                              <Play size={8} className="fill-current" />
+                              Video
+                            </div>
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Col 2: Controls panel */}
+        <div className="w-[360px] border-r flex-shrink-0 flex flex-col bg-card overflow-hidden">
+          {studioMode === 'image' && selectedShot && shotParentScene ? (
+            <ShotStudioLeftPanel
+              shot={selectedShot}
+              parentScene={shotParentScene}
+              prompt={imageStudio.prompt}
+              onPromptChange={imageStudio.setPrompt}
+              onGeneratePrompt={imageStudio.handleGeneratePrompt}
+              onEnhancePrompt={imageStudio.handleEnhancePrompt}
+              isEnhancingPrompt={imageStudio.isEnhancingPrompt}
+              refImageUrl={imageStudio.prevShotSelectedImageUrl}
+              useRefImage={imageStudio.useRefImage}
+              onUseRefImageChange={imageStudio.setUseRefImage}
+              useProjectContext={imageStudio.useProjectContext}
+              onUseProjectContextChange={imageStudio.setUseProjectContext}
+              usePrevShotContext={imageStudio.usePrevShotContext}
+              onUsePrevShotContextChange={imageStudio.setUsePrevShotContext}
+              isGeneratingPrompt={imageStudio.isGeneratingPrompt}
+              settingsOverrides={imageStudio.settingsOverrides}
+              onSettingsChange={imageStudio.setSettingsOverrides}
+              isGenerating={imageStudio.isGenerating}
+              onGenerate={imageStudio.handleGenerate}
+            />
+          ) : studioMode === 'video' && fromShot && toShot ? (
+            <VideoControlsPanel
+              fromShot={fromShot}
+              toShot={toShot}
+              videoPrompt={videoStudio.videoPrompt}
+              onVideoPromptChange={videoStudio.setVideoPrompt}
+              onGeneratePrompt={videoStudio.handleGenerateVideoPrompt}
+              isGeneratingPrompt={videoStudio.isGeneratingVideoPrompt}
+              onEnhancePrompt={videoStudio.handleEnhanceVideoPrompt}
+              isEnhancingPrompt={videoStudio.isEnhancingVideoPrompt}
+              videoModel={videoStudio.videoModel}
+              onVideoModelChange={videoStudio.setVideoModel}
+              videoMode={videoStudio.videoMode}
+              onVideoModeChange={videoStudio.setVideoMode}
+              generateAudio={videoStudio.generateAudio}
+              onGenerateAudioChange={videoStudio.setGenerateAudio}
+              negativePrompt={videoStudio.negativePrompt}
+              onNegativePromptChange={videoStudio.setNegativePrompt}
+              isGenerating={videoStudio.isGeneratingVideo}
+              onGenerate={videoStudio.handleGenerateVideo}
+            />
+          ) : null}
+        </div>
+
+        {/* Col 3: Gallery / Video grid */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {studioMode === 'image' && selectedShot ? (
+            <StudioGallery
+              sceneAssets={assetsByShotId.get(selectedShot.id) ?? []}
+              selectingAssetId={imageStudio.isSelectingAssetId}
+              deletingAssetId={imageStudio.deletingAssetId}
+              onSelectAsset={imageStudio.handleSelectAsset}
+              onDeleteAsset={imageStudio.handleDeleteAsset}
+              onRegenerate={imageStudio.handleGenerate}
+              expandedImageId={imageStudio.expandedImageId}
+              onExpandImage={imageStudio.setExpandedImageId}
+              pendingCount={imageStudio.isGenerating ? imageStudio.settingsOverrides.batchCount : 0}
+              onLightboxChange={imageStudio.setIsLightboxOpen}
+            />
+          ) : studioMode === 'video' && selectedTransitionPair ? (
+            <VideoGrid
+              transitionVideos={allTransitionVideos.filter(
+                (tv) =>
+                  tv.fromShotId === selectedTransitionPair.fromShotId &&
+                  tv.toShotId === selectedTransitionPair.toShotId,
+              )}
+              deletingVideoId={videoStudio.deletingVideoId}
+              onDelete={videoStudio.handleDeleteTransitionVideo}
+              onSelect={videoStudio.handleSelectTransitionVideo}
+              isGenerating={videoStudio.isGeneratingVideo}
+            />
+          ) : null}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -455,17 +716,23 @@ export function Storyboard({
 
                   {!isCollapsed && (
                     <div className="ml-6 mt-2 space-y-2">
-                      {sceneShots.map((shot) => (
-                        <ShotCard
-                          key={shot.id}
-                          shot={shot}
-                          globalIndex={globalShotIndex.get(shot.id) ?? 0}
-                          assets={assetsByShotId.get(shot.id) ?? []}
-                          isSelected={selectedShotId === shot.id}
-                          onSelect={() => handleShotSelect(shot)}
-                          onDelete={() => handleDeleteShot(shot.id)}
-                        />
-                      ))}
+                      {sceneShots.map((shot) => {
+                        return (
+                          <div key={shot.id}>
+                            <ShotCard
+                              shot={shot}
+                              globalIndex={globalShotIndex.get(shot.id) ?? 0}
+                              assets={assetsByShotId.get(shot.id) ?? []}
+                              isSelected={selectedShotId === shot.id}
+                              onSelect={() => {
+                                selectShot(shot.id)
+                                setSelectedSceneId(null)
+                              }}
+                              onDelete={() => handleDeleteShot(shot.id)}
+                            />
+                          </div>
+                        )
+                      })}
 
                       {/* Add Shot button */}
                       <button
@@ -593,30 +860,6 @@ export function Storyboard({
         </div>
       </div>
 
-      {/* Full-screen shot studio */}
-      {selectedShotId && (() => {
-        const selectedShot = storyShots.find((s) => s.id === selectedShotId)
-        if (!selectedShot) return null
-        const shotParentScene = storyScenes.find((s) => s.id === selectedShot.sceneId)
-        if (!shotParentScene) return null
-        const shotIdx = storyShots.indexOf(selectedShot)
-        return (
-          <ShotImageStudio
-            shot={selectedShot}
-            shotIndex={shotIdx}
-            parentScene={shotParentScene}
-            allShots={storyShots}
-            shotAssets={assetsByShotId.get(selectedShot.id) ?? []}
-            allAssets={sceneAssets}
-            onShotChange={(id) => setSelectedShotId(id)}
-            onClose={() => {
-              setSelectedShotId(null)
-              setSelectedSceneId(null)
-            }}
-          />
-        )
-      })()}
-
       {/* Full-screen scene studio (legacy — no shots) */}
       {selectedScene && !selectedShotId && (
         <SceneImageStudio
@@ -630,7 +873,7 @@ export function Storyboard({
           onSceneChange={setSelectedSceneId}
           onClose={() => {
             setSelectedSceneId(null)
-            setSelectedShotId(null)
+            selectShot(null)
           }}
         />
       )}

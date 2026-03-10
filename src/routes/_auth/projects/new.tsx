@@ -50,7 +50,7 @@ function NewProjectPage() {
     setIsPending(true)
     try {
       const { projectId } = await createProject({ data: { name } })
-      navigate({ to: '/projects/$projectId', params: { projectId } })
+      navigate({ to: '/projects/$projectId', params: { projectId }, search: { shot: undefined, from: undefined, to: undefined } })
     } catch (err: unknown) {
       if (err instanceof Error) setError(err.message)
     } finally {

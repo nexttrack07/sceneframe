@@ -25,6 +25,11 @@ import { deleteProject } from '@/features/projects/project-mutations'
 
 export const Route = createFileRoute('/_auth/projects/$projectId')({
   loader: ({ params }) => loadProject({ data: params.projectId }),
+  validateSearch: (search: Record<string, unknown>) => ({
+    shot: typeof search.shot === 'string' ? search.shot : undefined,
+    from: typeof search.from === 'string' ? search.from : undefined,
+    to: typeof search.to === 'string' ? search.to : undefined,
+  }),
   component: ProjectPage,
   pendingComponent: ProjectPending,
   errorComponent: ProjectError,
@@ -41,7 +46,9 @@ function ProjectPage() {
     shots: projectShots,
     messages: projectMessages,
     assets: projectAssets,
+    transitionVideos: projectTransitionVideos,
   } = Route.useLoaderData()
+  const { shot, from, to } = Route.useSearch()
   const scenePlan: ScenePlanEntry[] = (() => {
     if (!project.scriptRaw) return []
     try {
@@ -113,6 +120,10 @@ function ProjectPage() {
           assets={projectAssets}
           projectSettings={project.settings}
           scenePlan={scenePlan}
+          transitionVideos={projectTransitionVideos}
+          initialShotId={shot}
+          initialFromShotId={from}
+          initialToShotId={to}
         />
       )}
     </div>

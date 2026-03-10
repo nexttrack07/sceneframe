@@ -3,7 +3,7 @@ import { useRouter } from '@tanstack/react-router'
 import type { Scene, Shot } from '@/db/schema'
 import type { ImageDefaults, SceneAssetSummary } from '../project-types'
 import { normalizeImageDefaults } from '../project-normalize'
-import { deleteAsset, generateShotImages, generateShotImagePrompt, generateShotVideo, generateShotVideoPrompt, pollVideoAsset, selectShotAsset } from '../scene-actions'
+import { deleteAsset, generateShotImages, generateShotImagePrompt, selectShotAsset } from '../scene-actions'
 import { useToast } from '@/components/ui/toast'
 import { ShotStudioHeader } from './studio/shot-studio-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
@@ -34,9 +34,6 @@ export function ShotImageStudio({
   // Single prompt state
   const [prompt, setPrompt] = useState(shot.imagePrompt ?? '')
 
-  // Prompt context mode (affects Generate Prompt only)
-  const [promptMode, setPromptMode] = useState<'start' | 'end'>('start')
-
   // Default settings from most recent asset's modelSettings, fallback to app defaults
   const lastAssetSettings = useMemo(() => {
     const sorted = [...shotAssets]
@@ -56,19 +53,9 @@ export function ShotImageStudio({
   const [error, setError] = useState<string | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
-  const selectedAsset = shotAssets.find((a) => a.isSelected && a.status === 'done')
-  const selectedImageUrl = selectedAsset?.url ?? null
-
-  const [videoPrompt, setVideoPrompt] = useState('')
-  const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
-  const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
-  const [generateAudio, setGenerateAudio] = useState(false)
-
   // Reset local state when shot changes (state-based navigation, no key remount)
   useEffect(() => {
     setPrompt(shot.imagePrompt ?? '')
-    setPromptMode('start')
     setSettingsOverrides(normalizeImageDefaults(lastAssetSettings))
     setExpandedImageId(null)
     setIsGenerating(false)
@@ -76,15 +63,7 @@ export function ShotImageStudio({
     setIsSelectingAssetId(null)
     setDeletingAssetId(null)
     setError(null)
-    setVideoPrompt('')
-    setIsGeneratingVideoPrompt(false)
-    setIsGeneratingVideo(false)
   }, [shot.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handlePromptModeChange(mode: 'start' | 'end') {
-    setPromptMode(mode)
-    setPrompt('')
-  }
 
   // Keyboard shortcuts — guard for lightbox, contentEditable, and inputs
   useEffect(() => {
@@ -116,7 +95,7 @@ export function ShotImageStudio({
       const result = await generateShotImages({
         data: {
           shotId: shot.id,
-          lane: promptMode,
+          lane: 'start',
           promptOverride: promptOverride || undefined,
           settingsOverrides,
         },
@@ -139,7 +118,6 @@ export function ShotImageStudio({
       const result = await generateShotImagePrompt({
         data: {
           shotId: shot.id,
-          lane: promptMode,
         },
       })
       setPrompt(result.prompt)
@@ -151,59 +129,6 @@ export function ShotImageStudio({
       toast(msg, 'error')
     } finally {
       setIsGeneratingPrompt(false)
-    }
-  }
-
-  async function handleGenerateVideoPrompt() {
-    setIsGeneratingVideoPrompt(true)
-    setError(null)
-    try {
-      const result = await generateShotVideoPrompt({ data: { shotId: shot.id } })
-      setVideoPrompt(result.prompt)
-      toast('Video prompt generated', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate video prompt'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGeneratingVideoPrompt(false)
-    }
-  }
-
-  async function handleGenerateVideo() {
-    const trimmedPrompt = videoPrompt.trim()
-    if (!trimmedPrompt) return
-    setIsGeneratingVideo(true)
-    setError(null)
-    try {
-      const { assetId } = await generateShotVideo({ data: { shotId: shot.id, prompt: trimmedPrompt, mode: videoMode, generateAudio } })
-      // Poll until Replicate finishes — avoids serverless timeout and keeps studio open
-      await new Promise<void>((resolve, reject) => {
-        const interval = setInterval(async () => {
-          try {
-            const result = await pollVideoAsset({ data: { assetId } })
-            if (result.status === 'done') {
-              clearInterval(interval)
-              resolve()
-            } else if (result.status === 'error') {
-              clearInterval(interval)
-              reject(new Error(result.errorMessage ?? 'Video generation failed'))
-            }
-          } catch (pollErr) {
-            clearInterval(interval)
-            reject(pollErr)
-          }
-        }, 5000)
-      })
-      setError(null)
-      await router.invalidate()
-      toast('Video generated', 'success')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate video'
-      setError(msg)
-      toast(msg, 'error')
-    } finally {
-      setIsGeneratingVideo(false)
     }
   }
 
@@ -270,8 +195,6 @@ export function ShotImageStudio({
         <ShotStudioLeftPanel
           shot={shot}
           parentScene={parentScene}
-          promptMode={promptMode}
-          onPromptModeChange={handlePromptModeChange}
           prompt={prompt}
           onPromptChange={setPrompt}
           onGeneratePrompt={handleGeneratePrompt}
@@ -280,17 +203,6 @@ export function ShotImageStudio({
           onSettingsChange={setSettingsOverrides}
           isGenerating={isGenerating}
           onGenerate={handleGenerate}
-          selectedImageUrl={selectedImageUrl}
-          videoPrompt={videoPrompt}
-          onVideoPromptChange={setVideoPrompt}
-          onGenerateVideoPrompt={handleGenerateVideoPrompt}
-          isGeneratingVideoPrompt={isGeneratingVideoPrompt}
-          isGeneratingVideo={isGeneratingVideo}
-          onGenerateVideo={handleGenerateVideo}
-          videoMode={videoMode}
-          onVideoModeChange={setVideoMode}
-          generateAudio={generateAudio}
-          onGenerateAudioChange={setGenerateAudio}
         />
 
         <StudioGallery
