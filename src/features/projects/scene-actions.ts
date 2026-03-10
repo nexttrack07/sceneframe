@@ -658,12 +658,15 @@ export const generateShotImagePrompt = createServerFn({ method: 'POST' })
       intake?.viewerAction ? `Viewer action goal: ${intake.viewerAction}` : null,
     ].filter(Boolean).join('\n')
 
+    const consistencyRules = useProjectContext
+      ? '- CRITICAL: The subject and visual style must be consistent with the project concept — do NOT invent new subjects or themes not present in the project'
+      : '- Generate a vivid, specific image prompt based solely on the shot description provided'
+
     const systemPrompt = `You are an expert image prompt engineer for AI image generation models like Flux and Stable Diffusion.
-You are generating a keyframe image for one shot in a video series. The images across all shots must be VISUALLY CONSISTENT — same subjects, same style, same world.
 
 You MUST use this exact structured format:
 
-[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing. Must be consistent with the project's established subjects.
+[Subject]: Describe the main subject(s) — appearance, expression, pose, clothing.
 
 [Action]: What the subject is doing in this specific moment.
 
@@ -671,13 +674,13 @@ You MUST use this exact structured format:
 
 [Cinematography]: Camera angle, lens, depth of field, framing, composition.
 
-[Lighting/Style]: Lighting, color grading, mood, artistic style. Must match the project's visual style.
+[Lighting/Style]: Lighting, color grading, mood, artistic style.
 
 [Technical]: Photography/rendering style and quality descriptors.
 
 Rules:
 - Each section 1-2 sentences, extremely specific
-- CRITICAL: The subject and visual style must be consistent with the project concept and other shots — do NOT invent new subjects or themes not present in the project
+${consistencyRules}
 - If the shot description mentions text, calligraphy, or inscriptions visible in the scene, include them verbatim in [Environment] as a physical element
 - If the shot describes a subject as small/tiny/distant relative to the environment, encode that scale relationship explicitly in [Subject] and [Cinematography]
 - Use professional cinematic language
@@ -690,7 +693,7 @@ Return ONLY the structured prompt, nothing else.`
       useProjectContext ? `SCENE CONTEXT:\nScene description: ${scene.description}` : null,
       usePrevShotContext && prevShot ? `PREVIOUS SHOT: ${prevShot.description}` : null,
       `CURRENT SHOT (generate prompt for this): ${shot.description}`,
-      nextShot ? `NEXT SHOT: ${nextShot.description}` : null,
+      usePrevShotContext && nextShot ? `NEXT SHOT: ${nextShot.description}` : null,
     ].filter(Boolean).join('\n\n')
 
     const userMessage = contextParts
