@@ -1275,10 +1275,12 @@ export const generateTransitionVideo = createServerFn({ method: 'POST' })
     fromShotId: string
     toShotId: string
     prompt: string
+    videoModel?: 'v3-omni' | 'v2.5-turbo'
     mode?: 'standard' | 'pro'
     generateAudio?: boolean
+    negativePrompt?: string
   }) => data)
-  .handler(async ({ data: { fromShotId, toShotId, prompt, mode = 'pro', generateAudio = false } }) => {
+  .handler(async ({ data: { fromShotId, toShotId, prompt, videoModel = 'v3-omni', mode = 'pro', generateAudio = false, negativePrompt = '' } }) => {
     const { userId, shot: fromShot, scene } = await assertShotOwner(fromShotId)
     const apiKey = await getUserApiKey(userId)
 
@@ -1317,18 +1319,33 @@ export const generateTransitionVideo = createServerFn({ method: 'POST' })
       throw new Error('End frame image is in WebP format. Kling requires PNG or JPEG. Re-generate images and select a PNG image.')
     }
 
-    // Submit to Replicate — fire and forget
+    // Build model-specific input
     const replicate = new Replicate({ auth: apiKey })
+    const isV25Turbo = videoModel === 'v2.5-turbo'
+    const modelId = isV25Turbo ? 'kwaivgi/kling-v2.5-turbo-pro' : 'kwaivgi/kling-v3-omni-video'
+    // V2.5 Turbo only supports duration 5 or 10
+    const v25Duration = fromShot.durationSec <= 7 ? 5 : 10
+
+    const replicateInput = isV25Turbo
+      ? {
+          prompt,
+          start_image: fromImage.url,
+          end_image: toImage.url,
+          duration: v25Duration,
+          negative_prompt: negativePrompt || undefined,
+        }
+      : {
+          prompt,
+          start_image: fromImage.url,
+          end_image: toImage.url,
+          duration: Math.max(3, Math.min(15, fromShot.durationSec)),
+          mode,
+          generate_audio: generateAudio,
+        }
+
     const prediction = await replicate.predictions.create({
-      model: 'kwaivgi/kling-v3-omni-video' as `${string}/${string}`,
-      input: {
-        prompt,
-        start_image: fromImage.url,
-        end_image: toImage.url,
-        duration: Math.max(3, Math.min(15, fromShot.durationSec)),
-        mode,
-        generate_audio: generateAudio,
-      },
+      model: modelId as `${string}/${string}`,
+      input: replicateInput,
     })
 
     const [placeholder] = await db
@@ -1340,8 +1357,10 @@ export const generateTransitionVideo = createServerFn({ method: 'POST' })
         fromImageId: fromImage.id,
         toImageId: toImage.id,
         prompt,
-        model: 'kwaivgi/kling-v3-omni-video',
-        modelSettings: { duration: fromShot.durationSec, mode, generateAudio },
+        model: modelId,
+        modelSettings: isV25Turbo
+          ? { duration: v25Duration, negativePrompt }
+          : { duration: fromShot.durationSec, mode, generateAudio },
         generationId: prediction.id,
         status: 'generating',
         isSelected: false,

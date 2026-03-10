@@ -3,6 +3,8 @@ import { Loader2, Film, ChevronDown, ChevronUp, Sparkles, Wand2 } from 'lucide-r
 import { Button } from '@/components/ui/button'
 import type { Shot } from '@/db/schema'
 
+export type VideoModel = 'v3-omni' | 'v2.5-turbo'
+
 export function VideoControlsPanel({
   fromShot,
   toShot,
@@ -12,10 +14,14 @@ export function VideoControlsPanel({
   isGeneratingPrompt,
   onEnhancePrompt,
   isEnhancingPrompt,
+  videoModel,
+  onVideoModelChange,
   videoMode,
   onVideoModeChange,
   generateAudio,
   onGenerateAudioChange,
+  negativePrompt,
+  onNegativePromptChange,
   isGenerating,
   onGenerate,
 }: {
@@ -27,15 +33,20 @@ export function VideoControlsPanel({
   isGeneratingPrompt: boolean
   onEnhancePrompt?: () => void
   isEnhancingPrompt?: boolean
+  videoModel: VideoModel
+  onVideoModelChange: (m: VideoModel) => void
   videoMode: 'standard' | 'pro'
   onVideoModeChange: (m: 'standard' | 'pro') => void
   generateAudio: boolean
   onGenerateAudioChange: (v: boolean) => void
+  negativePrompt: string
+  onNegativePromptChange: (v: string) => void
   isGenerating: boolean
   onGenerate: () => void
 }) {
   const [showDescriptions, setShowDescriptions] = useState(true)
   const isBusy = isGeneratingPrompt || isEnhancingPrompt
+  const isV25 = videoModel === 'v2.5-turbo'
 
   return (
     <div className="flex flex-col h-full">
@@ -59,27 +70,44 @@ export function VideoControlsPanel({
         </div>
 
         <div className="border-t pt-4 space-y-4">
-          {/* Settings */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 flex-1">
-              <label className="text-xs font-medium text-muted-foreground">Resolution</label>
-              <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
-                <button type="button" onClick={() => onVideoModeChange('standard')}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                  720p
-                </button>
-                <button type="button" onClick={() => onVideoModeChange('pro')}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                  1080p
-                </button>
-              </div>
+          {/* Model selector */}
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-muted-foreground">Model</label>
+            <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+              <button type="button" onClick={() => onVideoModelChange('v3-omni')}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${!isV25 ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                V3 Omni
+              </button>
+              <button type="button" onClick={() => onVideoModelChange('v2.5-turbo')}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${isV25 ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                2.5 Turbo
+              </button>
             </div>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={generateAudio} onChange={(e) => onGenerateAudioChange(e.target.checked)}
-                className="h-3.5 w-3.5 rounded accent-primary" />
-              <span className="text-xs font-medium text-muted-foreground">Audio</span>
-            </label>
           </div>
+
+          {/* V3 Omni settings */}
+          {!isV25 && (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 flex-1">
+                <label className="text-xs font-medium text-muted-foreground">Resolution</label>
+                <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
+                  <button type="button" onClick={() => onVideoModeChange('standard')}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'standard' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                    720p
+                  </button>
+                  <button type="button" onClick={() => onVideoModeChange('pro')}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === 'pro' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                    1080p
+                  </button>
+                </div>
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={generateAudio} onChange={(e) => onGenerateAudioChange(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded accent-primary" />
+                <span className="text-xs font-medium text-muted-foreground">Audio</span>
+              </label>
+            </div>
+          )}
 
           {/* Motion prompt */}
           <div className="space-y-1.5">
@@ -103,13 +131,27 @@ export function VideoControlsPanel({
               </div>
             </div>
             <textarea
-              rows={8}
+              rows={7}
               value={videoPrompt}
               onChange={(e) => onVideoPromptChange(e.target.value)}
               placeholder="Describe the motion — camera movement, subject action, speed..."
               className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
             />
           </div>
+
+          {/* V2.5 Turbo negative prompt */}
+          {isV25 && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Negative prompt</label>
+              <textarea
+                rows={3}
+                value={negativePrompt}
+                onChange={(e) => onNegativePromptChange(e.target.value)}
+                placeholder="Things you don't want to see..."
+                className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+              />
+            </div>
+          )}
         </div>
       </div>
 

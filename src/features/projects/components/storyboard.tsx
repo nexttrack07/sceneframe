@@ -25,7 +25,7 @@ import { ShotCard } from './shot-card'
 import { SceneHeader } from './scene-header'
 import { ShotStudioLeftPanel } from './studio/shot-studio-left-panel'
 import { StudioGallery } from './studio/studio-gallery'
-import { VideoControlsPanel } from './studio/video-controls-panel'
+import { VideoControlsPanel, type VideoModel } from './studio/video-controls-panel'
 import { VideoGrid } from './studio/video-grid'
 
 function formatTimestamp(seconds: number | null): string {
@@ -115,8 +115,10 @@ export function Storyboard({
 
   // Video studio state (for selected transition)
   const [videoPrompt, setVideoPrompt] = useState('')
+  const [videoModel, setVideoModel] = useState<VideoModel>('v3-omni')
   const [videoMode, setVideoMode] = useState<'standard' | 'pro'>('pro')
   const [generateAudio, setGenerateAudio] = useState(false)
+  const [negativePrompt, setNegativePrompt] = useState('')
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
   const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
@@ -664,8 +666,10 @@ export function Storyboard({
           fromShotId: selectedTransitionPair.fromShotId,
           toShotId: selectedTransitionPair.toShotId,
           prompt: videoPrompt.trim(),
+          videoModel,
           mode: videoMode,
           generateAudio,
+          negativePrompt,
         },
       })
 
@@ -898,10 +902,14 @@ export function Storyboard({
               isGeneratingPrompt={isGeneratingVideoPrompt}
               onEnhancePrompt={handleEnhanceVideoPrompt}
               isEnhancingPrompt={isEnhancingVideoPrompt}
+              videoModel={videoModel}
+              onVideoModelChange={setVideoModel}
               videoMode={videoMode}
               onVideoModeChange={setVideoMode}
               generateAudio={generateAudio}
               onGenerateAudioChange={setGenerateAudio}
+              negativePrompt={negativePrompt}
+              onNegativePromptChange={setNegativePrompt}
               isGenerating={isGeneratingVideo}
               onGenerate={handleGenerateVideo}
             />

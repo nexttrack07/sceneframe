@@ -52,6 +52,28 @@ Key notes:
 
 ---
 
+## kwaivgi/kling-v2.5-turbo-pro
+
+```json
+{
+  "prompt": "string (required)",
+  "start_image": "uri — first frame of the video",
+  "end_image": "uri — last frame of the video",
+  "duration": "enum: 5 | 10 — ONLY these two values, default: 5",
+  "aspect_ratio": "enum: 16:9 | 9:16 | 1:1 — ignored if start_image provided, default: 16:9",
+  "negative_prompt": "string — things you do not want to see, default: ''",
+  "image": "uri — DEPRECATED, use start_image instead"
+}
+```
+
+Key notes:
+- Output is a `FileOutput` object — use `String(output)` to get URL (FileOutput.toString() returns URL)
+- Duration is ENUM not range — only 5 or 10. Map shot duration: ≤7s → 5, >7s → 10
+- No `mode`, `generate_audio`, or `reference_images` support
+- `aspect_ratio` is ignored when `start_image` is provided
+
+---
+
 ## anthropic/claude-4.5-haiku (via Replicate streaming)
 
 ```json
