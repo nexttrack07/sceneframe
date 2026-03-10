@@ -785,15 +785,18 @@ export function Storyboard({
             </button>
 
             {/* Scenes + shots */}
-            {filteredScenes.map((scene) => {
+            {filteredScenes.map((scene, sceneIdx) => {
               const sceneShots = shotsBySceneId.get(scene.id) ?? []
+              const nextScene = filteredScenes[sceneIdx + 1] ?? null
+              const nextSceneFirstShot = nextScene ? (shotsBySceneId.get(nextScene.id) ?? [])[0] ?? null : null
               return (
                 <div key={scene.id}>
                   <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide px-1 py-1">
                     {scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
                   </p>
                   {sceneShots.map((shot, shotIdx) => {
-                    const nextShot = sceneShots[shotIdx + 1] ?? null
+                    const isLastInScene = shotIdx === sceneShots.length - 1
+                    const nextShot = sceneShots[shotIdx + 1] ?? (isLastInScene ? nextSceneFirstShot : null)
                     const isSelectedShot = selectedShotId === shot.id
                     const isInTransition =
                       selectedTransitionPair?.fromShotId === shot.id ||
