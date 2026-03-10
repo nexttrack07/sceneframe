@@ -632,9 +632,9 @@ export const saveShotPrompt = createServerFn({ method: 'POST' })
 
 export const generateShotImagePrompt = createServerFn({ method: 'POST' })
   .inputValidator(
-    (data: { shotId: string; lane: 'start' | 'end' }) => data,
+    (data: { shotId: string; lane: 'start' | 'end'; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data,
   )
-  .handler(async ({ data: { shotId } }) => {
+  .handler(async ({ data: { shotId, useProjectContext = true, usePrevShotContext = true } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
@@ -686,9 +686,9 @@ Rules:
 Return ONLY the structured prompt, nothing else.`
 
     const contextParts = [
-      `PROJECT CONTEXT:\n${projectContext || `Project: ${project.name}`}`,
-      `SCENE CONTEXT:\nScene description: ${scene.description}`,
-      prevShot ? `PREVIOUS SHOT: ${prevShot.description}` : null,
+      useProjectContext ? `PROJECT CONTEXT:\n${projectContext || `Project: ${project.name}`}` : null,
+      useProjectContext ? `SCENE CONTEXT:\nScene description: ${scene.description}` : null,
+      usePrevShotContext && prevShot ? `PREVIOUS SHOT: ${prevShot.description}` : null,
       `CURRENT SHOT (generate prompt for this): ${shot.description}`,
       nextShot ? `NEXT SHOT: ${nextShot.description}` : null,
     ].filter(Boolean).join('\n\n')
@@ -721,8 +721,8 @@ Return ONLY the structured prompt, nothing else.`
 // ---------------------------------------------------------------------------
 
 export const enhanceShotImagePrompt = createServerFn({ method: 'POST' })
-  .inputValidator((data: { shotId: string; userPrompt: string }) => data)
-  .handler(async ({ data: { shotId, userPrompt } }) => {
+  .inputValidator((data: { shotId: string; userPrompt: string; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data)
+  .handler(async ({ data: { shotId, userPrompt, useProjectContext = true } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
@@ -755,9 +755,9 @@ Rules:
 - Preserve ALL elements the user mentioned — do not drop anything
 - Add technical details to enrich but never override the user's intent
 - Use professional cinematic language
-${projectContext ? `\nProject context:\n${projectContext}` : ''}
-${`Shot: ${shot.description}`}
-${`Scene: ${scene.description}`}
+${useProjectContext && projectContext ? `\nProject context:\n${projectContext}` : ''}
+${useProjectContext ? `Scene: ${scene.description}` : ''}
+Shot: ${shot.description}
 
 Return ONLY the structured prompt, nothing else.`
 

@@ -74,6 +74,8 @@ export function Storyboard({
     setSelectedShotIdState(id)
     setSelectedTransitionPairState(null)
     setUseRefImage(false)
+    setUseProjectContext(true)
+    setUsePrevShotContext(true)
     if (id) {
       void navigate({ search: (prev) => ({ ...prev, shot: id, from: undefined, to: undefined }) })
     } else {
@@ -108,6 +110,8 @@ export function Storyboard({
   const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false)
   const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false)
   const [useRefImage, setUseRefImage] = useState(false)
+  const [useProjectContext, setUseProjectContext] = useState(true)
+  const [usePrevShotContext, setUsePrevShotContext] = useState(true)
   const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(null)
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null)
   const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
@@ -553,7 +557,7 @@ export function Storyboard({
     setError(null)
     try {
       const result = await generateShotImagePrompt({
-        data: { shotId: selectedShotId, lane: 'start' },
+        data: { shotId: selectedShotId, lane: 'start', useProjectContext, usePrevShotContext },
       })
       setPrompt(result.prompt)
       await router.invalidate()
@@ -572,7 +576,7 @@ export function Storyboard({
     setIsEnhancingPrompt(true)
     setError(null)
     try {
-      const result = await enhanceShotImagePrompt({ data: { shotId: selectedShotId, userPrompt: prompt } })
+      const result = await enhanceShotImagePrompt({ data: { shotId: selectedShotId, userPrompt: prompt, useProjectContext, usePrevShotContext } })
       setPrompt(result.prompt)
       toast('Prompt enhanced', 'success')
     } catch (err) {
@@ -888,6 +892,10 @@ export function Storyboard({
               refImageUrl={prevShotSelectedImageUrl}
               useRefImage={useRefImage}
               onUseRefImageChange={setUseRefImage}
+              useProjectContext={useProjectContext}
+              onUseProjectContextChange={setUseProjectContext}
+              usePrevShotContext={usePrevShotContext}
+              onUsePrevShotContextChange={setUsePrevShotContext}
               isGeneratingPrompt={isGeneratingPrompt}
               settingsOverrides={settingsOverrides}
               onSettingsChange={setSettingsOverrides}
