@@ -1,197 +1,221 @@
-import { createServerFn } from '@tanstack/react-start'
-import { db } from '@/db/index'
-import { assets, scenes, shots, messages, transitionVideos } from '@/db/schema'
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
-import { assertProjectOwner } from '@/lib/assert-project-owner.server'
-import { normalizeProjectSettings } from './project-normalize'
-import type { ScenePlanEntry } from './project-types'
+import { createServerFn } from "@tanstack/react-start";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { db } from "@/db/index";
+import { assets, messages, scenes, shots, transitionVideos } from "@/db/schema";
+import { assertProjectOwner } from "@/lib/assert-project-owner.server";
+import { normalizeProjectSettings } from "./project-normalize";
+import type { ScenePlanEntry } from "./project-types";
 
-export const loadProject = createServerFn({ method: 'GET' })
-  .inputValidator((projectId: string) => projectId)
-  .handler(async ({ data: projectId }) => {
-    const { project } = await assertProjectOwner(projectId)
+export const loadProject = createServerFn({ method: "GET" })
+	.inputValidator((projectId: string) => projectId)
+	.handler(async ({ data: projectId }) => {
+		const { project } = await assertProjectOwner(projectId);
 
-    const [projectScenes, projectMessages] = await Promise.all([
-      db.query.scenes.findMany({
-        where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-        orderBy: asc(scenes.order),
-      }),
-      db.query.messages.findMany({
-        where: eq(messages.projectId, projectId),
-        orderBy: asc(messages.createdAt),
-      }),
-    ])
+		const [projectScenes, projectMessages] = await Promise.all([
+			db.query.scenes.findMany({
+				where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+				orderBy: asc(scenes.order),
+			}),
+			db.query.messages.findMany({
+				where: eq(messages.projectId, projectId),
+				orderBy: asc(messages.createdAt),
+				limit: 200,
+			}),
+		]);
 
-    const sceneIds = projectScenes.map((scene) => scene.id)
+		const sceneIds = projectScenes.map((scene) => scene.id);
 
-    // Load shots by sceneIds, then sort by (scene order, shot order within scene)
-    const rawShots =
-      sceneIds.length === 0
-        ? []
-        : await db.query.shots.findMany({
-            where: and(
-              inArray(shots.sceneId, sceneIds),
-              isNull(shots.deletedAt),
-            ),
-          })
-    const projectShots = rawShots.slice().sort((a, b) => {
-      const sceneA = sceneIds.indexOf(a.sceneId)
-      const sceneB = sceneIds.indexOf(b.sceneId)
-      if (sceneA !== sceneB) return sceneA - sceneB
-      return a.order - b.order
-    })
+		// Load shots by sceneIds, then sort by (scene order, shot order within scene)
+		const rawShots =
+			sceneIds.length === 0
+				? []
+				: await db.query.shots.findMany({
+						where: and(
+							inArray(shots.sceneId, sceneIds),
+							isNull(shots.deletedAt),
+						),
+					});
+		const sceneIndexMap = new Map(sceneIds.map((id, i) => [id, i]));
+		const projectShots = rawShots.slice().sort((a, b) => {
+			const sceneA = sceneIndexMap.get(a.sceneId) ?? 0;
+			const sceneB = sceneIndexMap.get(b.sceneId) ?? 0;
+			if (sceneA !== sceneB) return sceneA - sceneB;
+			return a.order - b.order;
+		});
 
-    const shotIds = projectShots.map((shot) => shot.id)
+		const shotIds = projectShots.map((shot) => shot.id);
 
-    // Load assets: by shotIds (shot-level) PLUS legacy assets with no shotId (scene-level)
-    const projectAssets =
-      sceneIds.length === 0
-        ? []
-        : await db.query.assets.findMany({
-            where: and(
-              eq(assets.stage, 'images'),
-              isNull(assets.deletedAt),
-              shotIds.length > 0
-                ? or(
-                    inArray(assets.shotId, shotIds),
-                    and(inArray(assets.sceneId, sceneIds), isNull(assets.shotId)),
-                  )
-                : inArray(assets.sceneId, sceneIds),
-            ),
-            orderBy: asc(assets.createdAt),
-          })
+		// Load assets: by shotIds (shot-level) PLUS legacy assets with no shotId (scene-level)
+		const projectAssets =
+			sceneIds.length === 0
+				? []
+				: await db.query.assets.findMany({
+						where: and(
+							eq(assets.stage, "images"),
+							isNull(assets.deletedAt),
+							shotIds.length > 0
+								? or(
+										inArray(assets.shotId, shotIds),
+										and(
+											inArray(assets.sceneId, sceneIds),
+											isNull(assets.shotId),
+										),
+									)
+								: inArray(assets.sceneId, sceneIds),
+						),
+						orderBy: asc(assets.createdAt),
+					});
 
-    const projectTransitionVideos =
-      sceneIds.length === 0
-        ? []
-        : await db.query.transitionVideos.findMany({
-            where: and(
-              inArray(transitionVideos.sceneId, sceneIds),
-              isNull(transitionVideos.deletedAt),
-            ),
-            orderBy: asc(transitionVideos.createdAt),
-          })
+		const projectTransitionVideos =
+			sceneIds.length === 0
+				? []
+				: await db.query.transitionVideos.findMany({
+						where: and(
+							inArray(transitionVideos.sceneId, sceneIds),
+							isNull(transitionVideos.deletedAt),
+						),
+						orderBy: asc(transitionVideos.createdAt),
+					});
 
-    return {
-      project: {
-        ...project,
-        settings: normalizeProjectSettings(project.settings),
-      },
-      scenes: projectScenes,
-      shots: projectShots,
-      messages: projectMessages,
-      assets: projectAssets
-        .filter((asset): asset is typeof asset & { type: 'start_image' | 'end_image' | 'image' } =>
-          asset.type === 'start_image' || asset.type === 'end_image' || asset.type === 'image',
-        )
-        .filter(
-          (asset): asset is typeof asset & { status: 'generating' | 'done' | 'error' } =>
-            asset.status === 'generating' || asset.status === 'done' || asset.status === 'error',
-        )
-        .map((asset) => ({
-          id: asset.id,
-          sceneId: asset.sceneId,
-          shotId: asset.shotId,
-          type: asset.type,
-          status: asset.status,
-          url: asset.url,
-          errorMessage: asset.errorMessage,
-          prompt: asset.prompt,
-          model: asset.model,
-          isSelected: asset.isSelected,
-          batchId: asset.batchId,
-          createdAt: asset.createdAt.toISOString(),
-          modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
-        })),
-      transitionVideos: projectTransitionVideos.map((tv) => ({
-        id: tv.id,
-        sceneId: tv.sceneId,
-        fromShotId: tv.fromShotId,
-        toShotId: tv.toShotId,
-        fromImageId: tv.fromImageId,
-        toImageId: tv.toImageId,
-        status: tv.status,
-        url: tv.url,
-        errorMessage: tv.errorMessage,
-        prompt: tv.prompt,
-        model: tv.model,
-        isSelected: tv.isSelected,
-        stale: tv.stale,
-        generationId: tv.generationId,
-        modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
-        createdAt: tv.createdAt.toISOString(),
-      })),
-    }
-  })
+		return {
+			project: {
+				...project,
+				settings: normalizeProjectSettings(project.settings),
+			},
+			scenes: projectScenes,
+			shots: projectShots,
+			messages: projectMessages,
+			assets: projectAssets
+				.filter(
+					(
+						asset,
+					): asset is typeof asset & {
+						type: "start_image" | "end_image" | "image";
+					} =>
+						asset.type === "start_image" ||
+						asset.type === "end_image" ||
+						asset.type === "image",
+				)
+				.filter(
+					(
+						asset,
+					): asset is typeof asset & {
+						status: "generating" | "done" | "error";
+					} =>
+						asset.status === "generating" ||
+						asset.status === "done" ||
+						asset.status === "error",
+				)
+				.map((asset) => ({
+					id: asset.id,
+					sceneId: asset.sceneId,
+					shotId: asset.shotId,
+					type: asset.type,
+					status: asset.status,
+					url: asset.url,
+					errorMessage: asset.errorMessage,
+					prompt: asset.prompt,
+					model: asset.model,
+					isSelected: asset.isSelected,
+					batchId: asset.batchId,
+					createdAt: asset.createdAt.toISOString(),
+					modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
+				})),
+			transitionVideos: projectTransitionVideos.map((tv) => ({
+				id: tv.id,
+				sceneId: tv.sceneId,
+				fromShotId: tv.fromShotId,
+				toShotId: tv.toShotId,
+				fromImageId: tv.fromImageId,
+				toImageId: tv.toImageId,
+				status: tv.status,
+				url: tv.url,
+				errorMessage: tv.errorMessage,
+				prompt: tv.prompt,
+				model: tv.model,
+				isSelected: tv.isSelected,
+				stale: tv.stale,
+				generationId: tv.generationId,
+				modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
+				createdAt: tv.createdAt.toISOString(),
+			})),
+		};
+	});
 
-export const exportProjectHandoff = createServerFn({ method: 'POST' })
-  .inputValidator((data: { projectId: string; format: 'json' | 'markdown' }) => data)
-  .handler(async ({ data: { projectId, format } }) => {
-    const { project } = await assertProjectOwner(projectId, 'error')
+export const exportProjectHandoff = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { projectId: string; format: "json" | "markdown" }) => data,
+	)
+	.handler(async ({ data: { projectId, format } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
 
-    const projectScenes = await db.query.scenes.findMany({
-      where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-      orderBy: asc(scenes.order),
-    })
-    const settings = normalizeProjectSettings(project.settings)
-    let plan: ScenePlanEntry[] = []
-    try {
-      plan = project.scriptRaw ? JSON.parse(project.scriptRaw) : []
-    } catch {
-      plan = []
-    }
+		const projectScenes = await db.query.scenes.findMany({
+			where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+			orderBy: asc(scenes.order),
+		});
+		const settings = normalizeProjectSettings(project.settings);
+		let plan: ScenePlanEntry[] = [];
+		try {
+			plan = project.scriptRaw ? JSON.parse(project.scriptRaw) : [];
+		} catch {
+			plan = [];
+		}
 
-    if (format === 'json') {
-      return {
-        content: JSON.stringify(
-          {
-            project: { id: project.id, name: project.name },
-            intake: settings?.intake ?? null,
-            scenes: projectScenes.map((scene, i) => ({
-              id: scene.id,
-              order: i + 1,
-              title: scene.title,
-              description: scene.description,
-              beat: plan[i]?.beat ?? null,
-              durationSec: plan[i]?.durationSec ?? null,
-            })),
-          },
-          null,
-          2,
-        ),
-        filename: `${project.name.replace(/\s+/g, '-').toLowerCase()}-handoff.json`,
-        mimeType: 'application/json',
-      }
-    }
+		if (format === "json") {
+			return {
+				content: JSON.stringify(
+					{
+						project: { id: project.id, name: project.name },
+						intake: settings?.intake ?? null,
+						scenes: projectScenes.map((scene, i) => ({
+							id: scene.id,
+							order: i + 1,
+							title: scene.title,
+							description: scene.description,
+							beat: plan[i]?.beat ?? null,
+							durationSec: plan[i]?.durationSec ?? null,
+						})),
+					},
+					null,
+					2,
+				),
+				filename: `${project.name.replace(/\s+/g, "-").toLowerCase()}-handoff.json`,
+				mimeType: "application/json",
+			};
+		}
 
-    const markdown = [
-      `# ${project.name} - Production Handoff`,
-      '',
-      '## Creative Brief',
-      settings?.intake ? `- Channel preset: ${settings.intake.channelPreset}` : '- Brief not found',
-      settings?.intake ? `- Audience: ${settings.intake.audience}` : '',
-      settings?.intake ? `- Viewer action: ${settings.intake.viewerAction}` : '',
-      '',
-      '## Scene Plan',
-      ...projectScenes.map((scene, i) =>
-        [
-          `### Scene ${i + 1}${scene.title ? `: ${scene.title}` : ''}`,
-          plan[i]?.beat ? `- Beat: ${plan[i].beat}` : '',
-          plan[i]?.durationSec ? `- Duration: ${plan[i].durationSec}s` : '',
-          '',
-          scene.description,
-          '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      ),
-    ]
-      .filter(Boolean)
-      .join('\n')
+		const markdown = [
+			`# ${project.name} - Production Handoff`,
+			"",
+			"## Creative Brief",
+			settings?.intake
+				? `- Channel preset: ${settings.intake.channelPreset}`
+				: "- Brief not found",
+			settings?.intake ? `- Audience: ${settings.intake.audience}` : "",
+			settings?.intake
+				? `- Viewer action: ${settings.intake.viewerAction}`
+				: "",
+			"",
+			"## Scene Plan",
+			...projectScenes.map((scene, i) =>
+				[
+					`### Scene ${i + 1}${scene.title ? `: ${scene.title}` : ""}`,
+					plan[i]?.beat ? `- Beat: ${plan[i].beat}` : "",
+					plan[i]?.durationSec ? `- Duration: ${plan[i].durationSec}s` : "",
+					"",
+					scene.description,
+					"",
+				]
+					.filter(Boolean)
+					.join("\n"),
+			),
+		]
+			.filter(Boolean)
+			.join("\n");
 
-    return {
-      content: markdown,
-      filename: `${project.name.replace(/\s+/g, '-').toLowerCase()}-handoff.md`,
-      mimeType: 'text/markdown',
-    }
-  })
+		return {
+			content: markdown,
+			filename: `${project.name.replace(/\s+/g, "-").toLowerCase()}-handoff.md`,
+			mimeType: "text/markdown",
+		};
+	});

@@ -1,16 +1,18 @@
-import { redirect } from '@tanstack/react-router'
-import { auth } from '@clerk/tanstack-react-start/server'
-import { db } from '@/db/index'
-import { assets, projects, scenes, shots } from '@/db/schema'
-import { and, eq, isNull } from 'drizzle-orm'
+import { auth } from "@clerk/tanstack-react-start/server";
+import { redirect } from "@tanstack/react-router";
+import { and, eq, isNull } from "drizzle-orm";
+import { db } from "@/db/index";
+import { assets, projects, scenes, shots } from "@/db/schema";
 
-type FailureMode = 'redirect' | 'error'
+type FailureMode = "redirect" | "error";
 
 function fail(mode: FailureMode, message: string): never {
-  if (mode === 'redirect') {
-    throw redirect({ to: message === 'Unauthenticated' ? '/sign-in' : '/dashboard' })
-  }
-  throw new Error(message)
+	if (mode === "redirect") {
+		throw redirect({
+			to: message === "Unauthenticated" ? "/sign-in" : "/dashboard",
+		});
+	}
+	throw new Error(message);
 }
 
 /**
@@ -19,18 +21,22 @@ function fail(mode: FailureMode, message: string): never {
  * In 'error' mode, throws Error for mutation contexts.
  */
 export async function assertProjectOwner(
-  projectId: string,
-  mode: FailureMode = 'redirect',
+	projectId: string,
+	mode: FailureMode = "redirect",
 ) {
-  const { userId } = await auth()
-  if (!userId) fail(mode, 'Unauthenticated')
+	const { userId } = await auth();
+	if (!userId) fail(mode, "Unauthenticated");
 
-  const project = await db.query.projects.findFirst({
-    where: and(eq(projects.id, projectId), eq(projects.userId, userId), isNull(projects.deletedAt)),
-  })
-  if (!project) fail(mode, 'Project not found')
+	const project = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.id, projectId),
+			eq(projects.userId, userId),
+			isNull(projects.deletedAt),
+		),
+	});
+	if (!project) fail(mode, "Project not found");
 
-  return { userId, project }
+	return { userId, project };
 }
 
 /**
@@ -38,27 +44,27 @@ export async function assertProjectOwner(
  * belongs to.
  */
 export async function assertSceneOwner(
-  sceneId: string,
-  mode: FailureMode = 'error',
+	sceneId: string,
+	mode: FailureMode = "error",
 ) {
-  const { userId } = await auth()
-  if (!userId) fail(mode, 'Unauthenticated')
+	const { userId } = await auth();
+	if (!userId) fail(mode, "Unauthenticated");
 
-  const scene = await db.query.scenes.findFirst({
-    where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
-  })
-  if (!scene) fail(mode, 'Scene not found')
+	const scene = await db.query.scenes.findFirst({
+		where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
+	});
+	if (!scene) fail(mode, "Scene not found");
 
-  const project = await db.query.projects.findFirst({
-    where: and(
-      eq(projects.id, scene.projectId),
-      eq(projects.userId, userId),
-      isNull(projects.deletedAt),
-    ),
-  })
-  if (!project) fail(mode, 'Unauthorized')
+	const project = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.id, scene.projectId),
+			eq(projects.userId, userId),
+			isNull(projects.deletedAt),
+		),
+	});
+	if (!project) fail(mode, "Unauthorized");
 
-  return { userId, scene, project }
+	return { userId, scene, project };
 }
 
 /**
@@ -66,32 +72,32 @@ export async function assertSceneOwner(
  * belongs to (asset → scene → project chain).
  */
 export async function assertAssetOwner(
-  assetId: string,
-  mode: FailureMode = 'error',
+	assetId: string,
+	mode: FailureMode = "error",
 ) {
-  const { userId } = await auth()
-  if (!userId) fail(mode, 'Unauthenticated')
+	const { userId } = await auth();
+	if (!userId) fail(mode, "Unauthenticated");
 
-  const asset = await db.query.assets.findFirst({
-    where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
-  })
-  if (!asset) fail(mode, 'Asset not found')
+	const asset = await db.query.assets.findFirst({
+		where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
+	});
+	if (!asset) fail(mode, "Asset not found");
 
-  const scene = await db.query.scenes.findFirst({
-    where: and(eq(scenes.id, asset.sceneId), isNull(scenes.deletedAt)),
-  })
-  if (!scene) fail(mode, 'Scene not found')
+	const scene = await db.query.scenes.findFirst({
+		where: and(eq(scenes.id, asset.sceneId), isNull(scenes.deletedAt)),
+	});
+	if (!scene) fail(mode, "Scene not found");
 
-  const project = await db.query.projects.findFirst({
-    where: and(
-      eq(projects.id, scene.projectId),
-      eq(projects.userId, userId),
-      isNull(projects.deletedAt),
-    ),
-  })
-  if (!project) fail(mode, 'Unauthorized')
+	const project = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.id, scene.projectId),
+			eq(projects.userId, userId),
+			isNull(projects.deletedAt),
+		),
+	});
+	if (!project) fail(mode, "Unauthorized");
 
-  return { userId, asset, scene, project }
+	return { userId, asset, scene, project };
 }
 
 /**
@@ -99,32 +105,32 @@ export async function assertAssetOwner(
  * belongs to (shot → scene → project chain).
  */
 export async function assertShotOwner(
-  shotId: string,
-  mode: FailureMode = 'error',
+	shotId: string,
+	mode: FailureMode = "error",
 ) {
-  const { userId } = await auth()
-  if (!userId) fail(mode, 'Unauthenticated')
+	const { userId } = await auth();
+	if (!userId) fail(mode, "Unauthenticated");
 
-  const shot = await db.query.shots.findFirst({
-    where: and(eq(shots.id, shotId), isNull(shots.deletedAt)),
-  })
-  if (!shot) fail(mode, 'Shot not found')
+	const shot = await db.query.shots.findFirst({
+		where: and(eq(shots.id, shotId), isNull(shots.deletedAt)),
+	});
+	if (!shot) fail(mode, "Shot not found");
 
-  const scene = await db.query.scenes.findFirst({
-    where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
-  })
-  if (!scene) fail(mode, 'Scene not found')
+	const scene = await db.query.scenes.findFirst({
+		where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
+	});
+	if (!scene) fail(mode, "Scene not found");
 
-  const project = await db.query.projects.findFirst({
-    where: and(
-      eq(projects.id, scene.projectId),
-      eq(projects.userId, userId),
-      isNull(projects.deletedAt),
-    ),
-  })
-  if (!project) fail(mode, 'Unauthorized')
+	const project = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.id, scene.projectId),
+			eq(projects.userId, userId),
+			isNull(projects.deletedAt),
+		),
+	});
+	if (!project) fail(mode, "Unauthorized");
 
-  return { userId, shot, scene, project }
+	return { userId, shot, scene, project };
 }
 
 /**
@@ -133,37 +139,37 @@ export async function assertShotOwner(
  * Only traverses the shot path if the asset has a shotId.
  */
 export async function assertAssetOwnerViaShot(
-  assetId: string,
-  mode: FailureMode = 'error',
+	assetId: string,
+	mode: FailureMode = "error",
 ) {
-  const { userId } = await auth()
-  if (!userId) fail(mode, 'Unauthenticated')
+	const { userId } = await auth();
+	if (!userId) fail(mode, "Unauthenticated");
 
-  const asset = await db.query.assets.findFirst({
-    where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
-  })
-  if (!asset) fail(mode, 'Asset not found')
+	const asset = await db.query.assets.findFirst({
+		where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
+	});
+	if (!asset) fail(mode, "Asset not found");
 
-  if (!asset.shotId) fail(mode, 'Asset has no shot')
+	if (!asset.shotId) fail(mode, "Asset has no shot");
 
-  const shot = await db.query.shots.findFirst({
-    where: and(eq(shots.id, asset.shotId), isNull(shots.deletedAt)),
-  })
-  if (!shot) fail(mode, 'Shot not found')
+	const shot = await db.query.shots.findFirst({
+		where: and(eq(shots.id, asset.shotId), isNull(shots.deletedAt)),
+	});
+	if (!shot) fail(mode, "Shot not found");
 
-  const scene = await db.query.scenes.findFirst({
-    where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
-  })
-  if (!scene) fail(mode, 'Scene not found')
+	const scene = await db.query.scenes.findFirst({
+		where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
+	});
+	if (!scene) fail(mode, "Scene not found");
 
-  const project = await db.query.projects.findFirst({
-    where: and(
-      eq(projects.id, scene.projectId),
-      eq(projects.userId, userId),
-      isNull(projects.deletedAt),
-    ),
-  })
-  if (!project) fail(mode, 'Unauthorized')
+	const project = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.id, scene.projectId),
+			eq(projects.userId, userId),
+			isNull(projects.deletedAt),
+		),
+	});
+	if (!project) fail(mode, "Unauthorized");
 
-  return { userId, asset, shot, scene, project }
+	return { userId, asset, shot, scene, project };
 }

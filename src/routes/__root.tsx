@@ -1,70 +1,65 @@
+import type { QueryClient } from "@tanstack/react-query";
 import {
-  HeadContent,
-  Scripts,
-  createRootRouteWithContext,
-} from '@tanstack/react-router'
-
-import ClerkProvider from '../integrations/clerk/provider'
-import { TooltipProvider } from '../components/ui/tooltip'
-import { ToastProvider } from '../components/ui/toast'
-
-import appCss from '../styles.css?url'
-
-import type { QueryClient } from '@tanstack/react-query'
+	createRootRouteWithContext,
+	HeadContent,
+	Scripts,
+} from "@tanstack/react-router";
+import { ToastProvider } from "../components/ui/toast";
+import { TooltipProvider } from "../components/ui/tooltip";
+import ClerkProvider from "../integrations/clerk/provider";
+import appCss from "../styles.css?url";
 
 interface MyRouterContext {
-  queryClient: QueryClient
+	queryClient: QueryClient;
 }
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
-  head: () => ({
-    meta: [
-      {
-        charSet: 'utf-8',
-      },
-      {
-        name: 'viewport',
-        content: 'width=device-width, initial-scale=1',
-      },
-      {
-        title: 'SceneFrame',
-      },
-    ],
-    links: [
-      {
-        rel: 'stylesheet',
-        href: appCss,
-      },
-    ],
-  }),
+	head: () => ({
+		meta: [
+			{
+				charSet: "utf-8",
+			},
+			{
+				name: "viewport",
+				content: "width=device-width, initial-scale=1",
+			},
+			{
+				title: "SceneFrame",
+			},
+		],
+		links: [
+			{
+				rel: "stylesheet",
+				href: appCss,
+			},
+		],
+	}),
 
-  shellComponent: RootDocument,
-  notFoundComponent: () => (
-    <div className="min-h-screen flex items-center justify-center bg-muted">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-foreground">404</h1>
-        <p className="mt-2 text-muted-foreground">Page not found</p>
-      </div>
-    </div>
-  ),
-})
+	shellComponent: RootDocument,
+	notFoundComponent: () => (
+		<div className="min-h-screen flex items-center justify-center bg-muted">
+			<div className="text-center">
+				<h1 className="text-4xl font-bold text-foreground">404</h1>
+				<p className="mt-2 text-muted-foreground">Page not found</p>
+			</div>
+		</div>
+	),
+});
 
 function RootDocument({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <ClerkProvider>
-          <TooltipProvider delayDuration={300}>
-            <ToastProvider>
-              {children}
-            </ToastProvider>
-          </TooltipProvider>
-        </ClerkProvider>
-        <Scripts />
-      </body>
-    </html>
-  )
+	return (
+		<html lang="en">
+			<head>
+				<HeadContent />
+			</head>
+			<body>
+				<ClerkProvider>
+					<TooltipProvider delayDuration={300}>
+						<ToastProvider>{children}</ToastProvider>
+					</TooltipProvider>
+				</ClerkProvider>
+				<Scripts />
+			</body>
+		</html>
+	);
 }
