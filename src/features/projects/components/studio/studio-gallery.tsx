@@ -96,10 +96,11 @@ export function StudioGallery({
 						Images
 					</p>
 					<div className="grid grid-cols-3 gap-2">
-						{/* Optimistic pending skeletons shown immediately when generating */}
-						{Array.from({ length: pendingCount }).map((_, i) => (
-							<div
-								key={`pending-${i}`}
+					{/* Optimistic pending skeletons shown immediately when generating */}
+					{Array.from({ length: pendingCount }).map((_, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: optimistic skeletons have no stable identity; index is the only key available
+						<div
+							key={`pending-${i}`}
 								className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video"
 							>
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
@@ -130,6 +131,8 @@ export function StudioGallery({
 			{/* Side drawer — overlay */}
 			{selectedAsset && (
 				<>
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay; close button provides keyboard dismiss */}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: close button provides keyboard dismiss */}
 					<div
 						className="fixed inset-0 z-50 bg-black/30"
 						onClick={() => onExpandImage(null)}
@@ -152,9 +155,10 @@ export function StudioGallery({
 						<div className="p-4 space-y-4">
 							{/* Preview */}
 							{selectedAsset.url && (
+								// biome-ignore lint/a11y/useKeyWithClickEvents: onClick opens lightbox for convenience; lightbox itself is keyboard accessible
 								<img
 									src={selectedAsset.url}
-									alt="Selected image"
+									alt=""
 									className="w-full rounded-lg object-contain cursor-pointer hover:opacity-90 transition-opacity"
 									onClick={() => openLightboxForAsset(selectedAsset.id)}
 								/>

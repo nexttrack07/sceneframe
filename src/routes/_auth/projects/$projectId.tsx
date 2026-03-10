@@ -53,6 +53,7 @@ function ProjectPage() {
 		queryFn: () => loadProject({ data: projectId }),
 	});
 	// data is always defined since loader seeded it
+	// biome-ignore lint/style/noNonNullAssertion: loader always seeds this value before component renders
 	const {
 		project,
 		scenes: projectScenes,

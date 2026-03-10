@@ -20,20 +20,29 @@ export function GalleryImageCard({
 	onDelete: () => void;
 }) {
 	const isDeleting = deletingAssetId === asset.id;
+	const isClickable = asset.status === "done" && !!asset.url;
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: role="button" and onKeyDown are present for keyboard users; interactive card can't easily be a <button> due to nested <button> descendants
 		<div
+			role={isClickable ? "button" : undefined}
+			tabIndex={isClickable ? 0 : undefined}
 			className={`relative rounded-lg overflow-hidden bg-muted group ${
-				asset.status === "done" && asset.url
-					? "cursor-pointer"
-					: "cursor-default"
+				isClickable ? "cursor-pointer" : "cursor-default"
 			} ${asset.isSelected ? "ring-2 ring-primary ring-offset-2" : ""}`}
-			onClick={asset.status === "done" && asset.url ? onExpand : undefined}
+			onClick={isClickable ? onExpand : undefined}
+			onKeyDown={
+				isClickable
+					? (e) => {
+							if (e.key === "Enter" || e.key === " ") onExpand();
+						}
+					: undefined
+			}
 		>
 			{/* Image or placeholder */}
 			{asset.url ? (
 				<img
 					src={asset.url}
-					alt="Generated image"
+					alt=""
 					className="w-full aspect-video object-cover block"
 				/>
 			) : asset.status === "error" ? (

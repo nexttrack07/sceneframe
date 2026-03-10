@@ -43,16 +43,19 @@ export function useVideoStudio({
 	allTransitionVideosRef.current = allTransitionVideos;
 
 	// Reset video studio state when selected transition pair changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; object identity would cause spurious resets
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
 		setVideoPrompt("");
 		setIsGeneratingVideo(false);
 		setIsGeneratingVideoPrompt(false);
+		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
 		cancelVideoRef.current = false;
-	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]);
 
 	// Auto-resume polling for any stuck generating transition when transition pair is selected
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; allTransitionVideosRef and isGeneratingVideoRef are refs intentionally excluded
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
 		const generatingTv = allTransitionVideosRef.current.find(
@@ -128,7 +131,7 @@ export function useVideoStudio({
 			clearInterval(interval);
 			cancelVideoRef.current = true;
 		};
-	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedTransitionPair) return;

@@ -57,6 +57,7 @@ export interface TransitionVideoSummary {
 	stale: boolean;
 	generationId: string | null;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;
 	createdAt: string;
 }
@@ -75,5 +76,6 @@ export interface SceneAssetSummary {
 	batchId: string | null;
 	createdAt: string;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;
 }

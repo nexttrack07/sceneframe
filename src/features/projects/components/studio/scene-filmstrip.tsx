@@ -27,6 +27,7 @@ export function SceneFilmstrip({
 	}, [allAssets]);
 
 	// Auto-scroll to keep current scene visible
+	// biome-ignore lint/correctness/useExhaustiveDependencies: currentRef is a ref — intentionally not a dependency; only currentSceneId drives the scroll
 	useEffect(() => {
 		currentRef.current?.scrollIntoView({
 			behavior: "smooth",

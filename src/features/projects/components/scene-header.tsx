@@ -39,6 +39,7 @@ export function SceneHeader({
 	onDragEnd: () => void;
 }) {
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: draggable scene row; drag events are native HTML5 DnD on a structural container
 		<div
 			draggable
 			onDragStart={onDragStart}
@@ -48,6 +49,7 @@ export function SceneHeader({
 			className="group flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg border border-border/50"
 		>
 			{/* Drag handle */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown stops propagation only; GripVertical is a visual affordance, not an interactive control */}
 			<div
 				className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground transition-colors shrink-0"
 				onMouseDown={(e) => e.stopPropagation()}

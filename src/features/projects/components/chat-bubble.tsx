@@ -34,12 +34,8 @@ function renderMarkdown(text: string): React.ReactNode[] {
 			}
 		}
 
-		return (
-			<span key={lineIdx}>
-				{parts}
-				{lineIdx < lines.length - 1 && "\n"}
-			</span>
-		);
+		// biome-ignore lint/suspicious/noArrayIndexKey: lines are derived from static text split; order is stable and content alone is not a reliable key
+		return <span key={lineIdx}>{parts}{lineIdx < lines.length - 1 && "\n"}</span>;
 	});
 }
 

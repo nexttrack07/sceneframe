@@ -136,7 +136,7 @@ export function ShotStudioLeftPanel({
 						{useRefImage && refImageUrl && (
 							<img
 								src={refImageUrl}
-								alt="Reference image"
+								alt="Reference"
 								className="w-full rounded-lg border border-border object-cover aspect-video opacity-80 mt-1"
 							/>
 						)}

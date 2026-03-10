@@ -43,6 +43,7 @@ export function SceneContextSection({
 	const practicalityWarnings = getPracticalityWarnings(description);
 
 	// Reset local state when navigating between scenes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: all scene fields are in deps; setters are stable
 	useEffect(() => {
 		setTitle(scene.title ?? "");
 		setDescription(scene.description);
@@ -50,7 +51,7 @@ export function SceneContextSection({
 		setError(null);
 		setIsRefineOpen(false);
 		setRefineInstructions("");
-	}, [scene.id, scene.title, scene.description]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [scene.id, scene.title, scene.description]);
 
 	async function handleSave() {
 		if (!isDirty) return;

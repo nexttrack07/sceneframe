@@ -62,6 +62,7 @@ export function StoryboardCard({
 		: "text-muted-foreground";
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: draggable storyboard card; drag events are native HTML5 DnD on a structural container
 		<div
 			draggable
 			onDragStart={onDragStart}
@@ -82,6 +83,7 @@ export function StoryboardCard({
 				<div className="flex items-start gap-4">
 					{/* Drag handle + Scene number */}
 					<div className="flex flex-col items-center gap-1 shrink-0">
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown stops propagation only; GripVertical is a visual affordance, not an interactive control */}
 						<div
 							className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground transition-colors"
 							onMouseDown={(e) => e.stopPropagation()}

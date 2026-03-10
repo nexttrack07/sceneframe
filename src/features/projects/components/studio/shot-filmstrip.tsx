@@ -28,6 +28,7 @@ export function ShotFilmstrip({
 	}, [allAssets]);
 
 	// Auto-scroll to keep current shot visible
+	// biome-ignore lint/correctness/useExhaustiveDependencies: currentRef is a ref — intentionally not a dependency; only currentShotId drives the scroll
 	useEffect(() => {
 		currentRef.current?.scrollIntoView({
 			behavior: "smooth",

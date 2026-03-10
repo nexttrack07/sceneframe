@@ -352,7 +352,7 @@ function DurationInput({
 						value={displayMinutes}
 						onChange={(e) => {
 							const mins = parseFloat(e.target.value);
-							if (!isNaN(mins) && mins > 0) {
+							if (!Number.isNaN(mins) && mins > 0) {
 								onChange(Math.round(Math.min(3600, Math.max(15, mins * 60))));
 							}
 						}}

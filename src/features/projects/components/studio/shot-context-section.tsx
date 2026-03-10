@@ -26,6 +26,7 @@ export function ShotContextSection({
 	const [error, setError] = useState<string | null>(null);
 
 	// Reset local state when navigating between shots
+	// biome-ignore lint/correctness/useExhaustiveDependencies: all shot fields are in deps; setters are stable
 	useEffect(() => {
 		setDescription(shot.description);
 		setShotType(shot.shotType as ShotType);
@@ -63,7 +64,7 @@ export function ShotContextSection({
 	}
 
 	function handleDurationChange(value: number) {
-		const clamped = Math.max(1, Math.min(10, value));
+		const clamped = Math.max(1, Math.min(15, value));
 		setDurationSec(clamped);
 		setIsDirty(true);
 	}
@@ -123,7 +124,7 @@ export function ShotContextSection({
 								id={`${id}-duration`}
 								type="number"
 								min={1}
-								max={10}
+								max={15}
 								value={durationSec}
 								onChange={(e) =>
 									handleDurationChange(Number(e.target.value) || 1)

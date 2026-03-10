@@ -284,6 +284,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 				).map((r) => r.id);
 
 				if (existingSceneIds.length > 0) {
+					const now = new Date();
 					const existingShotIds = (
 						await tx
 							.select({ id: shots.id })
@@ -298,7 +299,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 
 					await tx
 						.update(shots)
-						.set({ deletedAt: new Date() })
+						.set({ deletedAt: now })
 						.where(
 							and(
 								inArray(shots.sceneId, existingSceneIds),
@@ -308,7 +309,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 
 					await tx
 						.update(assets)
-						.set({ deletedAt: new Date() })
+						.set({ deletedAt: now })
 						.where(
 							and(
 								inArray(assets.sceneId, existingSceneIds),
@@ -319,7 +320,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 					if (existingShotIds.length > 0) {
 						await tx
 							.update(transitionVideos)
-							.set({ deletedAt: new Date() })
+							.set({ deletedAt: now })
 							.where(
 								and(
 									or(

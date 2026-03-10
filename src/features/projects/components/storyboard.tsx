@@ -910,21 +910,22 @@ export function Storyboard({
 							dragOverIndex >= filteredScenes.length && (
 								<div className="h-0.5 bg-primary rounded-full mx-2 transition-all" />
 							)}
-						{/* Drop zone at the end of the list */}
-						{draggedSceneId && (
-							<div
-								className="h-12"
-								onDragOver={(e) => {
-									e.preventDefault();
-									e.dataTransfer.dropEffect = "move";
-									setDragOverIndex(filteredScenes.length);
-								}}
-								onDrop={(e) => handleDrop(e, filteredScenes.length)}
-							/>
-						)}
-					</div>
-				) : (
-					/* ---- Legacy scene-card layout ---- */
+					{/* Drop zone at the end of the list */}
+					{draggedSceneId && (
+						// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
+						<div
+							className="h-12"
+							onDragOver={(e) => {
+								e.preventDefault();
+								e.dataTransfer.dropEffect = "move";
+								setDragOverIndex(filteredScenes.length);
+							}}
+							onDrop={(e) => handleDrop(e, filteredScenes.length)}
+						/>
+					)}
+				</div>
+			) : (
+				/* ---- Legacy scene-card layout ---- */
 					<div className="grid gap-3">
 						{filteredScenes.map((scene, i) => (
 							<div key={scene.id}>
@@ -957,20 +958,21 @@ export function Storyboard({
 							dragOverIndex >= filteredScenes.length && (
 								<div className="h-0.5 bg-primary rounded-full mx-2 transition-all" />
 							)}
-						{/* Drop zone at the end of the list */}
-						{draggedSceneId && (
-							<div
-								className="h-12"
-								onDragOver={(e) => {
-									e.preventDefault();
-									e.dataTransfer.dropEffect = "move";
-									setDragOverIndex(filteredScenes.length);
-								}}
-								onDrop={(e) => handleDrop(e, filteredScenes.length)}
-							/>
-						)}
-					</div>
-				)}
+					{/* Drop zone at the end of the list */}
+					{draggedSceneId && (
+						// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
+						<div
+							className="h-12"
+							onDragOver={(e) => {
+								e.preventDefault();
+								e.dataTransfer.dropEffect = "move";
+								setDragOverIndex(filteredScenes.length);
+							}}
+							onDrop={(e) => handleDrop(e, filteredScenes.length)}
+						/>
+					)}
+				</div>
+			)}
 
 				{/* Add Scene */}
 				<div className="mt-4">
@@ -981,9 +983,8 @@ export function Storyboard({
 								onChange={(e) => setNewSceneDescription(e.target.value)}
 								placeholder="Describe the new scene..."
 								rows={3}
-								className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-								autoFocus
-							/>
+							className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+						/>
 							<div className="flex items-center gap-2">
 								<Button
 									size="sm"

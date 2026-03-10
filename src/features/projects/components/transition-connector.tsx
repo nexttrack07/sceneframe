@@ -74,6 +74,7 @@ export function TransitionConnector({
 	const staleTransition = selectedTransition?.stale ? selectedTransition : null;
 
 	// Auto-resume polling for any stuck generating transition on mount
+	// biome-ignore lint/correctness/useExhaustiveDependencies: generatingTransition.id drives the effect; cancelRef and isGeneratingRef are refs intentionally excluded
 	useEffect(() => {
 		if (!generatingTransition || isGeneratingRef.current) return;
 		const transitionVideoId = generatingTransition.id;
@@ -138,7 +139,7 @@ export function TransitionConnector({
 			isGeneratingRef.current = false;
 			cancelRef.current = true;
 		};
-	}, [generatingTransition?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [generatingTransition?.id]);
 
 	async function handleCancelStuck() {
 		// Cancel local polling
@@ -300,11 +301,13 @@ export function TransitionConnector({
 								onClick={() => setShowLightbox(true)}
 								className="relative group h-10 aspect-video rounded border border-border overflow-hidden bg-black/10 hover:border-primary/50 transition-colors"
 							>
-								<video
-									src={selectedTransition.url}
-									preload="metadata"
-									className="w-full h-full object-cover pointer-events-none"
-								/>
+							<video
+								src={selectedTransition.url}
+								preload="metadata"
+								className="w-full h-full object-cover pointer-events-none"
+							>
+								<track kind="captions" />
+							</video>
 								<div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/50 transition-colors">
 									<Play size={12} className="text-white fill-white" />
 								</div>
@@ -330,6 +333,8 @@ export function TransitionConnector({
 					<div className="flex-1 border-t border-border/40" />
 				</div>
 				{showLightbox && selectedTransition.url && (
+					// biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay dismisses on click; close button provides keyboard dismiss
+					// biome-ignore lint/a11y/useKeyWithClickEvents: close button provides keyboard dismiss
 					<div
 						className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
 						onClick={() => setShowLightbox(false)}
@@ -341,6 +346,8 @@ export function TransitionConnector({
 						>
 							✕
 						</button>
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop */}
+						{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only */}
 						<div
 							onClick={(e) => e.stopPropagation()}
 							className="max-w-[90vw] max-h-[85vh] flex flex-col gap-3"
@@ -350,7 +357,9 @@ export function TransitionConnector({
 								controls
 								autoPlay
 								className="max-w-full max-h-[75vh] rounded-lg"
-							/>
+							>
+								<track kind="captions" />
+							</video>
 							<div className="flex items-center gap-4 text-xs text-white/60">
 								<span>Transition video</span>
 								{selectedTransition.modelSettings?.duration && (

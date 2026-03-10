@@ -29,6 +29,8 @@ export function ImageLightbox({
 	if (!asset) return null;
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay dismisses on click; keyboard dismiss is handled via useEffect on window
+		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handling (Escape/Arrows) is registered on window in useEffect above
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
 			onClick={onClose}
@@ -69,6 +71,8 @@ export function ImageLightbox({
 			)}
 
 			{/* Image */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop; purely structural, not interactive */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only — no interactive intent for keyboard users */}
 			<div
 				className="max-w-[90vw] max-h-[85vh] flex flex-col items-center gap-3"
 				onClick={(e) => e.stopPropagation()}

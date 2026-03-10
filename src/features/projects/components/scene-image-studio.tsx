@@ -99,6 +99,7 @@ export function SceneImageStudio({
 	}, [promptMode]);
 
 	// Reset local state when scene changes (state-based navigation, no key remount)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scene.id triggers full reset; other scene props and lastAssetSettings are read from refs to avoid stale closures
 	useEffect(() => {
 		const initialPrompt =
 			scene.startFramePrompt ?? makeDefaultPrompt(scene.description, "start");
@@ -112,7 +113,16 @@ export function SceneImageStudio({
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setError(null);
-	}, [scene.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentional: scene.id triggers full reset; other scene props accessed via intentional pattern
+	}, [scene.id]);
+
+	// Track mounted state to guard async operations after navigation away
+	const isMountedRef = useRef(true);
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+		};
+	}, []);
 
 	// Save prompt to DB on blur — only if changed since last save
 	async function handlePromptBlur() {
@@ -121,9 +131,11 @@ export function SceneImageStudio({
 			await saveScenePrompt({
 				data: { sceneId: scene.id, lane: promptMode, prompt },
 			});
+			if (!isMountedRef.current) return;
 			savedPromptRef.current = prompt;
 			await router.invalidate();
 		} catch (err) {
+			if (!isMountedRef.current) return;
 			const msg = err instanceof Error ? err.message : "Failed to save prompt";
 			setError(msg);
 		}

@@ -1,5 +1,5 @@
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import type { Scene, Shot } from "@/db/schema";
 import { normalizeImageDefaults } from "../project-normalize";
@@ -50,6 +50,9 @@ export function ShotImageStudio({
 		return sorted[0]?.modelSettings ?? null;
 	}, [shotAssets]);
 
+	const lastAssetSettingsRef = useRef(lastAssetSettings);
+	lastAssetSettingsRef.current = lastAssetSettings;
+
 	const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(
 		normalizeImageDefaults(lastAssetSettings),
 	);
@@ -64,16 +67,17 @@ export function ShotImageStudio({
 	const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
 	// Reset local state when shot changes (state-based navigation, no key remount)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: shot.id triggers full reset; prompt and settings read from refs to avoid stale closures
 	useEffect(() => {
 		setPrompt(shot.imagePrompt ?? "");
-		setSettingsOverrides(normalizeImageDefaults(lastAssetSettings));
+		setSettingsOverrides(normalizeImageDefaults(lastAssetSettingsRef.current));
 		setExpandedImageId(null);
 		setIsGenerating(false);
 		setIsGeneratingPrompt(false);
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setError(null);
-	}, [shot.id]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [shot.id]);
 
 	// Keyboard shortcuts — guard for lightbox, contentEditable, and inputs
 	useEffect(() => {

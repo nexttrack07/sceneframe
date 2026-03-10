@@ -885,14 +885,17 @@ export const reorderShot = createServerFn({ method: "POST" })
 				.update(shots)
 				.set({ order: newOrder, sceneId: targetSceneId })
 				.where(eq(shots.id, shotId));
+			// Use targetScene.projectId — after the move the shot belongs to targetScene.
+			// The cross-project guard above ensures both are the same project,
+			// but being explicit here avoids confusion if that guard is ever changed.
+			await recomputeProjectTimestamps(targetScene.projectId);
 		} else {
 			await db
 				.update(shots)
 				.set({ order: newOrder })
 				.where(eq(shots.id, shotId));
+			await recomputeProjectTimestamps(scene.projectId);
 		}
-
-		await recomputeProjectTimestamps(scene.projectId);
 	});
 
 // ---------------------------------------------------------------------------
@@ -1225,10 +1228,6 @@ Return ONLY the structured prompt, nothing else.`;
 			const enhanced = chunks.join("").trim();
 			if (!enhanced)
 				throw new Error("AI returned an empty response — please try again");
-			await db
-				.update(shots)
-				.set({ imagePrompt: enhanced })
-				.where(eq(shots.id, shotId));
 			return { prompt: enhanced };
 		} finally {
 			clearTimeout(timeout);

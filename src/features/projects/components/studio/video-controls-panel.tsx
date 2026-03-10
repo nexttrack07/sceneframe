@@ -89,11 +89,11 @@ export function VideoControlsPanel({
 				</div>
 
 				<div className="border-t pt-4 space-y-4">
-					{/* Model selector */}
-					<div className="flex items-center justify-between">
-						<label className="text-xs font-medium text-muted-foreground">
-							Model
-						</label>
+				{/* Model selector */}
+				<div className="flex items-center justify-between">
+					<span className="text-xs font-medium text-muted-foreground">
+						Model
+					</span>
 						<div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
 							<button
 								type="button"
@@ -115,10 +115,10 @@ export function VideoControlsPanel({
 					{/* V3 Omni settings */}
 					{!isV25 && (
 						<div className="flex items-center gap-3">
-							<div className="flex items-center gap-1.5 flex-1">
-								<label className="text-xs font-medium text-muted-foreground">
-									Resolution
-								</label>
+						<div className="flex items-center gap-1.5 flex-1">
+							<span className="text-xs font-medium text-muted-foreground">
+								Resolution
+							</span>
 								<div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
 									<button
 										type="button"
@@ -150,12 +150,12 @@ export function VideoControlsPanel({
 						</div>
 					)}
 
-					{/* Motion prompt */}
-					<div className="space-y-1.5">
-						<div className="flex items-center justify-between">
-							<label className="text-xs font-medium text-muted-foreground">
-								Motion prompt
-							</label>
+				{/* Motion prompt */}
+				<div className="space-y-1.5">
+					<div className="flex items-center justify-between">
+						<label htmlFor="video-motion-prompt" className="text-xs font-medium text-muted-foreground">
+							Motion prompt
+						</label>
 							<div className="flex items-center gap-1">
 								{onEnhancePrompt && (
 									<button
@@ -187,28 +187,30 @@ export function VideoControlsPanel({
 								</button>
 							</div>
 						</div>
-						<textarea
-							rows={7}
-							value={videoPrompt}
-							onChange={(e) => onVideoPromptChange(e.target.value)}
-							placeholder="Describe the motion — camera movement, subject action, speed..."
-							className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
-						/>
+					<textarea
+						id="video-motion-prompt"
+						rows={7}
+						value={videoPrompt}
+						onChange={(e) => onVideoPromptChange(e.target.value)}
+						placeholder="Describe the motion — camera movement, subject action, speed..."
+						className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+					/>
 					</div>
 
-					{/* V2.5 Turbo negative prompt */}
-					{isV25 && (
-						<div className="space-y-1.5">
-							<label className="text-xs font-medium text-muted-foreground">
-								Negative prompt
-							</label>
-							<textarea
-								rows={3}
-								value={negativePrompt}
-								onChange={(e) => onNegativePromptChange(e.target.value)}
-								placeholder="Things you don't want to see..."
-								className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
-							/>
+				{/* V2.5 Turbo negative prompt */}
+				{isV25 && (
+					<div className="space-y-1.5">
+						<label htmlFor="video-negative-prompt" className="text-xs font-medium text-muted-foreground">
+							Negative prompt
+						</label>
+						<textarea
+							id="video-negative-prompt"
+							rows={3}
+							value={negativePrompt}
+							onChange={(e) => onNegativePromptChange(e.target.value)}
+							placeholder="Things you don't want to see..."
+							className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+						/>
 						</div>
 					)}
 				</div>
