@@ -118,7 +118,6 @@ export function ShotImageStudio({
       const result = await generateShotImagePrompt({
         data: {
           shotId: shot.id,
-          lane: 'start',
         },
       })
       setPrompt(result.prompt)

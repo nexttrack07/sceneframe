@@ -632,7 +632,7 @@ export const saveShotPrompt = createServerFn({ method: 'POST' })
 
 export const generateShotImagePrompt = createServerFn({ method: 'POST' })
   .inputValidator(
-    (data: { shotId: string; lane: 'start' | 'end'; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data,
+    (data: { shotId: string; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data,
   )
   .handler(async ({ data: { shotId, useProjectContext = true, usePrevShotContext = true } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
@@ -725,10 +725,19 @@ Return ONLY the structured prompt, nothing else.`
 
 export const enhanceShotImagePrompt = createServerFn({ method: 'POST' })
   .inputValidator((data: { shotId: string; userPrompt: string; useProjectContext?: boolean; usePrevShotContext?: boolean }) => data)
-  .handler(async ({ data: { shotId, userPrompt, useProjectContext = true } }) => {
+  .handler(async ({ data: { shotId, userPrompt, useProjectContext = true, usePrevShotContext = true } }) => {
     const { userId, shot, scene, project } = await assertShotOwner(shotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
+
+    // Load adjacent shots for context
+    const sceneShots = await db.query.shots.findMany({
+      where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+      orderBy: asc(shots.order),
+    })
+    const shotIdx = sceneShots.findIndex((s) => s.id === shotId)
+    const prevShot = shotIdx > 0 ? sceneShots[shotIdx - 1] : null
+    const nextShot = shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null
 
     const intake = settings?.intake
     const projectContext = [
@@ -761,7 +770,8 @@ Rules:
 ${useProjectContext && projectContext ? `\nProject context:\n${projectContext}` : ''}
 ${useProjectContext ? `Scene: ${scene.description}` : ''}
 Shot: ${shot.description}
-
+${usePrevShotContext && prevShot ? `\nPrevious shot: ${prevShot.description}` : ''}
+${usePrevShotContext && nextShot ? `\nNext shot: ${nextShot.description}` : ''}
 Return ONLY the structured prompt, nothing else.`
 
     const replicate = new Replicate({ auth: apiKey })
@@ -791,6 +801,7 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: 'POST' })
   .inputValidator((data: { fromShotId: string; toShotId: string; userPrompt: string }) => data)
   .handler(async ({ data: { fromShotId, toShotId, userPrompt } }) => {
     const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
 
@@ -1204,6 +1215,7 @@ export const generateTransitionVideoPrompt = createServerFn({ method: 'POST' })
   .handler(async ({ data: { fromShotId, toShotId } }) => {
     // Assert ownership via from shot
     const { userId, shot: fromShot, project } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
     const apiKey = await getUserApiKey(userId)
     const settings = normalizeProjectSettings(project.settings)
 
@@ -1285,6 +1297,7 @@ export const generateTransitionVideo = createServerFn({ method: 'POST' })
   }) => data)
   .handler(async ({ data: { fromShotId, toShotId, prompt, videoModel = 'v3-omni', mode = 'pro', generateAudio = false, negativePrompt = '' } }) => {
     const { userId, shot: fromShot, scene } = await assertShotOwner(fromShotId)
+    await assertShotOwner(toShotId)
     const apiKey = await getUserApiKey(userId)
 
     // Get selected image for from shot

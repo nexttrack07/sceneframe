@@ -119,7 +119,6 @@ export function ShotStudioLeftPanel({
                   description="Feed the previous shot's image to the model"
                   checked={useRefImage ?? false}
                   onChange={onUseRefImageChange}
-                  disabled={!refImageUrl}
                 />
               )}
             </div>

@@ -127,6 +127,10 @@ export function Storyboard({
   const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false)
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
   const cancelVideoRef = useRef(false)
+  const allTransitionVideosRef = useRef(allTransitionVideos)
+  allTransitionVideosRef.current = allTransitionVideos
+  const selectShotRef = useRef(selectShot)
+  selectShotRef.current = selectShot
 
   const hasShotsMode = storyShots.length > 0
 
@@ -227,7 +231,7 @@ export function Storyboard({
   // Auto-resume polling for any stuck generating transition when transition pair is selected
   useEffect(() => {
     if (!selectedTransitionPair) return
-    const generatingTv = allTransitionVideos.find(
+    const generatingTv = allTransitionVideosRef.current.find(
       (tv) =>
         tv.fromShotId === selectedTransitionPair.fromShotId &&
         tv.toShotId === selectedTransitionPair.toShotId &&
@@ -253,7 +257,7 @@ export function Storyboard({
         const result = await pollTransitionVideo({ data: { transitionVideoId } })
         consecutiveErrors = 0
         if (result.status === 'done') {
-          const isSelected = allTransitionVideos.find(
+          const isSelected = allTransitionVideosRef.current.find(
             (tv) =>
               tv.fromShotId === selectedTransitionPair.fromShotId &&
               tv.toShotId === selectedTransitionPair.toShotId &&
@@ -299,7 +303,7 @@ export function Storyboard({
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
       if (isLightboxOpen) return
       if (e.key === 'Escape') {
-        selectShot(null)
+        selectShotRef.current(null)
         setSelectedSceneId(null)
       }
     }
@@ -557,7 +561,7 @@ export function Storyboard({
     setError(null)
     try {
       const result = await generateShotImagePrompt({
-        data: { shotId: selectedShotId, lane: 'start', useProjectContext, usePrevShotContext },
+        data: { shotId: selectedShotId, useProjectContext, usePrevShotContext },
       })
       setPrompt(result.prompt)
       await router.invalidate()

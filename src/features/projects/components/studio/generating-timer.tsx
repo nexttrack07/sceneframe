@@ -5,18 +5,18 @@ import { useEffect, useRef, useState } from 'react'
  * Persists correctly across navigation and page refreshes.
  */
 export function GeneratingTimer({ createdAt }: { createdAt?: string }) {
-  const startMs = createdAt ? new Date(createdAt).getTime() : Date.now()
-  const [elapsed, setElapsed] = useState(() => Math.max(0, (Date.now() - startMs) / 1000))
-  const ref = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startMsRef = useRef(createdAt ? new Date(createdAt).getTime() : Date.now())
+  const [elapsed, setElapsed] = useState(() => Math.max(0, (Date.now() - startMsRef.current) / 1000))
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    ref.current = setInterval(() => {
-      setElapsed(Math.max(0, (Date.now() - startMs) / 1000))
+    intervalRef.current = setInterval(() => {
+      setElapsed(Math.max(0, (Date.now() - startMsRef.current) / 1000))
     }, 100)
     return () => {
-      if (ref.current) clearInterval(ref.current)
+      if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [startMs])
+  }, []) // no dependencies — startMsRef.current is stable
 
   return (
     <span className="text-sm font-mono font-medium text-foreground/70 tabular-nums">
