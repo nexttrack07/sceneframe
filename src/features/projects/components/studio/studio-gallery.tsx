@@ -24,6 +24,7 @@ export function StudioGallery({
 	expandedImageId,
 	onExpandImage,
 	onLightboxChange,
+	onEditImage,
 	pendingCount = 0,
 }: {
 	sceneAssets: SceneAssetSummary[];
@@ -35,6 +36,7 @@ export function StudioGallery({
 	expandedImageId: string | null;
 	onExpandImage: (assetId: string | null) => void;
 	onLightboxChange?: (open: boolean) => void;
+	onEditImage?: (assetId: string, url: string) => void;
 	pendingCount?: number;
 }) {
 	const [showLightbox, setShowLightbox] = useState(false);
@@ -96,11 +98,11 @@ export function StudioGallery({
 						Images
 					</p>
 					<div className="grid grid-cols-3 gap-2">
-					{/* Optimistic pending skeletons shown immediately when generating */}
-					{Array.from({ length: pendingCount }).map((_, i) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: optimistic skeletons have no stable identity; index is the only key available
-						<div
-							key={`pending-${i}`}
+						{/* Optimistic pending skeletons shown immediately when generating */}
+						{Array.from({ length: pendingCount }).map((_, i) => (
+							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: optimistic skeletons have no stable identity; index is the only key available
+								key={`pending-${i}`}
 								className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video"
 							>
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
@@ -122,6 +124,11 @@ export function StudioGallery({
 									onExpandImage(asset.id === expandedImageId ? null : asset.id)
 								}
 								onLightbox={() => openLightboxForAsset(asset.id)}
+								onEdit={
+									onEditImage && asset.url
+										? () => onEditImage(asset.id, asset.url as string)
+										: undefined
+								}
 							/>
 						))}
 					</div>
@@ -155,13 +162,17 @@ export function StudioGallery({
 						<div className="p-4 space-y-4">
 							{/* Preview */}
 							{selectedAsset.url && (
-								// biome-ignore lint/a11y/useKeyWithClickEvents: onClick opens lightbox for convenience; lightbox itself is keyboard accessible
-								<img
-									src={selectedAsset.url}
-									alt=""
-									className="w-full rounded-lg object-contain cursor-pointer hover:opacity-90 transition-opacity"
+								<button
+									type="button"
 									onClick={() => openLightboxForAsset(selectedAsset.id)}
-								/>
+									className="w-full"
+								>
+									<img
+										src={selectedAsset.url}
+										alt=""
+										className="w-full rounded-lg object-contain hover:opacity-90 transition-opacity"
+									/>
+								</button>
 							)}
 
 							{/* Actions */}

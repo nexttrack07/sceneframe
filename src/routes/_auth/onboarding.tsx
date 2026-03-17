@@ -30,17 +30,21 @@ const loadOnboarding = createServerFn().handler(async () => {
 });
 
 const saveApiKey = createServerFn({ method: "POST" })
-	.inputValidator((data: { apiKey: string }) => data)
+	.inputValidator((data: { apiKey: string; elevenLabsKey?: string }) => data)
 	.handler(async ({ data }) => {
 		const { userId } = await auth();
 		if (!userId) throw redirect({ to: "/sign-in" });
 
-		const { apiKey } = data;
+		const { apiKey, elevenLabsKey } = data;
 		if (!apiKey?.startsWith("r8_")) {
 			throw new Error("Invalid Replicate API key — must start with r8_");
 		}
 
 		const { providerKeyEnc, providerKeyDek } = encryptUserApiKey(apiKey);
+
+		const elevenLabsFields = elevenLabsKey?.trim()
+			? encryptUserApiKey(elevenLabsKey.trim())
+			: null;
 
 		await db
 			.insert(users)
@@ -48,6 +52,10 @@ const saveApiKey = createServerFn({ method: "POST" })
 				id: userId,
 				providerKeyEnc,
 				providerKeyDek,
+				...(elevenLabsFields && {
+					elevenlabsKeyEnc: elevenLabsFields.providerKeyEnc,
+					elevenlabsKeyDek: elevenLabsFields.providerKeyDek,
+				}),
 				onboardingComplete: true,
 			})
 			.onConflictDoUpdate({
@@ -55,6 +63,10 @@ const saveApiKey = createServerFn({ method: "POST" })
 				set: {
 					providerKeyEnc,
 					providerKeyDek,
+					...(elevenLabsFields && {
+						elevenlabsKeyEnc: elevenLabsFields.providerKeyEnc,
+						elevenlabsKeyDek: elevenLabsFields.providerKeyDek,
+					}),
 					onboardingComplete: true,
 				},
 			});
@@ -71,7 +83,9 @@ function OnboardingPage() {
 	const { isReturning } = Route.useLoaderData();
 	const navigate = useNavigate();
 	const apiKeyId = useId();
+	const elevenLabsKeyId = useId();
 	const [apiKey, setApiKey] = useState("");
+	const [elevenLabsKey, setElevenLabsKey] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [isPending, setIsPending] = useState(false);
 
@@ -80,7 +94,12 @@ function OnboardingPage() {
 		setError(null);
 		setIsPending(true);
 		try {
-			await saveApiKey({ data: { apiKey } });
+			await saveApiKey({
+				data: {
+					apiKey,
+					elevenLabsKey: elevenLabsKey || undefined,
+				},
+			});
 			navigate({ to: "/dashboard" });
 		} catch (err: unknown) {
 			if (err instanceof Error) setError(err.message);
@@ -126,6 +145,33 @@ function OnboardingPage() {
 									className="underline hover:text-foreground"
 								>
 									replicate.com/account/api-tokens
+								</a>
+							</p>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor={elevenLabsKeyId}>
+								ElevenLabs API Key{" "}
+								<span className="text-muted-foreground font-normal">
+									(optional — for voiceover)
+								</span>
+							</Label>
+							<Input
+								id={elevenLabsKeyId}
+								type="password"
+								placeholder="sk_••••••••••••••••••••••••••••••••"
+								value={elevenLabsKey}
+								onChange={(e) => setElevenLabsKey(e.target.value)}
+								autoComplete="off"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Get your key at{" "}
+								<a
+									href="https://elevenlabs.io/app/settings/api-keys"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="underline hover:text-foreground"
+								>
+									elevenlabs.io/app/settings/api-keys
 								</a>
 							</p>
 						</div>

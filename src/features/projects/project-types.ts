@@ -62,6 +62,20 @@ export interface TransitionVideoSummary {
 	createdAt: string;
 }
 
+export interface VoiceoverAssetSummary {
+	id: string;
+	sceneId: string;
+	type: "voiceover";
+	status: "generating" | "done" | "error";
+	url: string | null;
+	errorMessage: string | null;
+	prompt: string | null;
+	model: string | null;
+	durationMs: number | null;
+	isSelected: boolean;
+	createdAt: string;
+}
+
 export interface SceneAssetSummary {
 	id: string;
 	sceneId: string;

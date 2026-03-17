@@ -31,12 +31,15 @@ export function useVideoStudio({
 	const [videoPrompt, setVideoPrompt] = useState("");
 	const [videoModel, setVideoModel] = useState<VideoModel>("v3-omni");
 	const [videoMode, setVideoMode] = useState<"standard" | "pro">("pro");
+	const [videoDuration, setVideoDuration] = useState(5);
 	const [generateAudio, setGenerateAudio] = useState(false);
 	const [negativePrompt, setNegativePrompt] = useState("");
 	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
+	const [useProjectContext, setUseProjectContext] = useState(true);
+	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
 	const cancelVideoRef = useRef(false);
 	const isGeneratingVideoRef = useRef(false);
 	const allTransitionVideosRef = useRef(allTransitionVideos);
@@ -47,10 +50,13 @@ export function useVideoStudio({
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
 		setVideoPrompt("");
+		setVideoDuration(5);
 		setIsGeneratingVideo(false);
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
+		setUseProjectContext(true);
+		setUsePrevShotContext(true);
 		cancelVideoRef.current = false;
 	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]);
 
@@ -142,6 +148,8 @@ export function useVideoStudio({
 				data: {
 					fromShotId: selectedTransitionPair.fromShotId,
 					toShotId: selectedTransitionPair.toShotId,
+					useProjectContext,
+					usePrevShotContext,
 				},
 			});
 			setVideoPrompt(result.prompt);
@@ -166,6 +174,8 @@ export function useVideoStudio({
 					fromShotId: selectedTransitionPair.fromShotId,
 					toShotId: selectedTransitionPair.toShotId,
 					userPrompt: videoPrompt,
+					useProjectContext,
+					usePrevShotContext,
 				},
 			});
 			setVideoPrompt(result.prompt);
@@ -181,7 +191,8 @@ export function useVideoStudio({
 	}
 
 	async function handleGenerateVideo() {
-		if (!selectedTransitionPair || !videoPrompt.trim()) return;
+		const pair = selectedTransitionPair;
+		if (!pair || !videoPrompt.trim()) return;
 		isGeneratingVideoRef.current = true;
 		setIsGeneratingVideo(true);
 		cancelVideoRef.current = false;
@@ -189,13 +200,14 @@ export function useVideoStudio({
 		try {
 			const { transitionVideoId } = await generateTransitionVideo({
 				data: {
-					fromShotId: selectedTransitionPair.fromShotId,
-					toShotId: selectedTransitionPair.toShotId,
+					fromShotId: pair.fromShotId,
+					toShotId: pair.toShotId,
 					prompt: videoPrompt.trim(),
 					videoModel,
 					mode: videoMode,
 					generateAudio,
 					negativePrompt,
+					duration: videoDuration,
 				},
 			});
 
@@ -209,9 +221,13 @@ export function useVideoStudio({
 					if (Date.now() > deadline || cancelVideoRef.current) {
 						settled = true;
 						clearInterval(interval);
-						// Delete the zombie DB record so it doesn't get auto-resumed on next load
 						deleteTransitionVideo({ data: { transitionVideoId } }).catch(
-							() => {},
+							(err) =>
+								console.error(
+									"Failed to clean up timed-out transition video:",
+									transitionVideoId,
+									err,
+								),
 						);
 						reject(
 							new Error(
@@ -230,8 +246,8 @@ export function useVideoStudio({
 							// Auto-select if nothing is selected yet
 							const hasSelected = allTransitionVideosRef.current.some(
 								(tv) =>
-									tv.fromShotId === selectedTransitionPair.fromShotId &&
-									tv.toShotId === selectedTransitionPair.toShotId &&
+									tv.fromShotId === pair.fromShotId &&
+									tv.toShotId === pair.toShotId &&
 									tv.isSelected &&
 									tv.status === "done",
 							);
@@ -246,7 +262,13 @@ export function useVideoStudio({
 							clearInterval(interval);
 							await deleteTransitionVideo({
 								data: { transitionVideoId },
-							}).catch(() => {});
+							}).catch((err) =>
+								console.error(
+									"Failed to clean up errored transition video:",
+									transitionVideoId,
+									err,
+								),
+							);
 							reject(
 								new Error(result.errorMessage ?? "Video generation failed"),
 							);
@@ -313,6 +335,8 @@ export function useVideoStudio({
 		setVideoModel,
 		videoMode,
 		setVideoMode,
+		videoDuration,
+		setVideoDuration,
 		generateAudio,
 		setGenerateAudio,
 		negativePrompt,
@@ -323,6 +347,10 @@ export function useVideoStudio({
 		deletingVideoId,
 		cancelVideoRef,
 		allTransitionVideosRef,
+		useProjectContext,
+		setUseProjectContext,
+		usePrevShotContext,
+		setUsePrevShotContext,
 		handleGenerateVideo,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,

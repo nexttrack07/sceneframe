@@ -1,4 +1,5 @@
 import {
+	CopyObjectCommand,
 	DeleteObjectCommand,
 	PutObjectCommand,
 	S3Client,
@@ -72,6 +73,45 @@ export function getPublicUrl(storageKey: string): string {
 	const baseUrl = process.env.STORAGE_PUBLIC_URL;
 	if (!baseUrl) throw new Error("STORAGE_PUBLIC_URL env var is not set");
 	return `${baseUrl.replace(/\/$/, "")}/${storageKey}`;
+}
+
+/**
+ * Upload a Buffer directly to R2 at `storageKey`.
+ * Returns the public URL of the stored object.
+ */
+export async function uploadBuffer(
+	body: Buffer,
+	storageKey: string,
+	contentType: string,
+): Promise<string> {
+	await getClient().send(
+		new PutObjectCommand({
+			Bucket: getBucket(),
+			Key: storageKey,
+			Body: body,
+			ContentType: contentType,
+		}),
+	);
+	return getPublicUrl(storageKey);
+}
+
+/**
+ * Copies an object within the same R2 bucket.
+ * Returns the public URL of the new object.
+ */
+export async function copyObject(
+	sourceKey: string,
+	destKey: string,
+): Promise<string> {
+	const bucket = getBucket();
+	await getClient().send(
+		new CopyObjectCommand({
+			Bucket: bucket,
+			CopySource: `${bucket}/${sourceKey}`,
+			Key: destKey,
+		}),
+	);
+	return getPublicUrl(destKey);
 }
 
 /**

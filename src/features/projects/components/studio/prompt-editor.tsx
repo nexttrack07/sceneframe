@@ -1,5 +1,5 @@
-import { useId } from "react";
 import { Loader2, Sparkles, Wand2 } from "lucide-react";
+import { useId } from "react";
 import {
 	Tooltip,
 	TooltipContent,
@@ -28,9 +28,9 @@ export function PromptEditor({
 	return (
 		<div className="space-y-1.5">
 			<div className="flex items-center justify-between">
-			<label
-				htmlFor={textareaId}
-				className="text-xs font-medium text-muted-foreground"
+				<label
+					htmlFor={textareaId}
+					className="text-xs font-medium text-muted-foreground"
 				>
 					Image Prompt
 				</label>
@@ -79,8 +79,8 @@ export function PromptEditor({
 					)}
 				</div>
 			</div>
-		<textarea
-			id={textareaId}
+			<textarea
+				id={textareaId}
 				value={prompt}
 				onChange={(e) => onPromptChange(e.target.value)}
 				onBlur={onPromptBlur}

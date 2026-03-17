@@ -301,13 +301,13 @@ export function TransitionConnector({
 								onClick={() => setShowLightbox(true)}
 								className="relative group h-10 aspect-video rounded border border-border overflow-hidden bg-black/10 hover:border-primary/50 transition-colors"
 							>
-							<video
-								src={selectedTransition.url}
-								preload="metadata"
-								className="w-full h-full object-cover pointer-events-none"
-							>
-								<track kind="captions" />
-							</video>
+								<video
+									src={selectedTransition.url}
+									preload="metadata"
+									className="w-full h-full object-cover pointer-events-none"
+								>
+									<track kind="captions" />
+								</video>
 								<div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/50 transition-colors">
 									<Play size={12} className="text-white fill-white" />
 								</div>

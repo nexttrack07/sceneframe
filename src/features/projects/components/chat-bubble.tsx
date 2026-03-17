@@ -11,7 +11,9 @@ function renderMarkdown(text: string): React.ReactNode[] {
 
 		while (remaining.length > 0) {
 			const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
-			const italicMatch = remaining.match(/\*(.+?)\*/);
+			const italicMatch = remaining.match(
+				/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/,
+			);
 
 			const boldIdx = boldMatch ? remaining.indexOf(boldMatch[0]) : Infinity;
 			const italicIdx = italicMatch
@@ -23,6 +25,8 @@ function renderMarkdown(text: string): React.ReactNode[] {
 				break;
 			}
 
+			const prevLength = remaining.length;
+
 			if (boldIdx <= italicIdx && boldMatch) {
 				if (boldIdx > 0) parts.push(remaining.slice(0, boldIdx));
 				parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
@@ -32,10 +36,17 @@ function renderMarkdown(text: string): React.ReactNode[] {
 				parts.push(<em key={key++}>{italicMatch[1]}</em>);
 				remaining = remaining.slice(italicIdx + italicMatch[0].length);
 			}
+
+			if (remaining.length === prevLength) break;
 		}
 
-		// biome-ignore lint/suspicious/noArrayIndexKey: lines are derived from static text split; order is stable and content alone is not a reliable key
-		return <span key={lineIdx}>{parts}{lineIdx < lines.length - 1 && "\n"}</span>;
+		const lineKey = `${lineIdx}-${line.length}`;
+		return (
+			<span key={lineKey}>
+				{parts}
+				{lineIdx < lines.length - 1 && "\n"}
+			</span>
+		);
 	});
 }
 

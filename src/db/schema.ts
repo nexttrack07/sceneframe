@@ -24,6 +24,8 @@ export const users = pgTable("users", {
 	id: text("id").primaryKey(), // Clerk user ID
 	providerKeyEnc: text("provider_key_enc"),
 	providerKeyDek: text("provider_key_dek"),
+	elevenlabsKeyEnc: text("elevenlabs_key_enc"),
+	elevenlabsKeyDek: text("elevenlabs_key_dek"),
 	onboardingComplete: boolean("onboarding_complete").notNull().default(false),
 	createdAt: timestamp("created_at", { withTimezone: true })
 		.notNull()
@@ -54,6 +56,8 @@ export const projects = pgTable(
 			.$type<"idle" | "generating" | "done" | "error">(),
 		scriptJobId: text("script_job_id"),
 		settings: jsonb("settings").$type<ProjectSettings | null>(),
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsonb must be `any` to satisfy TanStack serialization constraints
+		editorState: jsonb("editor_state").$type<Record<string, any> | null>(),
 		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.notNull()

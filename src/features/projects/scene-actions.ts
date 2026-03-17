@@ -11,7 +11,17 @@ import {
 	assertSceneOwner,
 	assertShotOwner,
 } from "@/lib/assert-project-owner.server";
-import { deleteObject, uploadFromUrl } from "@/lib/r2.server";
+import {
+	generateSpeech,
+	getUserElevenLabsKey,
+	listVoices,
+} from "@/lib/elevenlabs.server";
+import {
+	copyObject,
+	deleteObject,
+	uploadBuffer,
+	uploadFromUrl,
+} from "@/lib/r2.server";
 import {
 	normalizeImageDefaults,
 	normalizeProjectSettings,
@@ -820,6 +830,138 @@ export const deleteShot = createServerFn({ method: "POST" })
 	});
 
 // ---------------------------------------------------------------------------
+// cloneShot
+// ---------------------------------------------------------------------------
+
+export const cloneShot = createServerFn({ method: "POST" })
+	.inputValidator((data: { shotId: string; placement: "before" | "after" }) => {
+		if (!data.shotId) throw new Error("shotId is required");
+		if (data.placement !== "before" && data.placement !== "after") {
+			throw new Error("placement must be 'before' or 'after'");
+		}
+		return data;
+	})
+	.handler(async ({ data: { shotId, placement } }) => {
+		const { scene, shot } = await assertShotOwner(shotId);
+
+		// Get sibling shots to calculate insertion order
+		const siblingShots = await db
+			.select({ id: shots.id, order: shots.order })
+			.from(shots)
+			.where(and(eq(shots.sceneId, shot.sceneId), isNull(shots.deletedAt)))
+			.orderBy(asc(shots.order));
+
+		const currentIdx = siblingShots.findIndex((s) => s.id === shotId);
+		let newOrder: number;
+
+		if (placement === "before") {
+			const prev = siblingShots[currentIdx - 1];
+			newOrder = prev ? (prev.order + shot.order) / 2 : shot.order - 1;
+		} else {
+			const next = siblingShots[currentIdx + 1];
+			newOrder = next ? (shot.order + next.order) / 2 : shot.order + 1;
+		}
+
+		const [newShot] = await db
+			.insert(shots)
+			.values({
+				sceneId: shot.sceneId,
+				order: newOrder,
+				description: shot.description,
+				shotType: shot.shotType,
+				durationSec: shot.durationSec,
+				imagePrompt: shot.imagePrompt,
+			})
+			.returning({ id: shots.id });
+
+		// Clone image assets (only completed images, not videos/audio)
+		const sourceAssets = await db
+			.select()
+			.from(assets)
+			.where(
+				and(
+					eq(assets.shotId, shotId),
+					eq(assets.stage, "images"),
+					eq(assets.status, "done"),
+					isNull(assets.deletedAt),
+				),
+			);
+
+		if (sourceAssets.length > 0) {
+			const newBatchId = randomUUID();
+			const copyResults = await Promise.allSettled(
+				sourceAssets.map(async (asset, i) => {
+					const ext = asset.storageKey?.split(".").pop() ?? "webp";
+					const newStorageKey = `projects/${scene.projectId}/scenes/${scene.id}/shots/${newShot.id}/images/${newBatchId}/image-${i + 1}.${ext}`;
+
+					let newUrl = asset.url;
+					if (asset.storageKey) {
+						newUrl = await copyObject(asset.storageKey, newStorageKey);
+					}
+
+					// Copy thumbnail if it exists
+					let newThumbKey: string | null = null;
+					let newThumbUrl: string | null = null;
+					if (asset.thumbnailStorageKey) {
+						const thumbExt =
+							asset.thumbnailStorageKey.split(".").pop() ?? "webp";
+						newThumbKey = `projects/${scene.projectId}/scenes/${scene.id}/shots/${newShot.id}/images/${newBatchId}/thumb-${i + 1}.${thumbExt}`;
+						newThumbUrl = await copyObject(
+							asset.thumbnailStorageKey,
+							newThumbKey,
+						);
+					}
+
+					return {
+						sceneId: shot.sceneId,
+						shotId: newShot.id,
+						type: asset.type,
+						stage: asset.stage,
+						prompt: asset.prompt,
+						model: asset.model,
+						modelSettings: asset.modelSettings,
+						url: newUrl,
+						storageKey: asset.storageKey ? newStorageKey : null,
+						thumbnailUrl: newThumbUrl ?? asset.thumbnailUrl,
+						thumbnailStorageKey: newThumbKey,
+						width: asset.width,
+						height: asset.height,
+						status: asset.status as "generating" | "done" | "error",
+						isSelected: asset.isSelected,
+						batchId: newBatchId,
+					};
+				}),
+			);
+
+			const successfulCopies = copyResults
+				.filter(
+					(
+						r,
+					): r is PromiseFulfilledResult<
+						(typeof r & { status: "fulfilled" })["value"]
+					> => r.status === "fulfilled",
+				)
+				.map((r) => r.value);
+
+			if (successfulCopies.length > 0) {
+				await db.insert(assets).values(successfulCopies);
+			}
+
+			// Log any R2 copy failures
+			for (const result of copyResults) {
+				if (result.status === "rejected") {
+					console.error(
+						"Failed to copy asset during shot clone:",
+						result.reason,
+					);
+				}
+			}
+		}
+
+		await recomputeProjectTimestamps(scene.projectId);
+	});
+
+// ---------------------------------------------------------------------------
 // addShot
 // ---------------------------------------------------------------------------
 
@@ -1157,33 +1299,75 @@ Return ONLY the structured prompt, nothing else.`;
 
 export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 	.inputValidator(
-		(data: { fromShotId: string; toShotId: string; userPrompt: string }) =>
-			data,
+		(data: {
+			fromShotId: string;
+			toShotId: string;
+			userPrompt: string;
+			useProjectContext?: boolean;
+			usePrevShotContext?: boolean;
+		}) => data,
 	)
-	.handler(async ({ data: { fromShotId, toShotId, userPrompt } }) => {
-		const {
-			userId,
-			shot: fromShot,
-			project,
-			scene,
-		} = await assertShotOwner(fromShotId);
-		const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
+	.handler(
+		async ({
+			data: {
+				fromShotId,
+				toShotId,
+				userPrompt,
+				useProjectContext = true,
+				usePrevShotContext = true,
+			},
+		}) => {
+			const {
+				userId,
+				shot: fromShot,
+				project,
+				scene,
+			} = await assertShotOwner(fromShotId);
+			const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
 
-		if (toScene.projectId !== scene.projectId) {
-			throw new Error(
-				"Cannot enhance transition prompt between shots from different projects",
-			);
-		}
+			if (toScene.projectId !== scene.projectId) {
+				throw new Error(
+					"Cannot enhance transition prompt between shots from different projects",
+				);
+			}
 
-		const apiKey = await getUserApiKey(userId);
-		const settings = normalizeProjectSettings(project.settings);
+			const apiKey = await getUserApiKey(userId);
+			const settings = normalizeProjectSettings(project.settings);
 
-		const intake = settings?.intake;
-		const styleCtx = intake?.style?.length
-			? `Visual style: ${intake.style.join(", ")}`
-			: "";
+			const intake = settings?.intake;
+			const styleCtx =
+				useProjectContext && intake?.style?.length
+					? `Visual style: ${intake.style.join(", ")}`
+					: "";
 
-		const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+			const projectContextLines = useProjectContext
+				? [
+						intake?.concept ? `Project concept: ${intake.concept}` : null,
+						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+						styleCtx || null,
+						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+					]
+						.filter(Boolean)
+						.join("\n")
+				: null;
+
+			const sceneCtx =
+				usePrevShotContext && scene.description
+					? `Scene: ${scene.description}`
+					: null;
+
+			const contextBlock = [
+				useProjectContext
+					? `PROJECT CONTEXT:\n${projectContextLines || `Project: ${project.name}`}`
+					: null,
+				sceneCtx,
+				`From: ${fromShot.description}`,
+				`To: ${toShot.description}`,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+
+			const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
 The user has written a natural language motion description. Reformat and enhance it into the structured video prompt format below — adding technical motion details while preserving the user's intent exactly.
 
 Use this exact structured format:
@@ -1202,37 +1386,42 @@ Rules:
 - Preserve ALL motion elements the user mentioned
 - Add specific direction/speed details to enrich but not override intent
 - Write in present tense
-${styleCtx}
 
 Transition context:
-From: ${fromShot.description}
-To: ${toShot.description}
+${contextBlock}
 
 Return ONLY the structured prompt, nothing else.`;
 
-		const replicate = new Replicate({ auth: apiKey });
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
-		try {
-			const chunks: string[] = [];
-			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
-				input: {
-					prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
-					max_tokens: 1024,
-					temperature: 0.7,
-				},
-				signal: controller.signal,
-			})) {
-				chunks.push(String(event));
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream(
+					"anthropic/claude-4.5-haiku",
+					{
+						input: {
+							prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
+							max_tokens: 1024,
+							temperature: 0.7,
+						},
+						signal: controller.signal,
+					},
+				)) {
+					chunks.push(String(event));
+				}
+				const enhanced = chunks.join("").trim();
+				if (!enhanced)
+					throw new Error("AI returned an empty response — please try again");
+				return { prompt: enhanced };
+			} finally {
+				clearTimeout(timeout);
 			}
-			const enhanced = chunks.join("").trim();
-			if (!enhanced)
-				throw new Error("AI returned an empty response — please try again");
-			return { prompt: enhanced };
-		} finally {
-			clearTimeout(timeout);
-		}
-	});
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // generateShotImages
@@ -1594,6 +1783,7 @@ export const pollVideoAsset = createServerFn({ method: "POST" })
 			const output = prediction.output;
 			// FileOutput from Replicate SDK: toString() returns the URL (no .url property)
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: Replicate SDK FileOutput has no typed .url property; cast needed to call String()
 			const raw = output as any;
 			const str = typeof raw === "string" ? raw : String(raw);
 			if (!str.startsWith("http")) {
@@ -1683,33 +1873,77 @@ export const selectShotAsset = createServerFn({ method: "POST" })
 // ---------------------------------------------------------------------------
 
 export const generateTransitionVideoPrompt = createServerFn({ method: "POST" })
-	.inputValidator((data: { fromShotId: string; toShotId: string }) => data)
-	.handler(async ({ data: { fromShotId, toShotId } }) => {
-		const {
-			userId,
-			shot: fromShot,
-			project,
-			scene,
-		} = await assertShotOwner(fromShotId);
-		const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
+	.inputValidator(
+		(data: {
+			fromShotId: string;
+			toShotId: string;
+			useProjectContext?: boolean;
+			usePrevShotContext?: boolean;
+		}) => data,
+	)
+	.handler(
+		async ({
+			data: {
+				fromShotId,
+				toShotId,
+				useProjectContext = true,
+				usePrevShotContext = true,
+			},
+		}) => {
+			const {
+				userId,
+				shot: fromShot,
+				project,
+				scene,
+			} = await assertShotOwner(fromShotId);
+			const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
 
-		if (toScene.projectId !== scene.projectId) {
-			throw new Error(
-				"Cannot generate transition prompt between shots from different projects",
-			);
-		}
+			if (toScene.projectId !== scene.projectId) {
+				throw new Error(
+					"Cannot generate transition prompt between shots from different projects",
+				);
+			}
 
-		const apiKey = await getUserApiKey(userId);
-		const settings = normalizeProjectSettings(project.settings);
+			const apiKey = await getUserApiKey(userId);
+			const settings = normalizeProjectSettings(project.settings);
+			const intake = settings?.intake;
 
-		const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
+			const projectContextLines = useProjectContext
+				? [
+						intake?.concept ? `Project concept: ${intake.concept}` : null,
+						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+						intake?.style?.length
+							? `Visual style: ${intake.style.join(", ")}`
+							: null,
+						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+					]
+						.filter(Boolean)
+						.join("\n")
+				: null;
+
+			const sceneCtx =
+				usePrevShotContext && scene.description
+					? `Scene: ${scene.description}`
+					: null;
+
+			const contextBlock = [
+				useProjectContext
+					? `PROJECT CONTEXT:\n${projectContextLines || `Project: ${project.name}`}`
+					: null,
+				sceneCtx,
+				`Shot A (start): ${fromShot.description}`,
+				`Shot B (end): ${toShot.description}`,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+
+			const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
 You are generating a motion prompt for a video transition between two consecutive shots.
 
 The video will start at the first frame image of Shot A and end at the first frame image of Shot B.
 Your prompt must describe the MOTION and CAMERA MOVEMENT that naturally bridges these two shots.
 
-Shot A (start): ${fromShot.description}
-Shot B (end): ${toShot.description}
+${contextBlock}
 
 Focus on:
 1. Camera movement direction and speed (zoom, pan, tilt, dolly, aerial ascent/descent, etc.)
@@ -1734,30 +1968,37 @@ Rules:
 - Be specific about direction and speed
 - The motion must feel like a NATURAL continuation from Shot A into Shot B
 - Do NOT describe static elements — focus on what MOVES
-${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(", ")}` : ""}
+${!useProjectContext ? "- Generate a vivid, specific motion prompt based solely on the shot descriptions provided" : ""}
 
 Return ONLY the structured prompt, nothing else.`;
 
-		const replicate = new Replicate({ auth: apiKey });
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
 
-		try {
-			const chunks: string[] = [];
-			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
-				input: { prompt: systemPrompt, max_tokens: 1024, temperature: 0.7 },
-				signal: controller.signal,
-			})) {
-				chunks.push(String(event));
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream(
+					"anthropic/claude-4.5-haiku",
+					{
+						input: { prompt: systemPrompt, max_tokens: 1024, temperature: 0.7 },
+						signal: controller.signal,
+					},
+				)) {
+					chunks.push(String(event));
+				}
+				const generatedPrompt = chunks.join("").trim();
+				if (!generatedPrompt)
+					throw new Error("AI returned an empty response — please try again");
+				return { prompt: generatedPrompt };
+			} finally {
+				clearTimeout(timeout);
 			}
-			const generatedPrompt = chunks.join("").trim();
-			if (!generatedPrompt)
-				throw new Error("AI returned an empty response — please try again");
-			return { prompt: generatedPrompt };
-		} finally {
-			clearTimeout(timeout);
-		}
-	});
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // generateTransitionVideo
@@ -1773,6 +2014,7 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 			mode?: "standard" | "pro";
 			generateAudio?: boolean;
 			negativePrompt?: string;
+			duration?: number;
 		}) => data,
 	)
 	.handler(
@@ -1785,6 +2027,7 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 				mode = "pro",
 				generateAudio = false,
 				negativePrompt = "",
+				duration,
 			},
 		}) => {
 			const {
@@ -1854,7 +2097,7 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 				? "kwaivgi/kling-v2.5-turbo-pro"
 				: "kwaivgi/kling-v3-omni-video";
 			// V2.5 Turbo only supports duration 5 or 10
-			const v25Duration = fromShot.durationSec <= 7 ? 5 : 10;
+			const v25Duration = (duration ?? fromShot.durationSec) <= 7 ? 5 : 10;
 
 			const replicateInput = isV25Turbo
 				? {
@@ -1868,7 +2111,10 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 						prompt,
 						start_image: fromImage.url,
 						end_image: toImage.url,
-						duration: Math.max(3, Math.min(15, fromShot.durationSec)),
+						duration: Math.max(
+							3,
+							Math.min(15, duration ?? fromShot.durationSec),
+						),
 						mode,
 						generate_audio: generateAudio,
 					};
@@ -1936,6 +2182,7 @@ export const pollTransitionVideo = createServerFn({ method: "POST" })
 		if (prediction.status === "succeeded") {
 			const output = prediction.output;
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: Replicate SDK FileOutput has no typed .url property; cast needed to call String()
 			const raw = output as any;
 			const str = typeof raw === "string" ? raw : String(raw);
 			if (!str.startsWith("http")) {
@@ -1958,10 +2205,10 @@ export const pollTransitionVideo = createServerFn({ method: "POST" })
 		if (prediction.status === "failed" || prediction.status === "canceled") {
 			const rawErr = prediction.error;
 			const errorMessage = rawErr
-				? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-					typeof rawErr === "string"
+				? typeof rawErr === "string"
 					? rawErr
-					: ((rawErr as any).detail ?? JSON.stringify(rawErr))
+					: (((rawErr as Record<string, unknown>).detail as string) ??
+						JSON.stringify(rawErr))
 				: "Video generation failed";
 			await db
 				.update(transitionVideos)
@@ -2043,4 +2290,259 @@ export const deleteTransitionVideo = createServerFn({ method: "POST" })
 			.update(transitionVideos)
 			.set({ deletedAt: new Date() })
 			.where(eq(transitionVideos.id, transitionVideoId));
+	});
+
+// ---------------------------------------------------------------------------
+// fetchElevenLabsVoices — list available voices for the current user
+// ---------------------------------------------------------------------------
+
+export const fetchElevenLabsVoices = createServerFn({ method: "POST" })
+	.inputValidator((data: { sceneId: string }) => data)
+	.handler(async ({ data: { sceneId } }) => {
+		const { userId } = await assertSceneOwner(sceneId);
+		const apiKey = await getUserElevenLabsKey(userId);
+		return listVoices(apiKey);
+	});
+
+// ---------------------------------------------------------------------------
+// generateVoiceoverScript — LLM generates narration text for a scene
+// ---------------------------------------------------------------------------
+
+export const generateVoiceoverScript = createServerFn({ method: "POST" })
+	.inputValidator((data: { sceneId: string; instructions?: string }) => {
+		if (data.instructions && data.instructions.length > MAX_MESSAGE_LENGTH) {
+			throw new Error(
+				`Instructions too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+			);
+		}
+		return data;
+	})
+	.handler(async ({ data: { sceneId, instructions } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+		const apiKey = await getUserApiKey(userId);
+
+		// Gather all shots for this scene
+		const sceneShots = await db.query.shots.findMany({
+			where: and(eq(shots.sceneId, sceneId), isNull(shots.deletedAt)),
+			orderBy: asc(shots.order),
+		});
+
+		// Estimate total video duration from shot durations
+		const totalDurationSec = sceneShots.reduce(
+			(sum, s) => sum + s.durationSec,
+			0,
+		);
+
+		const settings = normalizeProjectSettings(project.settings);
+		const intake = settings?.intake;
+
+		const shotDescriptions = sceneShots
+			.map(
+				(s, i) =>
+					`Shot ${i + 1} (${s.shotType}, ${s.durationSec}s): ${s.description}`,
+			)
+			.join("\n");
+
+		const contextBlock = [
+			`Project: ${project.name}`,
+			intake?.concept ? `Concept: ${intake.concept}` : null,
+			intake?.audience ? `Target audience: ${intake.audience}` : null,
+			intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+			`Scene: ${scene.title ?? "Untitled"} — ${scene.description}`,
+		]
+			.filter(Boolean)
+			.join("\n");
+
+		const userInstructions = instructions
+			? `\n\nAdditional instructions from the user:\n${instructions}`
+			: "";
+
+		const systemPrompt = `You are a professional voiceover script writer for short-form video content.
+
+Write a narration script for ONE scene of a video. The narration will be spoken over the visual shots.
+
+${contextBlock}
+
+SHOTS IN THIS SCENE:
+${shotDescriptions}
+
+TARGET DURATION: ~${totalDurationSec} seconds of audio
+
+RULES:
+- Write narration that complements the visuals — describe what the viewer should FEEL, not what they can already SEE
+- Match the pacing to ~${totalDurationSec} seconds when spoken aloud (roughly 2.5 words per second)
+- Target word count: ~${Math.round(totalDurationSec * 2.5)} words
+- Use a natural, conversational tone appropriate for the project's mood
+- Do NOT include speaker directions, timestamps, or stage notes
+- Do NOT start with "In this scene" or similar meta-language
+- Write ONLY the narration text — no formatting, no headers, no quotes${userInstructions}
+
+Return ONLY the narration script text, nothing else.`;
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: {
+					prompt: systemPrompt,
+					max_tokens: 1024,
+					temperature: 0.7,
+				},
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+			const script = chunks.join("").trim();
+			if (!script) throw new Error("AI returned an empty script — try again");
+			return { script };
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+// ---------------------------------------------------------------------------
+// generateVoiceoverAudio — sends script to ElevenLabs TTS, stores in R2
+// ---------------------------------------------------------------------------
+
+export const generateVoiceoverAudio = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { sceneId: string; script: string; voiceId?: string }) => {
+			if (!data.script?.trim()) throw new Error("Script cannot be empty");
+			if (data.script.length > MAX_MESSAGE_LENGTH) {
+				throw new Error(
+					`Script too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+				);
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { sceneId, script, voiceId } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+
+		if (!script.trim()) throw new Error("Script cannot be empty");
+
+		const elevenLabsKey = await getUserElevenLabsKey(userId);
+
+		// Create placeholder asset row
+		const [placeholder] = await db
+			.insert(assets)
+			.values({
+				sceneId: scene.id,
+				shotId: null,
+				type: "voiceover" as const,
+				stage: "audio" as const,
+				prompt: script,
+				model: "elevenlabs",
+				modelSettings: { voiceId: voiceId ?? null },
+				status: "generating" as const,
+				isSelected: false,
+				batchId: randomUUID(),
+			})
+			.returning({ id: assets.id });
+
+		try {
+			const { audio, contentType } = await generateSpeech({
+				apiKey: elevenLabsKey,
+				text: script,
+				voiceId,
+			});
+
+			const storageKey = `projects/${project.id}/scenes/${scene.id}/voiceover/${placeholder.id}.mp3`;
+			const publicUrl = await uploadBuffer(audio, storageKey, contentType);
+
+			// Estimate duration from audio size (mp3 ~128kbps = 16KB/s)
+			const estimatedDurationMs = Math.round((audio.length / 16_000) * 1000);
+
+			await db
+				.update(assets)
+				.set({
+					url: publicUrl,
+					storageKey,
+					status: "done" as const,
+					durationMs: estimatedDurationMs,
+					fileSizeBytes: audio.length,
+					errorMessage: null,
+				})
+				.where(eq(assets.id, placeholder.id));
+
+			return {
+				assetId: placeholder.id,
+				url: publicUrl,
+				durationMs: estimatedDurationMs,
+			};
+		} catch (err) {
+			const errorMessage =
+				err instanceof Error ? err.message : "Voiceover generation failed";
+			await db
+				.update(assets)
+				.set({ status: "error" as const, errorMessage })
+				.where(eq(assets.id, placeholder.id));
+			throw err;
+		}
+	});
+
+// ---------------------------------------------------------------------------
+// deleteVoiceoverAsset — soft-delete a voiceover asset
+// ---------------------------------------------------------------------------
+
+export const deleteVoiceoverAsset = createServerFn({ method: "POST" })
+	.inputValidator((data: { assetId: string }) => data)
+	.handler(async ({ data: { assetId } }) => {
+		const { asset } = await assertAssetOwner(assetId);
+
+		if (asset.type !== "voiceover") {
+			throw new Error("Asset is not a voiceover");
+		}
+
+		if (asset.storageKey) {
+			await deleteObject(asset.storageKey).catch((err) =>
+				console.error(
+					"R2 deleteObject failed for voiceover key:",
+					asset.storageKey,
+					err,
+				),
+			);
+		}
+
+		await db
+			.update(assets)
+			.set({ deletedAt: new Date() })
+			.where(eq(assets.id, assetId));
+	});
+
+// ---------------------------------------------------------------------------
+// selectVoiceover — mark a voiceover asset as the selected one for its scene
+// ---------------------------------------------------------------------------
+
+export const selectVoiceover = createServerFn({ method: "POST" })
+	.inputValidator((data: { assetId: string }) => data)
+	.handler(async ({ data: { assetId } }) => {
+		const { asset } = await assertAssetOwner(assetId);
+
+		if (asset.type !== "voiceover") {
+			throw new Error("Asset is not a voiceover");
+		}
+		if (asset.status !== "done") {
+			throw new Error("Only completed voiceovers can be selected");
+		}
+
+		await db.transaction(async (tx) => {
+			await tx
+				.update(assets)
+				.set({ isSelected: false })
+				.where(
+					and(
+						eq(assets.sceneId, asset.sceneId),
+						eq(assets.type, "voiceover"),
+						isNull(assets.deletedAt),
+					),
+				);
+			await tx
+				.update(assets)
+				.set({ isSelected: true })
+				.where(eq(assets.id, asset.id));
+		});
 	});

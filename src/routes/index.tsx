@@ -97,7 +97,7 @@ function App() {
 				</section>
 
 				{/* biome-ignore lint/correctness/useUniqueElementIds: page-level navigation anchors — this component renders once per route */}
-			<section id="how-it-works" className="space-y-6">
+				<section id="how-it-works" className="space-y-6">
 					<h2 className="text-2xl font-bold text-foreground text-center">
 						How it works
 					</h2>
@@ -131,7 +131,7 @@ function App() {
 				</section>
 
 				{/* biome-ignore lint/correctness/useUniqueElementIds: page-level navigation anchor */}
-			<section id="features" className="space-y-10">
+				<section id="features" className="space-y-10">
 					<FeatureRow
 						title="Guide creators without forcing technical prompts"
 						description="Intake captures the essentials up front so users do less prompt engineering and get better first-pass scene proposals."
@@ -146,7 +146,7 @@ function App() {
 				</section>
 
 				{/* biome-ignore lint/correctness/useUniqueElementIds: page-level navigation anchor */}
-			<section id="pricing" className="space-y-6">
+				<section id="pricing" className="space-y-6">
 					<h2 className="text-2xl font-bold text-foreground text-center">
 						Simple BYOK pricing
 					</h2>

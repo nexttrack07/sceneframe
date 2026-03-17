@@ -34,6 +34,7 @@ export const loadProject = createServerFn({ method: "GET" })
 							inArray(shots.sceneId, sceneIds),
 							isNull(shots.deletedAt),
 						),
+						orderBy: asc(shots.order),
 					});
 		const sceneIndexMap = new Map(sceneIds.map((id, i) => [id, i]));
 		const projectShots = rawShots.slice().sort((a, b) => {
@@ -79,6 +80,20 @@ export const loadProject = createServerFn({ method: "GET" })
 						orderBy: asc(transitionVideos.createdAt),
 					});
 
+		// Load voiceover assets (scene-level, stage="audio")
+		const voiceoverAssets =
+			sceneIds.length === 0
+				? []
+				: await db.query.assets.findMany({
+						where: and(
+							eq(assets.stage, "audio"),
+							eq(assets.type, "voiceover"),
+							inArray(assets.sceneId, sceneIds),
+							isNull(assets.deletedAt),
+						),
+						orderBy: asc(assets.createdAt),
+					});
+
 		return {
 			project: {
 				...project,
@@ -122,7 +137,27 @@ export const loadProject = createServerFn({ method: "GET" })
 					batchId: asset.batchId,
 					createdAt: asset.createdAt.toISOString(),
 					// biome-ignore lint/suspicious/noExplicitAny: modelSettings is a flexible JSON column; typed as Record<string, unknown> at DB layer but any is needed here for the cast
-				modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
+					modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
+				})),
+			voiceovers: voiceoverAssets
+				.filter(
+					(a): a is typeof a & { status: "generating" | "done" | "error" } =>
+						a.status === "generating" ||
+						a.status === "done" ||
+						a.status === "error",
+				)
+				.map((a) => ({
+					id: a.id,
+					sceneId: a.sceneId,
+					type: "voiceover" as const,
+					status: a.status,
+					url: a.url,
+					errorMessage: a.errorMessage,
+					prompt: a.prompt,
+					model: a.model,
+					durationMs: a.durationMs,
+					isSelected: a.isSelected,
+					createdAt: a.createdAt.toISOString(),
 				})),
 			transitionVideos: projectTransitionVideos.map((tv) => ({
 				id: tv.id,
@@ -140,7 +175,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				stale: tv.stale,
 				generationId: tv.generationId,
 				// biome-ignore lint/suspicious/noExplicitAny: modelSettings is a flexible JSON column
-			modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
+				modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
 				createdAt: tv.createdAt.toISOString(),
 			})),
 		};
@@ -160,7 +195,8 @@ export const exportProjectHandoff = createServerFn({ method: "POST" })
 		const settings = normalizeProjectSettings(project.settings);
 		let plan: ScenePlanEntry[] = [];
 		try {
-			plan = project.scriptRaw ? JSON.parse(project.scriptRaw) : [];
+			const parsed = project.scriptRaw ? JSON.parse(project.scriptRaw) : [];
+			plan = Array.isArray(parsed) ? parsed : [];
 		} catch {
 			plan = [];
 		}

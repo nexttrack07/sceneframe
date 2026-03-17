@@ -72,13 +72,13 @@ export function VideoGrid({
 									onClick={() => setLightboxUrl(tv.url)}
 									className="w-full h-full relative"
 								>
-							<video
-									src={tv.url}
-									preload="metadata"
-									className="w-full h-full object-cover pointer-events-none"
-								>
-									<track kind="captions" />
-								</video>
+									<video
+										src={tv.url}
+										preload="metadata"
+										className="w-full h-full object-cover pointer-events-none"
+									>
+										<track kind="captions" />
+									</video>
 									<div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/50 transition-colors opacity-0 group-hover:opacity-100">
 										<Play size={20} className="text-white fill-white" />
 									</div>
@@ -149,38 +149,38 @@ export function VideoGrid({
 				onSelect={onSelect}
 			/>
 
-		{/* Lightbox */}
-		{lightboxUrl && (
-			// biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay; close button provides keyboard dismiss
-			// biome-ignore lint/a11y/useKeyWithClickEvents: close button provides keyboard dismiss
-			<div
-				className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-				onClick={() => setLightboxUrl(null)}
-			>
-				<button
-					type="button"
-					onClick={() => setLightboxUrl(null)}
-					className="absolute top-4 right-4 text-white/70 hover:text-white z-10"
-				>
-					✕
-				</button>
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop */}
-				{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only */}
+			{/* Lightbox */}
+			{lightboxUrl && (
+				// biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay; close button provides keyboard dismiss
+				// biome-ignore lint/a11y/useKeyWithClickEvents: close button provides keyboard dismiss
 				<div
-					onClick={(e) => e.stopPropagation()}
-					className="max-w-[90vw] max-h-[85vh]"
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+					onClick={() => setLightboxUrl(null)}
 				>
-					<video
-						src={lightboxUrl}
-						controls
-						autoPlay
-						className="max-w-full max-h-[80vh] rounded-lg"
+					<button
+						type="button"
+						onClick={() => setLightboxUrl(null)}
+						className="absolute top-4 right-4 text-white/70 hover:text-white z-10"
 					>
-						<track kind="captions" />
-					</video>
+						✕
+					</button>
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop */}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only */}
+					<div
+						onClick={(e) => e.stopPropagation()}
+						className="max-w-[90vw] max-h-[85vh]"
+					>
+						<video
+							src={lightboxUrl}
+							controls
+							autoPlay
+							className="max-w-full max-h-[80vh] rounded-lg"
+						>
+							<track kind="captions" />
+						</video>
+					</div>
 				</div>
-			</div>
-		)}
+			)}
 		</div>
 	);
 }

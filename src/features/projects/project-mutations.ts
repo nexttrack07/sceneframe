@@ -577,3 +577,24 @@ export const resetWorkshop = createServerFn({ method: "POST" })
 				.where(eq(projects.id, projectId));
 		});
 	});
+
+// ---------------------------------------------------------------------------
+// saveEditorState — persists the editor timeline state as JSON
+// ---------------------------------------------------------------------------
+
+export const saveEditorState = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { projectId: string; editorState: Record<string, unknown> }) => {
+			if (!data.projectId) throw new Error("projectId is required");
+			if (!data.editorState) throw new Error("editorState is required");
+			return data;
+		},
+	)
+	.handler(async ({ data: { projectId, editorState } }) => {
+		await assertProjectOwner(projectId, "error");
+
+		await db
+			.update(projects)
+			.set({ editorState })
+			.where(eq(projects.id, projectId));
+	});

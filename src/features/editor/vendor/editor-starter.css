@@ -1,0 +1,22 @@
+@import 'tailwindcss';
+
+@theme {
+	--color-editor-starter-bg: #28282e;
+	--color-editor-starter-panel: #212126; /* should be darker than bg to create a contrast */
+	--color-editor-starter-border: #000;
+	--color-editor-starter-accent: #0b84f3;
+	--color-editor-starter-scrollbar-track: rgba(255, 255, 255, 0.04);
+	--color-editor-starter-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+}
+
+@utility editor-starter-focus-ring {
+	@apply border-[1px] border-transparent outline-hidden focus-visible:border-[var(--color-editor-starter-accent)] data-[focused=true]:border-[var(--color-editor-starter-accent)];
+}
+
+@utility editor-starter-field {
+	@apply rounded-sm border-[1px] border-transparent bg-[var(--color-editor-starter-bg)] outline-hidden hover:border-neutral-700 focus:border-[var(--color-editor-starter-accent)] data-[focused=true]:border-[var(--color-editor-starter-accent)];
+}
+
+.editor-starter-root {
+	overscroll-behavior-x: none; /* Prevent accidential back gesture when trying to scroll the timeline */
+}

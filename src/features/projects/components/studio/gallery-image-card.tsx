@@ -1,4 +1,4 @@
-import { Loader2, Maximize2, Trash2 } from "lucide-react";
+import { Loader2, Maximize2, Pencil, Trash2 } from "lucide-react";
 import type { SceneAssetSummary } from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
 
@@ -10,6 +10,7 @@ export function GalleryImageCard({
 	onExpand,
 	onLightbox,
 	onDelete,
+	onEdit,
 }: {
 	asset: SceneAssetSummary;
 	selectingAssetId: string | null;
@@ -18,6 +19,7 @@ export function GalleryImageCard({
 	onExpand: () => void;
 	onLightbox: () => void;
 	onDelete: () => void;
+	onEdit?: () => void;
 }) {
 	const isDeleting = deletingAssetId === asset.id;
 	const isClickable = asset.status === "done" && !!asset.url;
@@ -71,6 +73,19 @@ export function GalleryImageCard({
 							className="bg-white/90 text-black text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white transition-colors"
 						>
 							Select
+						</button>
+					)}
+					{onEdit && (
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								onEdit();
+							}}
+							className="bg-white/90 text-black p-1.5 rounded-md hover:bg-white transition-colors"
+							title="Edit with reference"
+						>
+							<Pencil size={14} />
 						</button>
 					)}
 					<button

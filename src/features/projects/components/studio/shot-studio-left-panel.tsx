@@ -1,4 +1,4 @@
-import { Check, Loader2, Wand2 } from "lucide-react";
+import { Check, Loader2, Pencil, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Scene, Shot } from "@/db/schema";
 import type { ImageDefaults } from "../../project-types";
@@ -72,6 +72,8 @@ export function ShotStudioLeftPanel({
 	onUseProjectContextChange,
 	usePrevShotContext,
 	onUsePrevShotContextChange,
+	editingReferenceUrl,
+	onClearEditingReference,
 }: {
 	shot: Shot;
 	parentScene: Scene;
@@ -93,6 +95,8 @@ export function ShotStudioLeftPanel({
 	onUseProjectContextChange?: (v: boolean) => void;
 	usePrevShotContext?: boolean;
 	onUsePrevShotContextChange?: (v: boolean) => void;
+	editingReferenceUrl?: string | null;
+	onClearEditingReference?: () => void;
 }) {
 	return (
 		<div className="flex flex-col h-full bg-card">
@@ -142,6 +146,32 @@ export function ShotStudioLeftPanel({
 						)}
 					</div>
 
+					{/* Editing reference image banner */}
+					{editingReferenceUrl && (
+						<div className="relative rounded-lg border border-primary/40 bg-primary/5 overflow-hidden">
+							<img
+								src={editingReferenceUrl}
+								alt="Editing reference"
+								className="w-full aspect-video object-cover opacity-80"
+							/>
+							<div className="absolute top-1.5 left-2 flex items-center gap-1">
+								<Pencil size={10} className="text-primary" />
+								<span className="text-[10px] font-medium text-primary uppercase tracking-wide">
+									Editing
+								</span>
+							</div>
+							{onClearEditingReference && (
+								<button
+									type="button"
+									onClick={onClearEditingReference}
+									className="absolute top-1.5 right-1.5 bg-black/60 text-white p-0.5 rounded-md hover:bg-black/80 transition-colors"
+								>
+									<X size={12} />
+								</button>
+							)}
+						</div>
+					)}
+
 					<PromptEditor
 						prompt={prompt}
 						onPromptChange={onPromptChange}
@@ -168,10 +198,18 @@ export function ShotStudioLeftPanel({
 				>
 					{isGenerating ? (
 						<Loader2 size={16} className="animate-spin" />
+					) : editingReferenceUrl ? (
+						<Pencil size={16} />
 					) : (
 						<Wand2 size={16} />
 					)}
-					{isGenerating ? "Generating..." : "Generate images"}
+					{isGenerating
+						? editingReferenceUrl
+							? "Editing..."
+							: "Generating..."
+						: editingReferenceUrl
+							? "Edit image"
+							: "Generate images"}
 				</Button>
 			</div>
 		</div>

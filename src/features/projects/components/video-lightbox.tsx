@@ -70,21 +70,21 @@ export function VideoLightbox({
 				</>
 			)}
 
-		{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop; purely structural, not interactive */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: stops click from bubbling to backdrop; purely structural, not interactive */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only — no interactive intent for keyboard users */}
 			<div
 				className="max-w-[90vw] max-h-[85vh] flex flex-col items-center gap-3"
 				onClick={(e) => e.stopPropagation()}
 			>
 				{asset.url ? (
-			<video
-					src={asset.url}
-					controls
-					autoPlay
-					className="max-w-full max-h-[75vh] rounded-lg"
-				>
-					<track kind="captions" />
-				</video>
+					<video
+						src={asset.url}
+						controls
+						autoPlay
+						className="max-w-full max-h-[75vh] rounded-lg"
+					>
+						<track kind="captions" />
+					</video>
 				) : (
 					<div className="w-[700px] aspect-video bg-muted/20 rounded-lg flex items-center justify-center">
 						<p className="text-white/50 text-sm">No video available</p>

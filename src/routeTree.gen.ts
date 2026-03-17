@@ -17,6 +17,8 @@ import { Route as AuthOnboardingRouteImport } from './routes/_auth/onboarding'
 import { Route as AuthDashboardRouteImport } from './routes/_auth/dashboard'
 import { Route as AuthProjectsNewRouteImport } from './routes/_auth/projects/new'
 import { Route as AuthProjectsProjectIdRouteImport } from './routes/_auth/projects/$projectId'
+import { Route as AuthProjectsProjectIdIndexRouteImport } from './routes/_auth/projects/$projectId.index'
+import { Route as AuthProjectsProjectIdEditorRouteImport } from './routes/_auth/projects/$projectId.editor'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -57,6 +59,18 @@ const AuthProjectsProjectIdRoute = AuthProjectsProjectIdRouteImport.update({
   path: '/projects/$projectId',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthProjectsProjectIdIndexRoute =
+  AuthProjectsProjectIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthProjectsProjectIdRoute,
+  } as any)
+const AuthProjectsProjectIdEditorRoute =
+  AuthProjectsProjectIdEditorRouteImport.update({
+    id: '/editor',
+    path: '/editor',
+    getParentRoute: () => AuthProjectsProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -64,8 +78,10 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthDashboardRoute
   '/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
-  '/projects/$projectId': typeof AuthProjectsProjectIdRoute
+  '/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/projects/new': typeof AuthProjectsNewRoute
+  '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -73,8 +89,9 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthDashboardRoute
   '/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
-  '/projects/$projectId': typeof AuthProjectsProjectIdRoute
   '/projects/new': typeof AuthProjectsNewRoute
+  '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/projects/$projectId': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -84,8 +101,10 @@ export interface FileRoutesById {
   '/_auth/dashboard': typeof AuthDashboardRoute
   '/_auth/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
-  '/_auth/projects/$projectId': typeof AuthProjectsProjectIdRoute
+  '/_auth/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/_auth/projects/new': typeof AuthProjectsNewRoute
+  '/_auth/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/_auth/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -97,6 +116,8 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/projects/$projectId'
     | '/projects/new'
+    | '/projects/$projectId/editor'
+    | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -104,8 +125,9 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/onboarding'
     | '/sign-in/$'
-    | '/projects/$projectId'
     | '/projects/new'
+    | '/projects/$projectId/editor'
+    | '/projects/$projectId'
   id:
     | '__root__'
     | '/'
@@ -116,6 +138,8 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/_auth/projects/$projectId'
     | '/_auth/projects/new'
+    | '/_auth/projects/$projectId/editor'
+    | '/_auth/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -182,20 +206,49 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthProjectsProjectIdRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/projects/$projectId/': {
+      id: '/_auth/projects/$projectId/'
+      path: '/'
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof AuthProjectsProjectIdIndexRouteImport
+      parentRoute: typeof AuthProjectsProjectIdRoute
+    }
+    '/_auth/projects/$projectId/editor': {
+      id: '/_auth/projects/$projectId/editor'
+      path: '/editor'
+      fullPath: '/projects/$projectId/editor'
+      preLoaderRoute: typeof AuthProjectsProjectIdEditorRouteImport
+      parentRoute: typeof AuthProjectsProjectIdRoute
+    }
   }
 }
+
+interface AuthProjectsProjectIdRouteChildren {
+  AuthProjectsProjectIdEditorRoute: typeof AuthProjectsProjectIdEditorRoute
+  AuthProjectsProjectIdIndexRoute: typeof AuthProjectsProjectIdIndexRoute
+}
+
+const AuthProjectsProjectIdRouteChildren: AuthProjectsProjectIdRouteChildren = {
+  AuthProjectsProjectIdEditorRoute: AuthProjectsProjectIdEditorRoute,
+  AuthProjectsProjectIdIndexRoute: AuthProjectsProjectIdIndexRoute,
+}
+
+const AuthProjectsProjectIdRouteWithChildren =
+  AuthProjectsProjectIdRoute._addFileChildren(
+    AuthProjectsProjectIdRouteChildren,
+  )
 
 interface AuthRouteChildren {
   AuthDashboardRoute: typeof AuthDashboardRoute
   AuthOnboardingRoute: typeof AuthOnboardingRoute
-  AuthProjectsProjectIdRoute: typeof AuthProjectsProjectIdRoute
+  AuthProjectsProjectIdRoute: typeof AuthProjectsProjectIdRouteWithChildren
   AuthProjectsNewRoute: typeof AuthProjectsNewRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
   AuthDashboardRoute: AuthDashboardRoute,
   AuthOnboardingRoute: AuthOnboardingRoute,
-  AuthProjectsProjectIdRoute: AuthProjectsProjectIdRoute,
+  AuthProjectsProjectIdRoute: AuthProjectsProjectIdRouteWithChildren,
   AuthProjectsNewRoute: AuthProjectsNewRoute,
 }
 

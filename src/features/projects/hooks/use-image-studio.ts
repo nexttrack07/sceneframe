@@ -50,6 +50,9 @@ export function useImageStudio({
 	const [useRefImage, setUseRefImage] = useState(false);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
+	const [editingReferenceUrl, setEditingReferenceUrl] = useState<string | null>(
+		null,
+	);
 
 	// Expose reset for use when selecting a shot
 	const resetForShot = (useRefImageReset = false) => {
@@ -75,8 +78,10 @@ export function useImageStudio({
 		setExpandedImageId(null);
 		setIsGenerating(false);
 		setIsGeneratingPrompt(false);
+		setIsEnhancingPrompt(false);
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
+		setEditingReferenceUrl(null);
 	}, [selectedShotId]);
 
 	// Previous shot for reference image
@@ -107,8 +112,9 @@ export function useImageStudio({
 					lane: "start",
 					promptOverride: promptOverride || undefined,
 					settingsOverrides,
-					referenceImageUrls:
-						useRefImage && prevShotSelectedImageUrl
+					referenceImageUrls: editingReferenceUrl
+						? [editingReferenceUrl]
+						: useRefImage && prevShotSelectedImageUrl
 							? [prevShotSelectedImageUrl]
 							: [],
 				},
@@ -116,8 +122,12 @@ export function useImageStudio({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			const wasEditing = !!editingReferenceUrl;
+			if (wasEditing) setEditingReferenceUrl(null);
 			toast(
-				`Generated ${result.completedCount} image${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`,
+				wasEditing
+					? `Edited image — ${result.completedCount} variant${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`
+					: `Generated ${result.completedCount} image${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`,
 				result.failedCount > 0 ? "error" : "success",
 			);
 		} catch (err) {
@@ -236,6 +246,8 @@ export function useImageStudio({
 		usePrevShotContext,
 		setUsePrevShotContext,
 		prevShotSelectedImageUrl,
+		editingReferenceUrl,
+		setEditingReferenceUrl,
 		resetForShot,
 		handleGenerate,
 		handleGeneratePrompt,

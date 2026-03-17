@@ -1,15 +1,30 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	CheckCircle2,
+	Copy,
 	Download,
+	Film,
 	Info,
+	Mic,
 	Play,
 	Plus,
 	Timer,
+	Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -23,11 +38,13 @@ import type {
 	SceneAssetSummary,
 	ScenePlanEntry,
 	TransitionVideoSummary,
+	VoiceoverAssetSummary,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
 import {
 	addScene,
 	addShot,
+	cloneShot,
 	deleteScene,
 	deleteShot,
 	reorderScene,
@@ -41,6 +58,7 @@ import { ShotStudioLeftPanel } from "./studio/shot-studio-left-panel";
 import { StudioGallery } from "./studio/studio-gallery";
 import { VideoControlsPanel } from "./studio/video-controls-panel";
 import { VideoGrid } from "./studio/video-grid";
+import { VoiceoverPanel } from "./voiceover-panel";
 
 function formatTimestamp(seconds: number | null): string {
 	if (seconds == null) return "--:--";
@@ -57,6 +75,7 @@ export function Storyboard({
 	projectSettings,
 	scenePlan,
 	transitionVideos: allTransitionVideos,
+	voiceovers: allVoiceovers,
 	initialShotId,
 	initialFromShotId,
 	initialToShotId,
@@ -68,6 +87,7 @@ export function Storyboard({
 	projectSettings: ProjectSettings | null;
 	scenePlan: ScenePlanEntry[];
 	transitionVideos: TransitionVideoSummary[];
+	voiceovers: VoiceoverAssetSummary[];
 	initialShotId?: string;
 	initialFromShotId?: string;
 	initialToShotId?: string;
@@ -99,6 +119,7 @@ export function Storyboard({
 	const [showAddForm, setShowAddForm] = useState(false);
 	const [newSceneDescription, setNewSceneDescription] = useState("");
 	const [isAddingScene, setIsAddingScene] = useState(false);
+	const [cloneMenuShotId, setCloneMenuShotId] = useState<string | null>(null);
 
 	const hasShotsMode = storyShots.length > 0;
 
@@ -161,6 +182,18 @@ export function Storyboard({
 		return grouped;
 	}, [sceneAssets]);
 
+	const voiceoversBySceneId = useMemo(() => {
+		const grouped = new Map<string, VoiceoverAssetSummary[]>();
+		for (const vo of allVoiceovers) {
+			const existing = grouped.get(vo.sceneId) ?? [];
+			existing.push(vo);
+			grouped.set(vo.sceneId, existing);
+		}
+		return grouped;
+	}, [allVoiceovers]);
+
+	const [voiceoverSceneId, setVoiceoverSceneId] = useState<string | null>(null);
+
 	const imageStudio = useImageStudio({
 		projectId,
 		selectedShotId,
@@ -181,6 +214,7 @@ export function Storyboard({
 	function selectShot(id: string | null) {
 		setSelectedShotIdState(id);
 		setSelectedTransitionPairState(null);
+		setVoiceoverSceneId(null);
 		imageStudio.resetForShot(false);
 		if (id) {
 			void navigate({
@@ -281,6 +315,16 @@ export function Storyboard({
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [imageStudio.isLightboxOpen]);
+
+	// Dismiss clone menu on outside click
+	useEffect(() => {
+		if (!cloneMenuShotId) return;
+		function handleClick() {
+			setCloneMenuShotId(null);
+		}
+		window.addEventListener("click", handleClick);
+		return () => window.removeEventListener("click", handleClick);
+	}, [cloneMenuShotId]);
 
 	const filteredScenes = storyScenes;
 
@@ -384,8 +428,14 @@ export function Storyboard({
 		try {
 			await deleteShot({ data: { shotId } });
 			if (selectedShotId === shotId) {
-				selectShot(null);
-				setSelectedSceneId(null);
+				const idx = storyShots.findIndex((s) => s.id === shotId);
+				const adjacent = storyShots[idx - 1] ?? storyShots[idx + 1] ?? null;
+				if (adjacent) {
+					selectShot(adjacent.id);
+				} else {
+					selectShot(null);
+					setSelectedSceneId(null);
+				}
 			}
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
@@ -414,6 +464,23 @@ export function Storyboard({
 			});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to add shot");
+		}
+	}
+
+	async function handleCloneShot(
+		shotId: string,
+		placement: "before" | "after",
+	) {
+		setError(null);
+		setCloneMenuShotId(null);
+		try {
+			await cloneShot({ data: { shotId, placement } });
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+			toast(`Shot cloned ${placement}`, "success");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to clone shot");
 		}
 	}
 
@@ -514,9 +581,11 @@ export function Storyboard({
 	}
 
 	// Determine studio mode
-	const studioMode: "image" | "video" = selectedTransitionPair
-		? "video"
-		: "image";
+	const studioMode: "image" | "video" | "voiceover" = voiceoverSceneId
+		? "voiceover"
+		: selectedTransitionPair
+			? "video"
+			: "image";
 	const selectedShot = selectedShotId
 		? (storyShots.find((s) => s.id === selectedShotId) ?? null)
 		: null;
@@ -530,9 +599,12 @@ export function Storyboard({
 	const shotParentScene = selectedShot
 		? (storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null)
 		: null;
+	const voiceoverScene = voiceoverSceneId
+		? (storyScenes.find((s) => s.id === voiceoverSceneId) ?? null)
+		: null;
 
-	// 3-column layout when shot or transition is selected
-	if (selectedShotId || selectedTransitionPair) {
+	// 3-column layout when shot, transition, or voiceover is selected
+	if (selectedShotId || selectedTransitionPair || voiceoverSceneId) {
 		return (
 			<div className="flex h-full min-h-0 overflow-hidden">
 				{/* Col 1: Storyboard sidebar */}
@@ -558,9 +630,27 @@ export function Storyboard({
 								: null;
 							return (
 								<div key={scene.id}>
-									<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide px-1 py-1">
-										{scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
-									</p>
+									<div className="flex items-center justify-between px-1 py-1">
+										<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+											{scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
+										</p>
+										<button
+											type="button"
+											onClick={() => {
+												setVoiceoverSceneId(
+													voiceoverSceneId === scene.id ? null : scene.id,
+												);
+											}}
+											className={`p-0.5 rounded transition-colors ${
+												voiceoverSceneId === scene.id
+													? "text-primary bg-primary/10"
+													: "text-muted-foreground hover:text-foreground"
+											}`}
+											title="Voiceover"
+										>
+											<Mic size={10} />
+										</button>
+									</div>
 									{sceneShots.map((shot, shotIdx) => {
 										const isLastInScene = shotIdx === sceneShots.length - 1;
 										const nextShot =
@@ -587,37 +677,116 @@ export function Storyboard({
 										return (
 											<div key={shot.id}>
 												{/* Shot card */}
-												<button
-													type="button"
-													onClick={() => {
-														selectShot(shot.id);
-													}}
-													className={`w-full rounded-lg border p-2 text-left transition-colors mb-1 ${
-														isSelectedShot || isInTransition
-															? "border-primary/50 bg-primary/5 ring-1 ring-primary/20"
-															: "border-border hover:border-border/80 hover:bg-muted/30"
-													}`}
-												>
-													<div className="flex items-start gap-2">
-														{selectedImageUrl ? (
-															<img
-																src={selectedImageUrl}
-																alt=""
-																className="w-12 h-8 object-cover rounded flex-shrink-0"
-															/>
-														) : (
-															<div className="w-12 h-8 bg-muted rounded flex-shrink-0" />
-														)}
-														<div className="flex-1 min-w-0">
-															<p className="text-[10px] font-medium text-muted-foreground">
-																Shot {globalShotIndex.get(shot.id)}
-															</p>
-															<p className="text-xs text-foreground line-clamp-2 leading-tight">
-																{shot.description}
-															</p>
+												<div className="relative group/shot mb-1">
+													<button
+														type="button"
+														onClick={() => {
+															selectShot(shot.id);
+														}}
+														className={`w-full rounded-lg border p-2 text-left transition-colors ${
+															isSelectedShot || isInTransition
+																? "border-primary/50 bg-primary/5 ring-1 ring-primary/20"
+																: "border-border hover:border-border/80 hover:bg-muted/30"
+														}`}
+													>
+														<div className="flex items-start gap-2">
+															{selectedImageUrl ? (
+																<img
+																	src={selectedImageUrl}
+																	alt=""
+																	className="w-12 h-8 object-cover rounded flex-shrink-0"
+																/>
+															) : (
+																<div className="w-12 h-8 bg-muted rounded flex-shrink-0" />
+															)}
+															<div className="flex-1 min-w-0">
+																<p className="text-[10px] font-medium text-muted-foreground">
+																	Shot {globalShotIndex.get(shot.id)}
+																</p>
+																<p className="text-xs text-foreground line-clamp-2 leading-tight">
+																	{shot.description}
+																</p>
+															</div>
 														</div>
+													</button>
+
+													{/* Shot action buttons */}
+													<div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover/shot:opacity-100 transition-opacity">
+														<button
+															type="button"
+															onClick={(e) => {
+																e.stopPropagation();
+																setCloneMenuShotId(
+																	cloneMenuShotId === shot.id ? null : shot.id,
+																);
+															}}
+															className="p-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground transition-colors"
+															title="Clone shot"
+														>
+															<Copy size={10} />
+														</button>
+														<AlertDialog>
+															<AlertDialogTrigger asChild>
+																<button
+																	type="button"
+																	onClick={(e) => e.stopPropagation()}
+																	className="p-1 rounded bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors"
+																	title="Delete shot"
+																>
+																	<Trash2 size={10} />
+																</button>
+															</AlertDialogTrigger>
+															<AlertDialogContent>
+																<AlertDialogHeader>
+																	<AlertDialogTitle>
+																		Delete shot?
+																	</AlertDialogTitle>
+																	<AlertDialogDescription>
+																		This will remove Shot{" "}
+																		{globalShotIndex.get(shot.id)} and all its
+																		associated assets. This action cannot be
+																		undone.
+																	</AlertDialogDescription>
+																</AlertDialogHeader>
+																<AlertDialogFooter>
+																	<AlertDialogCancel>Cancel</AlertDialogCancel>
+																	<AlertDialogAction
+																		onClick={() => handleDeleteShot(shot.id)}
+																		variant="destructive"
+																	>
+																		Delete
+																	</AlertDialogAction>
+																</AlertDialogFooter>
+															</AlertDialogContent>
+														</AlertDialog>
 													</div>
-												</button>
+
+													{/* Clone placement menu */}
+													{cloneMenuShotId === shot.id && (
+														<div className="absolute top-6 right-1 z-20 bg-card border border-border rounded-md shadow-lg py-1 min-w-[100px]">
+															<button
+																type="button"
+																onClick={(e) => {
+																	e.stopPropagation();
+																	handleCloneShot(shot.id, "before");
+																}}
+																className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors"
+															>
+																Insert before
+															</button>
+															<button
+																type="button"
+																onClick={(e) => {
+																	e.stopPropagation();
+																	handleCloneShot(shot.id, "after");
+																}}
+																className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors"
+															>
+																Insert after
+															</button>
+														</div>
+													)}
+												</div>
 
 												{/* Video connector pill between shots */}
 												{nextShot &&
@@ -692,7 +861,45 @@ export function Storyboard({
 							onSettingsChange={imageStudio.setSettingsOverrides}
 							isGenerating={imageStudio.isGenerating}
 							onGenerate={imageStudio.handleGenerate}
+							editingReferenceUrl={imageStudio.editingReferenceUrl}
+							onClearEditingReference={() =>
+								imageStudio.setEditingReferenceUrl(null)
+							}
+							onDescriptionSaved={async () => {
+								await queryClient.invalidateQueries({
+									queryKey: projectKeys.project(projectId),
+								});
+							}}
 						/>
+					) : studioMode === "voiceover" && voiceoverScene ? (
+						<div className="flex flex-col h-full overflow-y-auto">
+							<div className="p-4 border-b">
+								<div className="flex items-center justify-between">
+									<h3 className="text-sm font-medium flex items-center gap-1.5">
+										<Mic size={14} />
+										Scene Voiceover
+									</h3>
+									<button
+										type="button"
+										onClick={() => setVoiceoverSceneId(null)}
+										className="text-xs text-muted-foreground hover:text-foreground"
+									>
+										Close
+									</button>
+								</div>
+								<p className="text-xs text-muted-foreground mt-1">
+									{voiceoverScene.title ??
+										`Scene ${storyScenes.indexOf(voiceoverScene) + 1}`}
+								</p>
+							</div>
+							<div className="p-4 flex-1">
+								<VoiceoverPanel
+									scene={voiceoverScene}
+									projectId={projectId}
+									voiceovers={voiceoversBySceneId.get(voiceoverScene.id) ?? []}
+								/>
+							</div>
+						</div>
 					) : studioMode === "video" && fromShot && toShot ? (
 						<VideoControlsPanel
 							fromShot={fromShot}
@@ -707,10 +914,16 @@ export function Storyboard({
 							onVideoModelChange={videoStudio.setVideoModel}
 							videoMode={videoStudio.videoMode}
 							onVideoModeChange={videoStudio.setVideoMode}
+							videoDuration={videoStudio.videoDuration}
+							onVideoDurationChange={videoStudio.setVideoDuration}
 							generateAudio={videoStudio.generateAudio}
 							onGenerateAudioChange={videoStudio.setGenerateAudio}
 							negativePrompt={videoStudio.negativePrompt}
 							onNegativePromptChange={videoStudio.setNegativePrompt}
+							useProjectContext={videoStudio.useProjectContext}
+							onUseProjectContextChange={videoStudio.setUseProjectContext}
+							usePrevShotContext={videoStudio.usePrevShotContext}
+							onUsePrevShotContextChange={videoStudio.setUsePrevShotContext}
 							isGenerating={videoStudio.isGeneratingVideo}
 							onGenerate={videoStudio.handleGenerateVideo}
 						/>
@@ -735,6 +948,9 @@ export function Storyboard({
 									: 0
 							}
 							onLightboxChange={imageStudio.setIsLightboxOpen}
+							onEditImage={(_assetId, url) =>
+								imageStudio.setEditingReferenceUrl(url)
+							}
 						/>
 					) : studioMode === "video" && selectedTransitionPair ? (
 						<VideoGrid
@@ -793,6 +1009,16 @@ export function Storyboard({
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
+						<Link
+							to="/projects/$projectId/editor"
+							params={{ projectId }}
+							search={{ shot: undefined, from: undefined, to: undefined }}
+						>
+							<Button size="sm" variant="outline" className="gap-1.5">
+								<Film size={12} />
+								Editor
+							</Button>
+						</Link>
 						<Button
 							size="sm"
 							variant="outline"
@@ -910,22 +1136,22 @@ export function Storyboard({
 							dragOverIndex >= filteredScenes.length && (
 								<div className="h-0.5 bg-primary rounded-full mx-2 transition-all" />
 							)}
-					{/* Drop zone at the end of the list */}
-					{draggedSceneId && (
-						// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
-						<div
-							className="h-12"
-							onDragOver={(e) => {
-								e.preventDefault();
-								e.dataTransfer.dropEffect = "move";
-								setDragOverIndex(filteredScenes.length);
-							}}
-							onDrop={(e) => handleDrop(e, filteredScenes.length)}
-						/>
-					)}
-				</div>
-			) : (
-				/* ---- Legacy scene-card layout ---- */
+						{/* Drop zone at the end of the list */}
+						{draggedSceneId && (
+							// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
+							<div
+								className="h-12"
+								onDragOver={(e) => {
+									e.preventDefault();
+									e.dataTransfer.dropEffect = "move";
+									setDragOverIndex(filteredScenes.length);
+								}}
+								onDrop={(e) => handleDrop(e, filteredScenes.length)}
+							/>
+						)}
+					</div>
+				) : (
+					/* ---- Legacy scene-card layout ---- */
 					<div className="grid gap-3">
 						{filteredScenes.map((scene, i) => (
 							<div key={scene.id}>
@@ -958,21 +1184,21 @@ export function Storyboard({
 							dragOverIndex >= filteredScenes.length && (
 								<div className="h-0.5 bg-primary rounded-full mx-2 transition-all" />
 							)}
-					{/* Drop zone at the end of the list */}
-					{draggedSceneId && (
-						// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
-						<div
-							className="h-12"
-							onDragOver={(e) => {
-								e.preventDefault();
-								e.dataTransfer.dropEffect = "move";
-								setDragOverIndex(filteredScenes.length);
-							}}
-							onDrop={(e) => handleDrop(e, filteredScenes.length)}
-						/>
-					)}
-				</div>
-			)}
+						{/* Drop zone at the end of the list */}
+						{draggedSceneId && (
+							// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone target — not a user-interactive element
+							<div
+								className="h-12"
+								onDragOver={(e) => {
+									e.preventDefault();
+									e.dataTransfer.dropEffect = "move";
+									setDragOverIndex(filteredScenes.length);
+								}}
+								onDrop={(e) => handleDrop(e, filteredScenes.length)}
+							/>
+						)}
+					</div>
+				)}
 
 				{/* Add Scene */}
 				<div className="mt-4">
@@ -983,8 +1209,8 @@ export function Storyboard({
 								onChange={(e) => setNewSceneDescription(e.target.value)}
 								placeholder="Describe the new scene..."
 								rows={3}
-							className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-						/>
+								className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+							/>
 							<div className="flex items-center gap-2">
 								<Button
 									size="sm"
