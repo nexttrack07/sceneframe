@@ -1,7 +1,7 @@
 import {PlayerRef} from '@remotion/player';
 import React, {useCallback, useContext, useMemo} from 'react';
 import {AbsoluteFill} from 'remotion';
-import {addAsset, DropPosition} from './assets/add-asset';
+import {addAsset, addAssetFromUrl, DropPosition} from './assets/add-asset';
 import {CANVAS_PADDING} from './canvas/canvas';
 import {CanvasSizeContext} from './canvas/canvas-size';
 import {
@@ -9,8 +9,21 @@ import {
 	FEATURE_DROP_ASSETS_ON_TIMELINE,
 } from './flags';
 import {PreviewSizeContext} from './preview-size';
+import {calculateTrackHeights} from './timeline/utils/drag/calculate-track-heights';
+import {TICKS_HEIGHT} from './timeline/ticks/constants';
 import {calculateScale} from './utils/calculate-canvas-transformation';
 import {useCurrentStateAsRef, useWriteContext} from './utils/use-context';
+
+// SceneFrame custom asset drag payload
+interface SceneFrameAssetPayload {
+	type: 'image' | 'video' | 'audio';
+	assetId: string;
+	url: string;
+	width?: number;
+	height?: number;
+	durationMs?: number;
+	filename: string;
+}
 
 export const DropHandler: React.FC<{
 	children: React.ReactNode;
@@ -83,8 +96,57 @@ export const DropHandler: React.FC<{
 
 			const state = stateAsRef.current;
 			const tracks = state.undoableState.tracks;
+			const items = state.undoableState.items;
 			const fps = state.undoableState.fps;
 
+			// Calculate target track index for timeline drops
+			let targetTrackIndex: number | null = null;
+			if (context === 'timeline' && tracks.length > 0) {
+				const timelineElement = e.currentTarget as HTMLElement;
+				const rect = timelineElement.getBoundingClientRect();
+				const dropY = e.clientY - rect.top - TICKS_HEIGHT;
+
+				if (dropY >= 0) {
+					const trackLayouts = calculateTrackHeights({tracks, items});
+					for (let i = 0; i < trackLayouts.length; i++) {
+						const layout = trackLayouts[i];
+						if (dropY >= layout.top && dropY < layout.top + layout.height) {
+							targetTrackIndex = i;
+							break;
+						}
+					}
+					// If dropped below all tracks, target the last track
+					if (targetTrackIndex === null && trackLayouts.length > 0) {
+						targetTrackIndex = trackLayouts.length - 1;
+					}
+				}
+			}
+
+			// Check for SceneFrame custom asset payload first
+			const sceneFrameData = e.dataTransfer.getData('application/x-sceneframe-asset');
+			if (sceneFrameData) {
+				try {
+					const payload: SceneFrameAssetPayload = JSON.parse(sceneFrameData);
+					await addAssetFromUrl({
+						url: payload.url,
+						filename: payload.filename,
+						compositionHeight,
+						compositionWidth,
+						tracks,
+						fps,
+						timelineWriteContext,
+						playerRef,
+						dropPosition,
+						targetTrackIndex,
+					});
+				} catch (err) {
+					console.error('Failed to add SceneFrame asset:', err);
+				}
+				e.dataTransfer.clearData();
+				return;
+			}
+
+			// Handle regular file drops
 			const uploadPromises = [];
 			for (const file of e.dataTransfer.files) {
 				uploadPromises.push(

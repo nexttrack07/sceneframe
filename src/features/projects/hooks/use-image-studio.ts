@@ -9,6 +9,7 @@ import {
 	enhanceShotImagePrompt,
 	generateShotImagePrompt,
 	generateShotImages,
+	pollShotAssets,
 	selectShotAsset,
 } from "../scene-actions";
 
@@ -32,6 +33,8 @@ export function useImageStudio({
 	const queryClient = useQueryClient();
 	const storyShotsRef = useRef(storyShots);
 	const assetsByShotIdRef = useRef(assetsByShotId);
+	const cancelPollingRef = useRef(false);
+	const isPollingRef = useRef(false);
 	storyShotsRef.current = storyShots;
 	assetsByShotIdRef.current = assetsByShotId;
 	const [prompt, setPrompt] = useState("");
@@ -73,16 +76,79 @@ export function useImageStudio({
 					(a, b) =>
 						new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
 				)[0]?.modelSettings ?? null;
+
+		// Check if there are any generating assets for this shot
+		const hasGeneratingAssets = shotAssets.some(
+			(a) => a.status === "generating",
+		);
+
 		setPrompt(shot?.imagePrompt ?? "");
 		setSettingsOverrides(normalizeImageDefaults(lastAssetSettings));
 		setExpandedImageId(null);
-		setIsGenerating(false);
+		setIsGenerating(hasGeneratingAssets); // Keep true if assets are generating
 		setIsGeneratingPrompt(false);
 		setIsEnhancingPrompt(false);
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setEditingReferenceUrl(null);
+		cancelPollingRef.current = false;
 	}, [selectedShotId]);
+
+	// Auto-resume polling for generating assets when switching to a shot
+	useEffect(() => {
+		if (!selectedShotId) return;
+		const shotAssets = assetsByShotIdRef.current.get(selectedShotId) ?? [];
+		const hasGeneratingAssets = shotAssets.some(
+			(a) => a.status === "generating",
+		);
+
+		if (!hasGeneratingAssets || isPollingRef.current) return;
+
+		// Start polling for completion
+		cancelPollingRef.current = false;
+		isPollingRef.current = true;
+
+		const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+		const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+		const interval = setInterval(async () => {
+			if (cancelPollingRef.current || Date.now() > deadline) {
+				clearInterval(interval);
+				isPollingRef.current = false;
+				setIsGenerating(false);
+				return;
+			}
+
+			try {
+				const result = await pollShotAssets({
+					data: { shotId: selectedShotId },
+				});
+
+				if (!result.isGenerating) {
+					// All assets done or errored
+					clearInterval(interval);
+					isPollingRef.current = false;
+					setIsGenerating(false);
+					await queryClient.invalidateQueries({
+						queryKey: projectKeys.project(projectId),
+					});
+					if (result.doneCount > 0) {
+						toast(
+							`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+							result.erroredCount > 0 ? "error" : "success",
+						);
+					}
+				}
+			} catch {
+				// Transient error, keep polling
+			}
+		}, 3000);
+
+		return () => {
+			clearInterval(interval);
+			cancelPollingRef.current = true;
+		};
+	}, [selectedShotId, projectId, queryClient, toast]);
 
 	// Previous shot for reference image
 	const selectedShot = selectedShotId

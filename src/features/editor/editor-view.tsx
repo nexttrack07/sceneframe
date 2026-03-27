@@ -7,6 +7,7 @@ import type {
 } from "@/features/projects/project-types";
 import { saveEditorState } from "@/features/projects/project-mutations";
 import { buildEditorState } from "./bridge/build-editor-state";
+import { ShotLibraryPanel } from "./components/shot-library-panel";
 import { Editor } from "./vendor/editor";
 import type { UndoableState } from "./vendor/state/types";
 
@@ -51,11 +52,19 @@ export function EditorView({
 	);
 
 	return (
-		<div className="h-full w-full">
-			<Editor
-				initialUndoableState={initialState}
-				onStateChange={handleStateChange}
+		<div className="h-full w-full flex">
+			<ShotLibraryPanel
+				shots={shots}
+				assets={assets}
+				transitionVideos={transitionVideos}
+				voiceovers={voiceovers}
 			/>
+			<div className="flex-1 min-w-0">
+				<Editor
+					initialUndoableState={initialState}
+					onStateChange={handleStateChange}
+				/>
+			</div>
 		</div>
 	);
 }

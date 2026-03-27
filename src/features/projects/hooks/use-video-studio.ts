@@ -49,7 +49,19 @@ export function useVideoStudio({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; object identity would cause spurious resets
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
-		setVideoPrompt("");
+
+		// Load prompt from the most recent video for this transition pair
+		const pairVideos = allTransitionVideos.filter(
+			(tv) =>
+				tv.fromShotId === selectedTransitionPair.fromShotId &&
+				tv.toShotId === selectedTransitionPair.toShotId &&
+				tv.prompt,
+		);
+		// Prefer selected video's prompt, otherwise use the most recent
+		const selectedVideo = pairVideos.find((tv) => tv.isSelected);
+		const initialPrompt = selectedVideo?.prompt ?? pairVideos[0]?.prompt ?? "";
+
+		setVideoPrompt(initialPrompt);
 		setVideoDuration(5);
 		setIsGeneratingVideo(false);
 		setIsGeneratingVideoPrompt(false);
@@ -58,7 +70,11 @@ export function useVideoStudio({
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
 		cancelVideoRef.current = false;
-	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]);
+	}, [
+		selectedTransitionPair?.fromShotId,
+		selectedTransitionPair?.toShotId,
+		allTransitionVideos,
+	]);
 
 	// Auto-resume polling for any stuck generating transition when transition pair is selected
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; allTransitionVideosRef and isGeneratingVideoRef are refs intentionally excluded

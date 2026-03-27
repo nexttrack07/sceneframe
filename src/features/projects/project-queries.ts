@@ -80,19 +80,23 @@ export const loadProject = createServerFn({ method: "GET" })
 						orderBy: asc(transitionVideos.createdAt),
 					});
 
-		// Load voiceover assets (scene-level, stage="audio")
-		const voiceoverAssets =
+		// Load audio assets (scene-level, stage="audio") — voiceovers + background music
+		const audioAssets =
 			sceneIds.length === 0
 				? []
 				: await db.query.assets.findMany({
 						where: and(
 							eq(assets.stage, "audio"),
-							eq(assets.type, "voiceover"),
 							inArray(assets.sceneId, sceneIds),
 							isNull(assets.deletedAt),
 						),
 						orderBy: asc(assets.createdAt),
 					});
+
+		const voiceoverAssets = audioAssets.filter((a) => a.type === "voiceover");
+		const backgroundMusicAssets = audioAssets.filter(
+			(a) => a.type === "background_music",
+		);
 
 		return {
 			project: {
@@ -150,6 +154,26 @@ export const loadProject = createServerFn({ method: "GET" })
 					id: a.id,
 					sceneId: a.sceneId,
 					type: "voiceover" as const,
+					status: a.status,
+					url: a.url,
+					errorMessage: a.errorMessage,
+					prompt: a.prompt,
+					model: a.model,
+					durationMs: a.durationMs,
+					isSelected: a.isSelected,
+					createdAt: a.createdAt.toISOString(),
+				})),
+			backgroundMusic: backgroundMusicAssets
+				.filter(
+					(a): a is typeof a & { status: "generating" | "done" | "error" } =>
+						a.status === "generating" ||
+						a.status === "done" ||
+						a.status === "error",
+				)
+				.map((a) => ({
+					id: a.id,
+					sceneId: a.sceneId,
+					type: "background_music" as const,
 					status: a.status,
 					url: a.url,
 					errorMessage: a.errorMessage,

@@ -1,9 +1,10 @@
 import { Check, Loader2, Pencil, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Scene, Shot } from "@/db/schema";
-import type { ImageDefaults } from "../../project-types";
+import type { ImageDefaults, ScenePlanEntry } from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
 import { PromptEditor } from "./prompt-editor";
+import { SceneContextSection } from "./scene-context-section";
 import { ShotContextSection } from "./shot-context-section";
 
 function ContextToggleCard({
@@ -54,6 +55,7 @@ function ContextToggleCard({
 export function ShotStudioLeftPanel({
 	shot,
 	parentScene,
+	scenePlan,
 	prompt,
 	onPromptChange,
 	onGeneratePrompt,
@@ -65,6 +67,7 @@ export function ShotStudioLeftPanel({
 	isGenerating,
 	onGenerate,
 	onDescriptionSaved,
+	onSceneDescriptionSaved,
 	refImageUrl,
 	useRefImage,
 	onUseRefImageChange,
@@ -77,6 +80,7 @@ export function ShotStudioLeftPanel({
 }: {
 	shot: Shot;
 	parentScene: Scene;
+	scenePlan?: ScenePlanEntry;
 	prompt: string;
 	onPromptChange: (value: string) => void;
 	onGeneratePrompt: () => void;
@@ -88,6 +92,7 @@ export function ShotStudioLeftPanel({
 	isGenerating: boolean;
 	onGenerate: () => void;
 	onDescriptionSaved?: (newDescription: string) => void;
+	onSceneDescriptionSaved?: (newDescription: string) => void;
 	refImageUrl?: string | null;
 	useRefImage?: boolean;
 	onUseRefImageChange?: (v: boolean) => void;
@@ -102,6 +107,12 @@ export function ShotStudioLeftPanel({
 		<div className="flex flex-col h-full bg-card">
 			{/* Scrollable content */}
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
+				<SceneContextSection
+					scene={parentScene}
+					plan={scenePlan}
+					onDescriptionSaved={onSceneDescriptionSaved}
+				/>
+
 				<ShotContextSection
 					shot={shot}
 					parentScene={parentScene}

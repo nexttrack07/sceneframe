@@ -54,7 +54,7 @@ export function ShotContextSection({
 				},
 			});
 			setIsDirty(false);
-			onDescriptionSaved?.(trimmedDesc);
+			await onDescriptionSaved?.(trimmedDesc);
 			await router.invalidate();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to save changes");

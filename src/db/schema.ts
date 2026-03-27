@@ -374,6 +374,7 @@ export const referenceImages = pgTable(
 			.notNull()
 			.default("reference")
 			.$type<"reference" | "character">(),
+		characterId: text("character_id"),
 		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.notNull()
@@ -382,6 +383,7 @@ export const referenceImages = pgTable(
 	(table) => [
 		index("idx_reference_images_project_id").on(table.projectId),
 		index("idx_reference_images_deleted").on(table.deletedAt),
+		index("idx_reference_images_character_id").on(table.characterId),
 		check(
 			"reference_images_type_check",
 			sql`${table.type} IN ('reference', 'character')`,

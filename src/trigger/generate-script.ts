@@ -101,16 +101,19 @@ export const generateScript = task({
 		const parsedScenes = parseScenes(rawText);
 
 		// --- 6. Insert scene rows (delete any from a prior attempt first) ---
-		await db.delete(scenes).where(eq(scenes.projectId, projectId));
-		await db.insert(scenes).values(
-			parsedScenes.map((scene, i) => ({
-				projectId,
-				order: (i + 1) * 1.0,
-				title: scene.title || null,
-				description: scene.description,
-				stage: "script" as const,
-			})),
-		);
+		// Use transaction to prevent race conditions with concurrent runs
+		await db.transaction(async (tx) => {
+			await tx.delete(scenes).where(eq(scenes.projectId, projectId));
+			await tx.insert(scenes).values(
+				parsedScenes.map((scene, i) => ({
+					projectId,
+					order: (i + 1) * 1.0,
+					title: scene.title || null,
+					description: scene.description,
+					stage: "script" as const,
+				})),
+			);
+		});
 
 		// --- 7. Mark project done ---
 		await db

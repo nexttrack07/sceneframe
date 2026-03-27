@@ -57,6 +57,7 @@ function ProjectPage() {
 		assets: projectAssets,
 		transitionVideos: projectTransitionVideos,
 		voiceovers: projectVoiceovers,
+		backgroundMusic: projectBackgroundMusic,
 	} = data_;
 	const { shot, from, to } = Route.useSearch();
 	const scenePlan: ScenePlanEntry[] = (() => {
@@ -134,6 +135,7 @@ function ProjectPage() {
 					scenePlan={scenePlan}
 					transitionVideos={projectTransitionVideos}
 					voiceovers={projectVoiceovers}
+					backgroundMusic={projectBackgroundMusic}
 					initialShotId={shot}
 					initialFromShotId={from}
 					initialToShotId={to}

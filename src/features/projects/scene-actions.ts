@@ -12,6 +12,7 @@ import {
 	assertShotOwner,
 } from "@/lib/assert-project-owner.server";
 import {
+	generateSoundEffect,
 	generateSpeech,
 	getUserElevenLabsKey,
 	listVoices,
@@ -1085,6 +1086,10 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 				shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null;
 
 			const intake = settings?.intake;
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
 			const projectContext = [
 				intake?.concept ? `Project concept: ${intake.concept}` : null,
 				intake?.purpose ? `Purpose: ${intake.purpose}` : null,
@@ -1096,6 +1101,7 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 				intake?.viewerAction
 					? `Viewer action goal: ${intake.viewerAction}`
 					: null,
+				characterContext,
 			]
 				.filter(Boolean)
 				.join("\n");
@@ -1224,12 +1230,17 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 				shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null;
 
 			const intake = settings?.intake;
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
 			const projectContext = [
 				intake?.concept ? `Project concept: ${intake.concept}` : null,
 				intake?.style?.length
 					? `Visual style: ${intake.style.join(", ")}`
 					: null,
 				intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+				characterContext,
 			]
 				.filter(Boolean)
 				.join("\n");
@@ -1335,6 +1346,10 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 			const settings = normalizeProjectSettings(project.settings);
 
 			const intake = settings?.intake;
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
 			const styleCtx =
 				useProjectContext && intake?.style?.length
 					? `Visual style: ${intake.style.join(", ")}`
@@ -1346,6 +1361,7 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
 						styleCtx || null,
 						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+						characterContext,
 					]
 						.filter(Boolean)
 						.join("\n")
@@ -1627,6 +1643,36 @@ export const generateShotImages = createServerFn({ method: "POST" })
 	);
 
 // ---------------------------------------------------------------------------
+// pollShotAssets
+// ---------------------------------------------------------------------------
+
+export const pollShotAssets = createServerFn({ method: "POST" })
+	.inputValidator((data: { shotId: string }) => data)
+	.handler(async ({ data: { shotId } }) => {
+		await assertShotOwner(shotId);
+
+		const shotAssets = await db.query.assets.findMany({
+			where: and(
+				eq(assets.shotId, shotId),
+				eq(assets.stage, "images"),
+				isNull(assets.deletedAt),
+			),
+			orderBy: desc(assets.createdAt),
+		});
+
+		const generating = shotAssets.filter((a) => a.status === "generating");
+		const done = shotAssets.filter((a) => a.status === "done");
+		const errored = shotAssets.filter((a) => a.status === "error");
+
+		return {
+			generatingCount: generating.length,
+			doneCount: done.length,
+			erroredCount: errored.length,
+			isGenerating: generating.length > 0,
+		};
+	});
+
+// ---------------------------------------------------------------------------
 // generateShotVideoPrompt
 // ---------------------------------------------------------------------------
 
@@ -1636,6 +1682,10 @@ export const generateShotVideoPrompt = createServerFn({ method: "POST" })
 		const { userId, shot, project } = await assertShotOwner(shotId);
 		const apiKey = await getUserApiKey(userId);
 		const settings = normalizeProjectSettings(project.settings);
+		const characters = settings?.characters;
+		const characterContext = characters?.length
+			? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+			: null;
 
 		const systemPrompt = `You are an expert prompt engineer for Kling AI video generation.
 Given a shot description, write a video motion prompt using this exact structured format:
@@ -1658,6 +1708,7 @@ Rules:
 - The start frame image already establishes appearance — reference it only to anchor motion
 ${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(", ")}` : ""}
 ${settings?.intake?.mood?.length ? `- Mood: ${settings.intake.mood.join(", ")}` : ""}
+${characterContext ? `- ${characterContext}` : ""}
 
 Return ONLY the structured prompt, nothing else.`;
 
@@ -1907,6 +1958,10 @@ export const generateTransitionVideoPrompt = createServerFn({ method: "POST" })
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
 			const intake = settings?.intake;
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
 
 			const projectContextLines = useProjectContext
 				? [
@@ -1916,6 +1971,7 @@ export const generateTransitionVideoPrompt = createServerFn({ method: "POST" })
 							? `Visual style: ${intake.style.join(", ")}`
 							: null,
 						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+						characterContext,
 					]
 						.filter(Boolean)
 						.join("\n")
@@ -2309,15 +2365,27 @@ export const fetchElevenLabsVoices = createServerFn({ method: "POST" })
 // ---------------------------------------------------------------------------
 
 export const generateVoiceoverScript = createServerFn({ method: "POST" })
-	.inputValidator((data: { sceneId: string; instructions?: string }) => {
-		if (data.instructions && data.instructions.length > MAX_MESSAGE_LENGTH) {
-			throw new Error(
-				`Instructions too long (max ${MAX_MESSAGE_LENGTH} characters)`,
-			);
-		}
-		return data;
-	})
-	.handler(async ({ data: { sceneId, instructions } }) => {
+	.inputValidator(
+		(data: {
+			sceneId: string;
+			instructions?: string;
+			targetDurationSec?: number;
+		}) => {
+			if (data.instructions && data.instructions.length > MAX_MESSAGE_LENGTH) {
+				throw new Error(
+					`Instructions too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+				);
+			}
+			if (
+				data.targetDurationSec != null &&
+				(data.targetDurationSec < 1 || data.targetDurationSec > 300)
+			) {
+				throw new Error("Target duration must be between 1 and 300 seconds");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { sceneId, instructions, targetDurationSec } }) => {
 		const { userId, scene, project } = await assertSceneOwner(sceneId);
 		const apiKey = await getUserApiKey(userId);
 
@@ -2327,11 +2395,10 @@ export const generateVoiceoverScript = createServerFn({ method: "POST" })
 			orderBy: asc(shots.order),
 		});
 
-		// Estimate total video duration from shot durations
-		const totalDurationSec = sceneShots.reduce(
-			(sum, s) => sum + s.durationSec,
-			0,
-		);
+		// Use explicit target if provided, otherwise estimate from shot durations
+		const totalDurationSec =
+			targetDurationSec ??
+			sceneShots.reduce((sum, s) => sum + s.durationSec, 0);
 
 		const settings = normalizeProjectSettings(project.settings);
 		const intake = settings?.intake;
@@ -2366,12 +2433,12 @@ ${contextBlock}
 SHOTS IN THIS SCENE:
 ${shotDescriptions}
 
-TARGET DURATION: ~${totalDurationSec} seconds of audio
+TARGET DURATION: ${totalDurationSec} seconds of spoken audio
+TARGET WORD COUNT: ${Math.round(totalDurationSec * 2.5)} words (at 2.5 words/sec)
 
 RULES:
 - Write narration that complements the visuals — describe what the viewer should FEEL, not what they can already SEE
-- Match the pacing to ~${totalDurationSec} seconds when spoken aloud (roughly 2.5 words per second)
-- Target word count: ~${Math.round(totalDurationSec * 2.5)} words
+- STRICTLY write no more than ${Math.round(totalDurationSec * 2.5)} words. This is a hard limit, not a suggestion.
 - Use a natural, conversational tone appropriate for the project's mood
 - Do NOT include speaker directions, timestamps, or stage notes
 - Do NOT start with "In this scene" or similar meta-language
@@ -2493,14 +2560,14 @@ export const deleteVoiceoverAsset = createServerFn({ method: "POST" })
 	.handler(async ({ data: { assetId } }) => {
 		const { asset } = await assertAssetOwner(assetId);
 
-		if (asset.type !== "voiceover") {
-			throw new Error("Asset is not a voiceover");
+		if (asset.type !== "voiceover" && asset.type !== "background_music") {
+			throw new Error("Asset is not an audio asset");
 		}
 
 		if (asset.storageKey) {
 			await deleteObject(asset.storageKey).catch((err) =>
 				console.error(
-					"R2 deleteObject failed for voiceover key:",
+					"R2 deleteObject failed for audio key:",
 					asset.storageKey,
 					err,
 				),
@@ -2522,13 +2589,14 @@ export const selectVoiceover = createServerFn({ method: "POST" })
 	.handler(async ({ data: { assetId } }) => {
 		const { asset } = await assertAssetOwner(assetId);
 
-		if (asset.type !== "voiceover") {
-			throw new Error("Asset is not a voiceover");
+		if (asset.type !== "voiceover" && asset.type !== "background_music") {
+			throw new Error("Asset is not an audio asset");
 		}
 		if (asset.status !== "done") {
-			throw new Error("Only completed voiceovers can be selected");
+			throw new Error("Only completed audio assets can be selected");
 		}
 
+		// Select within the same type — voiceovers and background music are independent selections
 		await db.transaction(async (tx) => {
 			await tx
 				.update(assets)
@@ -2536,7 +2604,7 @@ export const selectVoiceover = createServerFn({ method: "POST" })
 				.where(
 					and(
 						eq(assets.sceneId, asset.sceneId),
-						eq(assets.type, "voiceover"),
+						eq(assets.type, asset.type),
 						isNull(assets.deletedAt),
 					),
 				);
@@ -2545,4 +2613,193 @@ export const selectVoiceover = createServerFn({ method: "POST" })
 				.set({ isSelected: true })
 				.where(eq(assets.id, asset.id));
 		});
+	});
+
+// ---------------------------------------------------------------------------
+// generateSoundEffectAudio — ElevenLabs Sound Generation API → R2
+// ---------------------------------------------------------------------------
+
+export const generateSoundEffectAudio = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { sceneId: string; prompt: string; durationSeconds?: number }) => {
+			if (!data.prompt?.trim()) throw new Error("Prompt cannot be empty");
+			if (data.prompt.length > MAX_MESSAGE_LENGTH) {
+				throw new Error(
+					`Prompt too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+				);
+			}
+			if (
+				data.durationSeconds != null &&
+				(data.durationSeconds < 0.5 || data.durationSeconds > 30)
+			) {
+				throw new Error("Duration must be between 0.5 and 30 seconds");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { sceneId, prompt, durationSeconds } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+		const elevenLabsKey = await getUserElevenLabsKey(userId);
+
+		const [placeholder] = await db
+			.insert(assets)
+			.values({
+				sceneId: scene.id,
+				shotId: null,
+				type: "background_music" as const,
+				stage: "audio" as const,
+				prompt,
+				model: "elevenlabs-sfx",
+				modelSettings: { durationSeconds: durationSeconds ?? null },
+				status: "generating" as const,
+				isSelected: false,
+				batchId: randomUUID(),
+			})
+			.returning({ id: assets.id });
+
+		try {
+			const { audio, contentType } = await generateSoundEffect({
+				apiKey: elevenLabsKey,
+				text: prompt,
+				durationSeconds,
+			});
+
+			const storageKey = `projects/${project.id}/scenes/${scene.id}/sfx/${placeholder.id}.mp3`;
+			const publicUrl = await uploadBuffer(audio, storageKey, contentType);
+			const estimatedDurationMs = Math.round((audio.length / 16_000) * 1000);
+
+			await db
+				.update(assets)
+				.set({
+					url: publicUrl,
+					storageKey,
+					status: "done" as const,
+					durationMs: estimatedDurationMs,
+					fileSizeBytes: audio.length,
+					errorMessage: null,
+				})
+				.where(eq(assets.id, placeholder.id));
+
+			return {
+				assetId: placeholder.id,
+				url: publicUrl,
+				durationMs: estimatedDurationMs,
+			};
+		} catch (err) {
+			const errorMessage =
+				err instanceof Error ? err.message : "Sound effect generation failed";
+			await db
+				.update(assets)
+				.set({ status: "error" as const, errorMessage })
+				.where(eq(assets.id, placeholder.id));
+			throw err;
+		}
+	});
+
+// ---------------------------------------------------------------------------
+// generateBackgroundMusic — Replicate MusicGen → R2
+// ---------------------------------------------------------------------------
+
+export const generateBackgroundMusic = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { sceneId: string; prompt: string; durationSeconds?: number }) => {
+			if (!data.prompt?.trim()) throw new Error("Prompt cannot be empty");
+			if (data.prompt.length > MAX_MESSAGE_LENGTH) {
+				throw new Error(
+					`Prompt too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+				);
+			}
+			if (
+				data.durationSeconds != null &&
+				(data.durationSeconds < 1 || data.durationSeconds > 30)
+			) {
+				throw new Error("Duration must be between 1 and 30 seconds");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { sceneId, prompt, durationSeconds } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+		const apiKey = await getUserApiKey(userId);
+
+		const [placeholder] = await db
+			.insert(assets)
+			.values({
+				sceneId: scene.id,
+				shotId: null,
+				type: "background_music" as const,
+				stage: "audio" as const,
+				prompt,
+				model: "musicgen",
+				modelSettings: { durationSeconds: durationSeconds ?? 8 },
+				status: "generating" as const,
+				isSelected: false,
+				batchId: randomUUID(),
+			})
+			.returning({ id: assets.id });
+
+		try {
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
+
+			let output: unknown;
+			try {
+				output = await replicate.run("meta/musicgen" as `${string}/${string}`, {
+					input: {
+						prompt,
+						duration: durationSeconds ?? 8,
+						model_version: "stereo-melody-large",
+						output_format: "mp3",
+					},
+					signal: controller.signal,
+				});
+			} finally {
+				clearTimeout(timeout);
+			}
+
+			// MusicGen returns a URL string or FileOutput
+			const urls = parseReplicateImageUrls(output);
+			if (urls.length === 0) {
+				throw new Error(
+					`MusicGen returned no audio URL. Output: ${summarizeReplicateOutput(output)}`,
+				);
+			}
+
+			const audioUrl = urls[0];
+			const storageKey = `projects/${project.id}/scenes/${scene.id}/music/${placeholder.id}.mp3`;
+			const publicUrl = await uploadFromUrl(audioUrl, storageKey);
+
+			const estimatedDurationMs = (durationSeconds ?? 8) * 1000;
+
+			await db
+				.update(assets)
+				.set({
+					url: publicUrl,
+					storageKey,
+					status: "done" as const,
+					durationMs: estimatedDurationMs,
+					errorMessage: null,
+				})
+				.where(eq(assets.id, placeholder.id));
+
+			return {
+				assetId: placeholder.id,
+				url: publicUrl,
+				durationMs: estimatedDurationMs,
+			};
+		} catch (err) {
+			const errorMessage =
+				err instanceof Error
+					? err.message
+					: "Background music generation failed";
+			await db
+				.update(assets)
+				.set({ status: "error" as const, errorMessage })
+				.where(eq(assets.id, placeholder.id));
+			throw err;
+		}
 	});

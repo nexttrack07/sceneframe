@@ -88,6 +88,53 @@ export async function generateSpeech({
 }
 
 /**
+ * Generate a sound effect using ElevenLabs Sound Generation API.
+ * Returns the audio as a Buffer (mpeg format).
+ */
+export async function generateSoundEffect({
+	apiKey,
+	text,
+	durationSeconds,
+	promptInfluence = 0.3,
+}: {
+	apiKey: string;
+	text: string;
+	durationSeconds?: number;
+	promptInfluence?: number;
+}): Promise<{ audio: Buffer; contentType: string }> {
+	const body: Record<string, unknown> = {
+		text,
+		prompt_influence: promptInfluence,
+	};
+	if (durationSeconds != null) {
+		body.duration_seconds = durationSeconds;
+	}
+
+	const response = await fetch(`${ELEVENLABS_BASE_URL}/sound-generation`, {
+		method: "POST",
+		headers: {
+			"xi-api-key": apiKey,
+			"Content-Type": "application/json",
+			Accept: "audio/mpeg",
+		},
+		body: JSON.stringify(body),
+	});
+
+	if (!response.ok) {
+		const errorBody = await response.text().catch(() => "Unknown error");
+		throw new Error(
+			`ElevenLabs Sound Generation failed (${response.status}): ${errorBody}`,
+		);
+	}
+
+	const arrayBuffer = await response.arrayBuffer();
+	return {
+		audio: Buffer.from(arrayBuffer),
+		contentType: response.headers.get("content-type") ?? "audio/mpeg",
+	};
+}
+
+/**
  * List available voices from ElevenLabs.
  */
 export async function listVoices(apiKey: string) {

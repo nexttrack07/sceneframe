@@ -12,6 +12,7 @@ import {
 	Plus,
 	Timer,
 	Trash2,
+	Users,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +35,7 @@ import { useVideoStudio } from "../hooks/use-video-studio";
 import { resetWorkshop } from "../project-mutations";
 import { exportProjectHandoff } from "../project-queries";
 import type {
+	BackgroundMusicAssetSummary,
 	ProjectSettings,
 	SceneAssetSummary,
 	ScenePlanEntry,
@@ -49,6 +51,7 @@ import {
 	deleteShot,
 	reorderScene,
 } from "../scene-actions";
+import { CharactersPanel } from "./characters";
 import { ResetDialog } from "./reset-dialog";
 import { SceneHeader } from "./scene-header";
 import { SceneImageStudio } from "./scene-image-studio";
@@ -76,6 +79,7 @@ export function Storyboard({
 	scenePlan,
 	transitionVideos: allTransitionVideos,
 	voiceovers: allVoiceovers,
+	backgroundMusic: allBackgroundMusic,
 	initialShotId,
 	initialFromShotId,
 	initialToShotId,
@@ -88,6 +92,7 @@ export function Storyboard({
 	scenePlan: ScenePlanEntry[];
 	transitionVideos: TransitionVideoSummary[];
 	voiceovers: VoiceoverAssetSummary[];
+	backgroundMusic: BackgroundMusicAssetSummary[];
 	initialShotId?: string;
 	initialFromShotId?: string;
 	initialToShotId?: string;
@@ -192,7 +197,18 @@ export function Storyboard({
 		return grouped;
 	}, [allVoiceovers]);
 
+	const backgroundMusicBySceneId = useMemo(() => {
+		const grouped = new Map<string, BackgroundMusicAssetSummary[]>();
+		for (const bm of allBackgroundMusic) {
+			const existing = grouped.get(bm.sceneId) ?? [];
+			existing.push(bm);
+			grouped.set(bm.sceneId, existing);
+		}
+		return grouped;
+	}, [allBackgroundMusic]);
+
 	const [voiceoverSceneId, setVoiceoverSceneId] = useState<string | null>(null);
+	const [showCharactersPanel, setShowCharactersPanel] = useState(false);
 
 	const imageStudio = useImageStudio({
 		projectId,
@@ -844,6 +860,7 @@ export function Storyboard({
 						<ShotStudioLeftPanel
 							shot={selectedShot}
 							parentScene={shotParentScene}
+							scenePlan={planBySceneId.get(shotParentScene.id)}
 							prompt={imageStudio.prompt}
 							onPromptChange={imageStudio.setPrompt}
 							onGeneratePrompt={imageStudio.handleGeneratePrompt}
@@ -865,10 +882,41 @@ export function Storyboard({
 							onClearEditingReference={() =>
 								imageStudio.setEditingReferenceUrl(null)
 							}
-							onDescriptionSaved={async () => {
-								await queryClient.invalidateQueries({
-									queryKey: projectKeys.project(projectId),
-								});
+							onDescriptionSaved={async (newDescription) => {
+								// Directly update the cache with the new description
+								queryClient.setQueryData(
+									projectKeys.project(projectId),
+									// eslint-disable-next-line @typescript-eslint/no-explicit-any
+									(oldData: any) => {
+										if (!oldData) return oldData;
+										return {
+											...oldData,
+											shots: oldData.shots.map((s: Shot) =>
+												s.id === selectedShot.id
+													? { ...s, description: newDescription }
+													: s,
+											),
+										};
+									},
+								);
+							}}
+							onSceneDescriptionSaved={async (newDescription) => {
+								// Directly update the cache with the new description
+								queryClient.setQueryData(
+									projectKeys.project(projectId),
+									// eslint-disable-next-line @typescript-eslint/no-explicit-any
+									(oldData: any) => {
+										if (!oldData) return oldData;
+										return {
+											...oldData,
+											scenes: oldData.scenes.map((s: Scene) =>
+												s.id === shotParentScene.id
+													? { ...s, description: newDescription }
+													: s,
+											),
+										};
+									},
+								);
 							}}
 						/>
 					) : studioMode === "voiceover" && voiceoverScene ? (
@@ -897,6 +945,18 @@ export function Storyboard({
 									scene={voiceoverScene}
 									projectId={projectId}
 									voiceovers={voiceoversBySceneId.get(voiceoverScene.id) ?? []}
+									backgroundMusic={
+										backgroundMusicBySceneId.get(voiceoverScene.id) ?? []
+									}
+									sceneVideoDurationSec={allTransitionVideos
+										.filter(
+											(tv) => tv.sceneId === voiceoverScene.id && tv.isSelected,
+										)
+										.reduce(
+											(sum, tv) =>
+												sum + (Number(tv.modelSettings?.duration) || 0),
+											0,
+										)}
 								/>
 							</div>
 						</div>
@@ -1009,6 +1069,23 @@ export function Storyboard({
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
+						<Button
+							size="sm"
+							variant={showCharactersPanel ? "default" : "outline"}
+							onClick={() => setShowCharactersPanel(!showCharactersPanel)}
+							className="gap-1.5"
+						>
+							<Users size={12} />
+							Characters
+							{projectSettings?.characters?.length ? (
+								<Badge
+									variant="secondary"
+									className="ml-1 h-4 px-1 text-[10px]"
+								>
+									{projectSettings.characters.length}
+								</Badge>
+							) : null}
+						</Button>
 						<Link
 							to="/projects/$projectId/editor"
 							params={{ projectId }}
@@ -1054,6 +1131,20 @@ export function Storyboard({
 						>
 							✕
 						</button>
+					</div>
+				)}
+
+				{showCharactersPanel && (
+					<div className="mb-4 p-4 rounded-lg border bg-card">
+						<CharactersPanel
+							projectId={projectId}
+							characters={projectSettings?.characters ?? []}
+							onCharactersChanged={() => {
+								queryClient.invalidateQueries({
+									queryKey: projectKeys.project(projectId),
+								});
+							}}
+						/>
 					</div>
 				)}
 

@@ -37,8 +37,17 @@ export interface ImageDefaults {
 	batchCount: number;
 }
 
+export interface Character {
+	id: string;
+	name: string;
+	description: string;
+	visualPromptFragment: string;
+	referenceImageIds?: string[];
+}
+
 export interface ProjectSettings {
 	intake?: IntakeAnswers;
+	characters?: Character[];
 }
 
 export interface TransitionVideoSummary {
@@ -66,6 +75,20 @@ export interface VoiceoverAssetSummary {
 	id: string;
 	sceneId: string;
 	type: "voiceover";
+	status: "generating" | "done" | "error";
+	url: string | null;
+	errorMessage: string | null;
+	prompt: string | null;
+	model: string | null;
+	durationMs: number | null;
+	isSelected: boolean;
+	createdAt: string;
+}
+
+export interface BackgroundMusicAssetSummary {
+	id: string;
+	sceneId: string;
+	type: "background_music";
 	status: "generating" | "done" | "error";
 	url: string | null;
 	errorMessage: string | null;
