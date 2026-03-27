@@ -57,6 +57,16 @@ function parseScenes(rawOutput: string): ParsedScene[] {
 
 export const generateScript = task({
 	id: "generate-script",
+	queue: {
+		name: "script-generation",
+		concurrencyLimit: 5,
+	},
+	retry: {
+		maxAttempts: 3,
+		factor: 2,
+		minTimeoutInMs: 1000,
+		maxTimeoutInMs: 30000,
+	},
 
 	run: async (payload: GenerateScriptPayload) => {
 		const { projectId } = payload;
@@ -100,10 +110,13 @@ export const generateScript = task({
 		// --- 5. Parse scenes ---
 		const parsedScenes = parseScenes(rawText);
 
-		// --- 6. Insert scene rows (delete any from a prior attempt first) ---
+		// --- 6. Insert scene rows (soft-delete any from a prior attempt first) ---
 		// Use transaction to prevent race conditions with concurrent runs
 		await db.transaction(async (tx) => {
-			await tx.delete(scenes).where(eq(scenes.projectId, projectId));
+			await tx
+				.update(scenes)
+				.set({ deletedAt: new Date() })
+				.where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)));
 			await tx.insert(scenes).values(
 				parsedScenes.map((scene, i) => ({
 					projectId,

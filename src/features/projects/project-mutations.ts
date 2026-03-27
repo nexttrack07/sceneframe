@@ -12,6 +12,12 @@ import {
 } from "@/db/schema";
 import { assertProjectOwner } from "@/lib/assert-project-owner.server";
 import { deleteObject } from "@/lib/r2.server";
+import {
+	buildShotBreakdownPrompt,
+	buildSystemPrompt,
+	getUserApiKey,
+	parseShotBreakdownResponse,
+} from "./image-generation-helpers.server";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
 	IntakeAnswers,
@@ -19,12 +25,6 @@ import type {
 	ScenePlanEntry,
 	ShotPlanEntry,
 } from "./project-types";
-import {
-	buildShotBreakdownPrompt,
-	buildSystemPrompt,
-	getUserApiKey,
-	parseShotBreakdownResponse,
-} from "./replicate-helpers.server";
 
 const MAX_MESSAGE_LENGTH = 5_000;
 const MAX_HISTORY_MESSAGES = 30;

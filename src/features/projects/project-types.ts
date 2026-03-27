@@ -1,3 +1,8 @@
+export type ImageModelId = string;
+export type ImageSettingValue = string | number | boolean;
+export type VideoModelId = string;
+export type VideoSettingValue = string | number | boolean;
+
 export interface IntakeAnswers {
 	channelPreset: string;
 	purpose?: string;
@@ -31,10 +36,14 @@ export interface ShotPlanEntry {
 }
 
 export interface ImageDefaults {
-	model: string;
-	aspectRatio: "1:1" | "16:9" | "9:16" | "4:5";
-	qualityPreset: "fast" | "balanced" | "high";
+	model: ImageModelId;
 	batchCount: number;
+	modelOptions: Record<string, ImageSettingValue>;
+}
+
+export interface VideoDefaults {
+	model: VideoModelId;
+	modelOptions: Record<string, VideoSettingValue>;
 }
 
 export interface Character {
@@ -65,6 +74,7 @@ export interface TransitionVideoSummary {
 	isSelected: boolean;
 	stale: boolean;
 	generationId: string | null;
+	jobId: string | null;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;
@@ -76,6 +86,7 @@ export interface VoiceoverAssetSummary {
 	sceneId: string;
 	type: "voiceover";
 	status: "generating" | "done" | "error";
+	jobId: string | null;
 	url: string | null;
 	errorMessage: string | null;
 	prompt: string | null;
@@ -90,6 +101,7 @@ export interface BackgroundMusicAssetSummary {
 	sceneId: string;
 	type: "background_music";
 	status: "generating" | "done" | "error";
+	jobId: string | null;
 	url: string | null;
 	errorMessage: string | null;
 	prompt: string | null;
@@ -105,6 +117,7 @@ export interface SceneAssetSummary {
 	shotId: string | null;
 	type: "start_image" | "end_image" | "image";
 	status: "generating" | "done" | "error";
+	jobId: string | null;
 	url: string | null;
 	errorMessage: string | null;
 	prompt: string | null;
@@ -115,4 +128,24 @@ export interface SceneAssetSummary {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;
+}
+
+export type TriggerRunUiStatus =
+	| "queued"
+	| "running"
+	| "retrying"
+	| "completed"
+	| "failed"
+	| "canceled"
+	| "unknown";
+
+export interface TriggerRunSummary {
+	assetId: string;
+	jobId: string;
+	status: TriggerRunUiStatus;
+	attemptCount: number;
+	createdAt: string | null;
+	startedAt: string | null;
+	finishedAt: string | null;
+	errorMessage: string | null;
 }

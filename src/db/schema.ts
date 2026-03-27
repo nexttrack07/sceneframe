@@ -270,6 +270,7 @@ export const transitionVideos = pgTable(
 		model: text("model").notNull().default("kwaivgi/kling-v3-omni-video"),
 		modelSettings: jsonb("model_settings"),
 		generationId: text("generation_id"),
+		jobId: text("job_id"),
 		url: text("url"),
 		storageKey: text("storage_key"),
 		status: text("status")

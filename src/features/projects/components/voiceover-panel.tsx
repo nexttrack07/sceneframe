@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/toast";
 import type { Scene } from "@/db/schema";
 import type {
 	BackgroundMusicAssetSummary,
+	TriggerRunSummary,
 	VoiceoverAssetSummary,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
@@ -27,8 +28,11 @@ import {
 	generateSoundEffectAudio,
 	generateVoiceoverAudio,
 	generateVoiceoverScript,
+	getAudioRunStatuses,
+	pollAudioAssets,
 	selectVoiceover,
 } from "../scene-actions";
+import { GeneratingTimer } from "./studio/generating-timer";
 
 interface Voice {
 	id: string;
@@ -230,6 +234,14 @@ function VoiceoverTab({
 	);
 	const [isGeneratingScript, setIsGeneratingScript] = useState(false);
 	const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
+		Record<string, TriggerRunSummary>
+	>({});
+	const cancelPollingRef = useRef(false);
+	const isPollingRef = useRef(false);
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
 
 	// Voice selection
 	const [voices, setVoices] = useState<Voice[]>([]);
@@ -267,6 +279,85 @@ function VoiceoverTab({
 		() => voices.find((v) => v.id === selectedVoiceId),
 		[voices, selectedVoiceId],
 	);
+
+	const startPolling = useCallback(() => {
+		if (isPollingRef.current) return;
+
+		cancelPollingRef.current = false;
+		isPollingRef.current = true;
+		setIsGeneratingAudio(true);
+
+		const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+		const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+		pollingIntervalRef.current = setInterval(async () => {
+			if (cancelPollingRef.current || Date.now() > deadline) {
+				cancelPollingRef.current = true;
+				if (pollingIntervalRef.current) {
+					clearInterval(pollingIntervalRef.current);
+					pollingIntervalRef.current = null;
+				}
+				isPollingRef.current = false;
+				setIsGeneratingAudio(false);
+				return;
+			}
+
+			try {
+				const runStatusResult = await getAudioRunStatuses({
+					data: { sceneId: scene.id, type: "voiceover" },
+				});
+				setRunStatusesByAssetId(
+					Object.fromEntries(
+						runStatusResult.runs.map((run) => [run.assetId, run]),
+					),
+				);
+
+				const result = await pollAudioAssets({
+					data: { sceneId: scene.id, type: "voiceover" },
+				});
+
+				if (!result.isGenerating) {
+					cancelPollingRef.current = true;
+					if (pollingIntervalRef.current) {
+						clearInterval(pollingIntervalRef.current);
+						pollingIntervalRef.current = null;
+					}
+					isPollingRef.current = false;
+					setIsGeneratingAudio(false);
+					setRunStatusesByAssetId({});
+					await invalidate();
+					if (result.doneCount > 0) {
+						toast(
+							`${result.doneCount} voiceover${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+							result.erroredCount > 0 ? "error" : "success",
+						);
+					}
+				}
+			} catch {
+				// Transient error, keep polling
+			}
+		}, 3000);
+	}, [invalidate, scene.id, toast]);
+
+	useEffect(() => {
+		const hasGeneratingAssets = voiceovers.some(
+			(asset) => asset.status === "generating",
+		);
+
+		if (!hasGeneratingAssets || isPollingRef.current) return;
+		startPolling();
+	}, [voiceovers, startPolling]);
+
+	useEffect(() => {
+		return () => {
+			cancelPollingRef.current = true;
+			if (pollingIntervalRef.current) {
+				clearInterval(pollingIntervalRef.current);
+				pollingIntervalRef.current = null;
+			}
+			isPollingRef.current = false;
+		};
+	}, []);
 
 	const handleLoadVoices = useCallback(async () => {
 		if (voices.length > 0) {
@@ -340,16 +431,18 @@ function VoiceoverTab({
 				},
 			});
 			await invalidate();
-			toast("Voiceover generated", "success");
+			startPolling();
+			toast("Voiceover queued", "success");
 		} catch (err) {
+			setIsGeneratingAudio(false);
 			toast(
 				err instanceof Error ? err.message : "Failed to generate voiceover",
 				"error",
 			);
 		} finally {
-			setIsGeneratingAudio(false);
+			// Keep generating state until polling settles.
 		}
-	}, [scene.id, script, selectedVoiceId, invalidate, toast]);
+	}, [scene.id, script, selectedVoiceId, invalidate, startPolling, toast]);
 
 	const formatLabels = useCallback((labels: Record<string, string>) => {
 		const parts: string[] = [];
@@ -540,13 +633,14 @@ function VoiceoverTab({
 				) : (
 					<Mic size={12} />
 				)}
-				{isGeneratingAudio ? "Generating voiceover..." : "Generate Voiceover"}
+				{isGeneratingAudio ? "Queueing voiceover..." : "Generate Voiceover"}
 			</Button>
 
 			{/* Existing voiceovers */}
 			<AudioAssetList
 				assets={voiceovers}
 				label="Generated Voiceovers"
+				runStatusesByAssetId={runStatusesByAssetId}
 				playingId={playingId}
 				isDeletingId={isDeletingId}
 				onPlayPause={onPlayPause}
@@ -585,6 +679,93 @@ function SoundEffectsTab({
 	const [prompt, setPrompt] = useState("");
 	const [duration, setDuration] = useState(8);
 	const [isGenerating, setIsGenerating] = useState(false);
+	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
+		Record<string, TriggerRunSummary>
+	>({});
+	const cancelPollingRef = useRef(false);
+	const isPollingRef = useRef(false);
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
+
+	const startPolling = useCallback(() => {
+		if (isPollingRef.current) return;
+
+		cancelPollingRef.current = false;
+		isPollingRef.current = true;
+		setIsGenerating(true);
+
+		const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+		const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+		pollingIntervalRef.current = setInterval(async () => {
+			if (cancelPollingRef.current || Date.now() > deadline) {
+				cancelPollingRef.current = true;
+				if (pollingIntervalRef.current) {
+					clearInterval(pollingIntervalRef.current);
+					pollingIntervalRef.current = null;
+				}
+				isPollingRef.current = false;
+				setIsGenerating(false);
+				return;
+			}
+
+			try {
+				const runStatusResult = await getAudioRunStatuses({
+					data: { sceneId: scene.id, type: "background_music" },
+				});
+				setRunStatusesByAssetId(
+					Object.fromEntries(
+						runStatusResult.runs.map((run) => [run.assetId, run]),
+					),
+				);
+
+				const result = await pollAudioAssets({
+					data: { sceneId: scene.id, type: "background_music" },
+				});
+
+				if (!result.isGenerating) {
+					cancelPollingRef.current = true;
+					if (pollingIntervalRef.current) {
+						clearInterval(pollingIntervalRef.current);
+						pollingIntervalRef.current = null;
+					}
+					isPollingRef.current = false;
+					setIsGenerating(false);
+					setRunStatusesByAssetId({});
+					await invalidate();
+					if (result.doneCount > 0) {
+						toast(
+							`${result.doneCount} audio item${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+							result.erroredCount > 0 ? "error" : "success",
+						);
+					}
+				}
+			} catch {
+				// Transient error, keep polling
+			}
+		}, 3000);
+	}, [invalidate, scene.id, toast]);
+
+	useEffect(() => {
+		const hasGeneratingAssets = backgroundMusic.some(
+			(asset) => asset.status === "generating",
+		);
+
+		if (!hasGeneratingAssets || isPollingRef.current) return;
+		startPolling();
+	}, [backgroundMusic, startPolling]);
+
+	useEffect(() => {
+		return () => {
+			cancelPollingRef.current = true;
+			if (pollingIntervalRef.current) {
+				clearInterval(pollingIntervalRef.current);
+				pollingIntervalRef.current = null;
+			}
+			isPollingRef.current = false;
+		};
+	}, []);
 
 	const handleGenerate = useCallback(async () => {
 		if (!prompt.trim()) {
@@ -611,21 +792,23 @@ function SoundEffectsTab({
 				});
 			}
 			await invalidate();
+			startPolling();
 			toast(
 				provider === "elevenlabs"
-					? "Sound effect generated"
-					: "Background music generated",
+					? "Sound effect queued"
+					: "Background music queued",
 				"success",
 			);
 		} catch (err) {
+			setIsGenerating(false);
 			toast(
 				err instanceof Error ? err.message : "Audio generation failed",
 				"error",
 			);
 		} finally {
-			setIsGenerating(false);
+			// Keep generating state until polling settles.
 		}
-	}, [scene.id, prompt, duration, provider, invalidate, toast]);
+	}, [scene.id, prompt, duration, provider, invalidate, startPolling, toast]);
 
 	return (
 		<>
@@ -713,7 +896,7 @@ function SoundEffectsTab({
 					<Music size={12} />
 				)}
 				{isGenerating
-					? "Generating..."
+					? "Queueing..."
 					: provider === "elevenlabs"
 						? "Generate Sound Effect"
 						: "Generate Music"}
@@ -723,6 +906,7 @@ function SoundEffectsTab({
 			<AudioAssetList
 				assets={backgroundMusic}
 				label="Generated Audio"
+				runStatusesByAssetId={runStatusesByAssetId}
 				playingId={playingId}
 				isDeletingId={isDeletingId}
 				onPlayPause={onPlayPause}
@@ -740,6 +924,7 @@ function SoundEffectsTab({
 function AudioAssetList({
 	assets,
 	label,
+	runStatusesByAssetId = {},
 	playingId,
 	isDeletingId,
 	onPlayPause,
@@ -748,6 +933,7 @@ function AudioAssetList({
 }: {
 	assets: (VoiceoverAssetSummary | BackgroundMusicAssetSummary)[];
 	label: string;
+	runStatusesByAssetId?: Record<string, TriggerRunSummary>;
 	playingId: string | null;
 	isDeletingId: string | null;
 	onPlayPause: (asset: { id: string; url: string | null }) => void;
@@ -797,7 +983,29 @@ function AudioAssetList({
 								{asset.errorMessage ?? "Generation failed"}
 							</p>
 						) : asset.status === "generating" ? (
-							<p className="text-xs text-muted-foreground">Generating...</p>
+							<>
+								<p className="text-xs text-muted-foreground">
+									{(() => {
+										const runStatus = runStatusesByAssetId[asset.id];
+										if (runStatus?.status === "completed") return "Finalizing";
+										if (
+											runStatus?.status === "failed" ||
+											runStatus?.status === "canceled"
+										)
+											return "Failed";
+										if (runStatus?.status === "retrying") return "Retrying";
+										if (runStatus?.status === "running") return "Generating";
+										if (runStatus?.status === "queued") return "Queued";
+										return "Generating";
+									})()}
+								</p>
+								<GeneratingTimer
+									createdAt={
+										runStatusesByAssetId[asset.id]?.createdAt ?? undefined
+									}
+									startedAt={runStatusesByAssetId[asset.id]?.startedAt}
+								/>
+							</>
 						) : asset.type === "voiceover" ? (
 							// Voiceovers: script excerpt is the meaningful identifier
 							<>

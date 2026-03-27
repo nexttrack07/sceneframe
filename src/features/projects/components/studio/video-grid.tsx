@@ -1,6 +1,9 @@
 import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { TransitionVideoSummary } from "../../project-types";
+import type {
+	TransitionVideoSummary,
+	TriggerRunSummary,
+} from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
 import { VideoDetailDrawer } from "./video-detail-drawer";
 
@@ -10,12 +13,14 @@ export function VideoGrid({
 	onDelete,
 	onSelect,
 	isGenerating = false,
+	runStatusesByVideoId = {},
 }: {
 	transitionVideos: TransitionVideoSummary[];
 	deletingVideoId: string | null;
 	onDelete: (id: string) => void;
 	onSelect: (id: string) => void;
 	isGenerating?: boolean;
+	runStatusesByVideoId?: Record<string, TriggerRunSummary>;
 }) {
 	const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 	const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -129,7 +134,26 @@ export function VideoGrid({
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 								<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
 									<div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
-									<GeneratingTimer createdAt={tv.createdAt} />
+									<div className="flex flex-col items-center gap-1">
+										<span className="rounded-full bg-background/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
+											{(() => {
+												const runStatus = runStatusesByVideoId[tv.id];
+												if (runStatus?.status === "completed")
+													return "Finalizing";
+												if (
+													runStatus?.status === "failed" ||
+													runStatus?.status === "canceled"
+												)
+													return "Failed";
+												if (runStatus?.status === "retrying") return "Retrying";
+												if (runStatus?.status === "running")
+													return "Generating";
+												if (runStatus?.status === "queued") return "Queued";
+												return "Generating";
+											})()}
+										</span>
+										<GeneratingTimer createdAt={tv.createdAt} />
+									</div>
 								</div>
 							</div>
 						) : null}

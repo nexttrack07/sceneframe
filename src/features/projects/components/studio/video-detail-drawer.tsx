@@ -2,6 +2,13 @@ import { Check, Clock, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { TransitionVideoSummary } from "../../project-types";
 
+function formatSettingLabel(key: string) {
+	return key
+		.split("_")
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
 export function VideoDetailDrawer({
 	video,
 	deletingVideoId,
@@ -16,6 +23,12 @@ export function VideoDetailDrawer({
 	onSelect: (id: string) => void;
 }) {
 	if (!video) return null;
+	const videoSettings = video.modelSettings
+		? Object.entries(video.modelSettings).filter(
+				([key, value]) =>
+					value !== null && value !== undefined && key !== "prompt",
+			)
+		: [];
 
 	return (
 		<>
@@ -80,28 +93,13 @@ export function VideoDetailDrawer({
 								value={video.model.split("/").pop() ?? video.model}
 							/>
 						)}
-						{video.modelSettings?.duration && (
+						{videoSettings.map(([key, value]) => (
 							<MetaRow
-								label="Duration"
-								value={`${video.modelSettings.duration}s`}
+								key={key}
+								label={formatSettingLabel(key)}
+								value={String(value)}
 							/>
-						)}
-						{video.modelSettings?.mode && (
-							<MetaRow
-								label="Resolution"
-								value={video.modelSettings.mode === "pro" ? "1080p" : "720p"}
-							/>
-						)}
-						{video.modelSettings?.negativePrompt && (
-							<div className="space-y-1">
-								<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-									Negative prompt
-								</p>
-								<p className="text-foreground/80 leading-relaxed bg-muted/50 rounded-lg px-3 py-2">
-									{video.modelSettings.negativePrompt}
-								</p>
-							</div>
-						)}
+						))}
 						{video.prompt && (
 							<div className="space-y-1">
 								<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">

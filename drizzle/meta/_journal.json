@@ -50,6 +50,13 @@
       "when": 1774611883078,
       "tag": "0006_colorful_blackheart",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774625926598,
+      "tag": "0007_quiet_zeigeist",
+      "breakpoints": true
     }
   ]
 }

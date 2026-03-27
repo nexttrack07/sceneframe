@@ -100,7 +100,7 @@ export function VideoLightbox({
 						<span>{String(asset.modelSettings.duration)}s</span>
 					)}
 					{asset.modelSettings?.mode && (
-						<span>{asset.modelSettings.mode === "pro" ? "1080p" : "720p"}</span>
+						<span>{String(asset.modelSettings.mode)}</span>
 					)}
 				</div>
 			</div>

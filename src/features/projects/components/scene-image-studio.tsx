@@ -1,5 +1,5 @@
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import type { Scene } from "@/db/schema";
 import { normalizeImageDefaults } from "../project-normalize";
@@ -7,11 +7,14 @@ import type {
 	ImageDefaults,
 	SceneAssetSummary,
 	ScenePlanEntry,
+	TriggerRunSummary,
 } from "../project-types";
 import {
 	deleteAsset,
 	generateImagePrompt,
 	generateSceneImages,
+	getSceneImageRunStatuses,
+	pollSceneAssets,
 	saveScenePrompt,
 	selectAsset,
 } from "../scene-actions";
@@ -24,6 +27,43 @@ function makeDefaultPrompt(description: string, lane: "start" | "end"): string {
 		return `Start frame: ${description}\nFocus on the opening moment of this scene.`;
 	}
 	return `End frame: ${description}\nFocus on the closing moment of this scene.`;
+}
+
+function formatImageFailureToast(
+	errorMessage: string | null,
+	failedCount: number,
+) {
+	const fallback = `${failedCount} image${failedCount !== 1 ? "s" : ""} failed. Try again.`;
+	if (!errorMessage) return fallback;
+
+	const message = errorMessage.trim();
+	const lower = message.toLowerCase();
+
+	if (
+		lower.includes("high demand") ||
+		lower.includes("service is currently unavailable") ||
+		lower.includes("temporarily unavailable") ||
+		lower.includes("e003")
+	) {
+		return `Image generation failed because the model provider is under heavy load. Wait a moment and try again.`;
+	}
+
+	if (
+		lower.includes("api key") ||
+		lower.includes("authentication") ||
+		lower.includes("unauthorized") ||
+		lower.includes("forbidden")
+	) {
+		return `Image generation failed because your Replicate connection is missing or invalid. Reconnect your API key and try again.`;
+	}
+
+	if (lower.includes("timeout") || lower.includes("timed out")) {
+		return `Image generation timed out before the provider returned a result. Try again, or use a simpler prompt/settings combination.`;
+	}
+
+	const shortened =
+		message.length > 180 ? `${message.slice(0, 177)}...` : message;
+	return `Image generation failed: ${shortened} Try again or adjust the prompt/settings.`;
 }
 
 export function SceneImageStudio({
@@ -83,6 +123,14 @@ export function SceneImageStudio({
 	const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
+		Record<string, TriggerRunSummary>
+	>({});
+	const cancelPollingRef = useRef(false);
+	const isPollingRef = useRef(false);
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
 
 	const sceneRef = useRef(scene);
 	sceneRef.current = scene;
@@ -103,6 +151,7 @@ export function SceneImageStudio({
 	useEffect(() => {
 		const initialPrompt =
 			scene.startFramePrompt ?? makeDefaultPrompt(scene.description, "start");
+		stopPolling();
 		setPrompt(initialPrompt);
 		savedPromptRef.current = initialPrompt;
 		setPromptMode("start");
@@ -113,6 +162,8 @@ export function SceneImageStudio({
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setError(null);
+		setRunStatusesByAssetId({});
+		cancelPollingRef.current = false;
 	}, [scene.id]);
 
 	// Track mounted state to guard async operations after navigation away
@@ -123,6 +174,89 @@ export function SceneImageStudio({
 			isMountedRef.current = false;
 		};
 	}, []);
+
+	const stopPolling = useCallback(() => {
+		cancelPollingRef.current = true;
+		if (pollingIntervalRef.current) {
+			clearInterval(pollingIntervalRef.current);
+			pollingIntervalRef.current = null;
+		}
+		isPollingRef.current = false;
+		setIsGenerating(false);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			stopPolling();
+		};
+	}, [stopPolling]);
+
+	const startPolling = useCallback(
+		(sceneId: string) => {
+			if (isPollingRef.current) return;
+
+			cancelPollingRef.current = false;
+			isPollingRef.current = true;
+			setIsGenerating(true);
+
+			const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+			const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+			pollingIntervalRef.current = setInterval(async () => {
+				if (cancelPollingRef.current || Date.now() > deadline) {
+					stopPolling();
+					return;
+				}
+
+				try {
+					const runStatusResult = await getSceneImageRunStatuses({
+						data: { sceneId },
+					});
+					setRunStatusesByAssetId(
+						Object.fromEntries(
+							runStatusResult.runs.map((run) => [run.assetId, run]),
+						),
+					);
+
+					const result = await pollSceneAssets({
+						data: { sceneId },
+					});
+
+					if (!result.isGenerating) {
+						stopPolling();
+						setRunStatusesByAssetId({});
+						await router.invalidate();
+						if (result.doneCount > 0) {
+							toast(
+								`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+								result.erroredCount > 0 ? "error" : "success",
+							);
+						} else if (result.erroredCount > 0) {
+							toast(
+								formatImageFailureToast(
+									result.latestErrorMessage,
+									result.erroredCount,
+								),
+								"error",
+							);
+						}
+					}
+				} catch {
+					// Transient error, keep polling
+				}
+			}, 3000);
+		},
+		[router, stopPolling, toast],
+	);
+
+	useEffect(() => {
+		const hasGeneratingAssets = sceneAssets.some(
+			(asset) => asset.status === "generating",
+		);
+
+		if (!hasGeneratingAssets || isPollingRef.current) return;
+		startPolling(scene.id);
+	}, [scene.id, sceneAssets, startPolling]);
 
 	// Save prompt to DB on blur — only if changed since last save
 	async function handlePromptBlur() {
@@ -183,9 +317,10 @@ export function SceneImageStudio({
 				},
 			});
 			await router.invalidate();
+			startPolling(scene.id);
 			toast(
-				`Generated ${result.completedCount} image${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`,
-				result.failedCount > 0 ? "error" : "success",
+				`Queued ${result.queuedCount} image${result.queuedCount !== 1 ? "s" : ""}`,
+				"success",
 			);
 		} catch (err) {
 			const msg =
@@ -193,7 +328,7 @@ export function SceneImageStudio({
 			setError(msg);
 			toast(msg, "error");
 		} finally {
-			setIsGenerating(false);
+			// Keep generating state until polling settles.
 		}
 	}
 
@@ -305,6 +440,17 @@ export function SceneImageStudio({
 					onRegenerate={handleGenerate}
 					expandedImageId={expandedImageId}
 					onExpandImage={setExpandedImageId}
+					pendingCount={
+						isGenerating
+							? Math.max(
+									0,
+									settingsOverrides.batchCount -
+										sceneAssets.filter((asset) => asset.status === "generating")
+											.length,
+								)
+							: 0
+					}
+					runStatusesByAssetId={runStatusesByAssetId}
 					onLightboxChange={setIsLightboxOpen}
 				/>
 			</div>

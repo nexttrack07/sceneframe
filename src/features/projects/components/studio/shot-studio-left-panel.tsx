@@ -64,7 +64,7 @@ export function ShotStudioLeftPanel({
 	isEnhancingPrompt,
 	settingsOverrides,
 	onSettingsChange,
-	isGenerating,
+	isQueueing,
 	onGenerate,
 	onDescriptionSaved,
 	onSceneDescriptionSaved,
@@ -89,7 +89,7 @@ export function ShotStudioLeftPanel({
 	isEnhancingPrompt?: boolean;
 	settingsOverrides: ImageDefaults;
 	onSettingsChange: (settings: ImageDefaults) => void;
-	isGenerating: boolean;
+	isQueueing: boolean;
 	onGenerate: () => void;
 	onDescriptionSaved?: (newDescription: string) => void;
 	onSceneDescriptionSaved?: (newDescription: string) => void;
@@ -203,21 +203,21 @@ export function ShotStudioLeftPanel({
 			<div className="p-4 border-t bg-card">
 				<Button
 					onClick={onGenerate}
-					disabled={isGenerating}
+					disabled={isQueueing}
 					className="w-full gap-2"
 					size="lg"
 				>
-					{isGenerating ? (
+					{isQueueing ? (
 						<Loader2 size={16} className="animate-spin" />
 					) : editingReferenceUrl ? (
 						<Pencil size={16} />
 					) : (
 						<Wand2 size={16} />
 					)}
-					{isGenerating
+					{isQueueing
 						? editingReferenceUrl
-							? "Editing..."
-							: "Generating..."
+							? "Queueing edit..."
+							: "Queueing..."
 						: editingReferenceUrl
 							? "Edit image"
 							: "Generate images"}

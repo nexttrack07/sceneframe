@@ -10,11 +10,27 @@ import {
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { Shot } from "@/db/schema";
+import type { VideoDefaults, VideoSettingValue } from "../../project-types";
+import {
+	getDefaultVideoModelOptions,
+	getVideoModelControlDefinitions,
+	VIDEO_MODELS,
+} from "../../video-models";
+import { ModelPickerModal } from "../model-picker-modal";
 
-export type VideoModel = "v3-omni" | "v2.5-turbo";
-
-const V3_DURATION_OPTIONS = [3, 5, 7, 10, 15];
-const V25_DURATION_OPTIONS = [5, 10];
+function updateVideoOption(
+	settings: VideoDefaults,
+	key: string,
+	value: VideoSettingValue,
+) {
+	return {
+		...settings,
+		modelOptions: {
+			...settings.modelOptions,
+			[key]: value,
+		},
+	};
+}
 
 export function VideoControlsPanel({
 	fromShot,
@@ -25,16 +41,8 @@ export function VideoControlsPanel({
 	isGeneratingPrompt,
 	onEnhancePrompt,
 	isEnhancingPrompt,
-	videoModel,
-	onVideoModelChange,
-	videoMode,
-	onVideoModeChange,
-	videoDuration,
-	onVideoDurationChange,
-	generateAudio,
-	onGenerateAudioChange,
-	negativePrompt,
-	onNegativePromptChange,
+	videoSettings,
+	onVideoSettingsChange,
 	useProjectContext,
 	onUseProjectContextChange,
 	usePrevShotContext,
@@ -50,16 +58,8 @@ export function VideoControlsPanel({
 	isGeneratingPrompt: boolean;
 	onEnhancePrompt?: () => void;
 	isEnhancingPrompt?: boolean;
-	videoModel: VideoModel;
-	onVideoModelChange: (m: VideoModel) => void;
-	videoMode: "standard" | "pro";
-	onVideoModeChange: (m: "standard" | "pro") => void;
-	videoDuration: number;
-	onVideoDurationChange: (d: number) => void;
-	generateAudio: boolean;
-	onGenerateAudioChange: (v: boolean) => void;
-	negativePrompt: string;
-	onNegativePromptChange: (v: string) => void;
+	videoSettings: VideoDefaults;
+	onVideoSettingsChange: (settings: VideoDefaults) => void;
 	useProjectContext: boolean;
 	onUseProjectContextChange: (v: boolean) => void;
 	usePrevShotContext: boolean;
@@ -69,15 +69,13 @@ export function VideoControlsPanel({
 }) {
 	const [showDescriptions, setShowDescriptions] = useState(true);
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
-	const isV25 = videoModel === "v2.5-turbo";
 	const motionPromptId = useId();
 	const negativePromptId = useId();
-	const durationOptions = isV25 ? V25_DURATION_OPTIONS : V3_DURATION_OPTIONS;
+	const controls = getVideoModelControlDefinitions(videoSettings.model);
 
 	return (
 		<div className="flex flex-col h-full">
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
-				{/* Shot descriptions */}
 				<div className="space-y-2">
 					<button
 						type="button"
@@ -107,7 +105,6 @@ export function VideoControlsPanel({
 					)}
 				</div>
 
-				{/* Prompt context toggles */}
 				<div className="space-y-1.5">
 					<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
 						Prompt context
@@ -179,79 +176,123 @@ export function VideoControlsPanel({
 				</div>
 
 				<div className="border-t pt-4 space-y-4">
-					{/* Model selector */}
 					<div className="flex items-center justify-between">
 						<span className="text-xs font-medium text-muted-foreground">
 							Model
 						</span>
-						<select
-							value={videoModel}
-							onChange={(e) => onVideoModelChange(e.target.value as VideoModel)}
-							className="px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-background"
-						>
-							<option value="v3-omni">V3 Omni</option>
-							<option value="v2.5-turbo">2.5 Turbo</option>
-						</select>
+					</div>
+					<ModelPickerModal
+						title="Choose A Video Model"
+						triggerLabel="Video model"
+						selectedId={videoSettings.model}
+						options={VIDEO_MODELS.map((model) => ({
+							id: model.id,
+							label: model.label,
+							provider: model.provider,
+							description: model.description,
+							logoText: model.logoText,
+							logoImageUrl: model.logoImageUrl,
+							previewImageUrl: model.previewImageUrl,
+							accentClassName: model.accentClassName,
+						}))}
+						gridClassName="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+						onSelect={(modelId) =>
+							onVideoSettingsChange({
+								model: modelId,
+								modelOptions: getDefaultVideoModelOptions(modelId),
+							})
+						}
+					/>
+
+					<div className="grid grid-cols-2 gap-3">
+						{controls.map((control) => {
+							const value = videoSettings.modelOptions[control.key];
+
+							if (control.type === "boolean") {
+								return (
+									<label
+										key={control.key}
+										className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground"
+									>
+										<input
+											type="checkbox"
+											checked={Boolean(value)}
+											onChange={(e) =>
+												onVideoSettingsChange(
+													updateVideoOption(
+														videoSettings,
+														control.key,
+														e.target.checked,
+													),
+												)
+											}
+											className="h-3.5 w-3.5 rounded accent-primary"
+										/>
+										<span>{control.label}</span>
+									</label>
+								);
+							}
+
+							if (control.type === "textarea") {
+								return (
+									<div key={control.key} className="col-span-2 space-y-1.5">
+										<label
+											htmlFor={negativePromptId}
+											className="text-xs font-medium text-muted-foreground"
+										>
+											{control.label}
+										</label>
+										<textarea
+											id={negativePromptId}
+											rows={3}
+											value={typeof value === "string" ? value : ""}
+											onChange={(e) =>
+												onVideoSettingsChange(
+													updateVideoOption(
+														videoSettings,
+														control.key,
+														e.target.value,
+													),
+												)
+											}
+											placeholder={control.description ?? ""}
+											className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
+										/>
+									</div>
+								);
+							}
+
+							return (
+								<label key={control.key} className="space-y-1.5">
+									<span className="text-xs font-medium text-muted-foreground">
+										{control.label}
+									</span>
+									<select
+										value={String(value ?? "")}
+										onChange={(e) =>
+											onVideoSettingsChange(
+												updateVideoOption(
+													videoSettings,
+													control.key,
+													control.key === "duration"
+														? Number(e.target.value)
+														: e.target.value,
+												),
+											)
+										}
+										className="w-full px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-background"
+									>
+										{control.options?.map((option) => (
+											<option key={option.value} value={option.value}>
+												{option.label}
+											</option>
+										))}
+									</select>
+								</label>
+							);
+						})}
 					</div>
 
-					{/* Duration selector */}
-					<div className="flex items-center justify-between">
-						<span className="text-xs font-medium text-muted-foreground">
-							Duration
-						</span>
-						<div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-							{durationOptions.map((d) => (
-								<button
-									key={d}
-									type="button"
-									onClick={() => onVideoDurationChange(d)}
-									className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoDuration === d ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-								>
-									{d}s
-								</button>
-							))}
-						</div>
-					</div>
-
-					{/* V3 Omni settings */}
-					{!isV25 && (
-						<div className="flex items-center gap-3">
-							<div className="flex items-center gap-1.5 flex-1">
-								<span className="text-xs font-medium text-muted-foreground">
-									Resolution
-								</span>
-								<div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5 ml-auto">
-									<button
-										type="button"
-										onClick={() => onVideoModeChange("standard")}
-										className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === "standard" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-									>
-										720p
-									</button>
-									<button
-										type="button"
-										onClick={() => onVideoModeChange("pro")}
-										className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${videoMode === "pro" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-									>
-										1080p
-									</button>
-								</div>
-							</div>
-							<label className="flex items-center gap-1.5 cursor-pointer">
-								<input
-									type="checkbox"
-									checked={generateAudio}
-									onChange={(e) => onGenerateAudioChange(e.target.checked)}
-									className="h-3.5 w-3.5 rounded accent-primary"
-								/>
-								<span className="text-xs font-medium text-muted-foreground">
-									Audio
-								</span>
-							</label>
-						</div>
-					)}
-
-					{/* Motion prompt */}
 					<div className="space-y-1.5">
 						<div className="flex items-center justify-between">
 							<label
@@ -300,30 +341,9 @@ export function VideoControlsPanel({
 							className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
 						/>
 					</div>
-
-					{/* V2.5 Turbo negative prompt */}
-					{isV25 && (
-						<div className="space-y-1.5">
-							<label
-								htmlFor={negativePromptId}
-								className="text-xs font-medium text-muted-foreground"
-							>
-								Negative prompt
-							</label>
-							<textarea
-								id={negativePromptId}
-								rows={3}
-								value={negativePrompt}
-								onChange={(e) => onNegativePromptChange(e.target.value)}
-								placeholder="Things you don't want to see..."
-								className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
-							/>
-						</div>
-					)}
 				</div>
 			</div>
 
-			{/* Sticky generate button */}
 			<div className="p-4 border-t bg-card">
 				<Button
 					onClick={onGenerate}

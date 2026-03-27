@@ -1,0 +1,1 @@
+ALTER TABLE "transition_videos" ADD COLUMN "job_id" text;

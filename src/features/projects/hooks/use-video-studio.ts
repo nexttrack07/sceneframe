@@ -1,18 +1,83 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import type { VideoModel } from "../components/studio/video-controls-panel";
-import type { TransitionVideoSummary } from "../project-types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizeVideoDefaults } from "../project-normalize";
+import type {
+	TransitionVideoSummary,
+	TriggerRunSummary,
+	VideoDefaults,
+} from "../project-types";
 import { projectKeys } from "../query-keys";
 import {
 	deleteTransitionVideo,
 	enhanceTransitionVideoPrompt,
 	generateTransitionVideo,
 	generateTransitionVideoPrompt,
-	pollTransitionVideo,
+	getTransitionVideoRunStatuses,
+	pollTransitionVideos,
 	selectTransitionVideo,
 } from "../scene-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
+
+function getTransitionDraftStorageKey(pair: {
+	fromShotId: string;
+	toShotId: string;
+}) {
+	return `transition-video-draft:${pair.fromShotId}:${pair.toShotId}`;
+}
+
+function readTransitionDraft(pair: { fromShotId: string; toShotId: string }) {
+	if (typeof window === "undefined") return null;
+	try {
+		return window.localStorage.getItem(getTransitionDraftStorageKey(pair));
+	} catch {
+		return null;
+	}
+}
+
+function getTransitionSettingsStorageKey() {
+	return `video-studio:last-settings`;
+}
+
+function readTransitionSettings(): VideoDefaults | null {
+	if (typeof window === "undefined") return null;
+	try {
+		const raw = window.localStorage.getItem(getTransitionSettingsStorageKey());
+		if (!raw) return null;
+		return normalizeVideoDefaults(JSON.parse(raw));
+	} catch {
+		return null;
+	}
+}
+
+function writeTransitionSettings(settings: VideoDefaults) {
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.setItem(
+			getTransitionSettingsStorageKey(),
+			JSON.stringify(settings),
+		);
+	} catch {
+		// Ignore storage failures; draft settings are a UX enhancement.
+	}
+}
+
+function writeTransitionDraft(
+	pair: { fromShotId: string; toShotId: string },
+	prompt: string,
+) {
+	if (typeof window === "undefined") return;
+	try {
+		const key = getTransitionDraftStorageKey(pair);
+		if (prompt.trim().length === 0) {
+			window.localStorage.removeItem(key);
+			return;
+		}
+		window.localStorage.setItem(key, prompt);
+	} catch {
+		// Ignore storage failures; drafts are a UX enhancement, not critical state.
+	}
+}
 
 export function useVideoStudio({
 	projectId,
@@ -29,131 +94,169 @@ export function useVideoStudio({
 }) {
 	const queryClient = useQueryClient();
 	const [videoPrompt, setVideoPrompt] = useState("");
-	const [videoModel, setVideoModel] = useState<VideoModel>("v3-omni");
-	const [videoMode, setVideoMode] = useState<"standard" | "pro">("pro");
-	const [videoDuration, setVideoDuration] = useState(5);
-	const [generateAudio, setGenerateAudio] = useState(false);
-	const [negativePrompt, setNegativePrompt] = useState("");
+	const [videoSettings, setVideoSettings] = useState<VideoDefaults>(
+		normalizeVideoDefaults(null),
+	);
 	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
-	const cancelVideoRef = useRef(false);
-	const isGeneratingVideoRef = useRef(false);
 	const allTransitionVideosRef = useRef(allTransitionVideos);
+	const cancelPollingRef = useRef(false);
+	const isPollingRef = useRef(false);
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
 	allTransitionVideosRef.current = allTransitionVideos;
+	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
+		Record<string, TriggerRunSummary>
+	>({});
 
-	// Reset video studio state when selected transition pair changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; object identity would cause spurious resets
+	const stopPolling = useCallback(() => {
+		cancelPollingRef.current = true;
+		if (pollingIntervalRef.current) {
+			clearInterval(pollingIntervalRef.current);
+			pollingIntervalRef.current = null;
+		}
+		isPollingRef.current = false;
+		setIsGeneratingVideo(false);
+	}, []);
+
 	useEffect(() => {
-		if (!selectedTransitionPair) return;
+		if (!selectedTransitionPair) {
+			stopPolling();
+			return;
+		}
 
-		// Load prompt from the most recent video for this transition pair
 		const pairVideos = allTransitionVideos.filter(
 			(tv) =>
 				tv.fromShotId === selectedTransitionPair.fromShotId &&
-				tv.toShotId === selectedTransitionPair.toShotId &&
-				tv.prompt,
+				tv.toShotId === selectedTransitionPair.toShotId,
 		);
-		// Prefer selected video's prompt, otherwise use the most recent
+		const promptVideos = pairVideos.filter((tv) => tv.prompt);
 		const selectedVideo = pairVideos.find((tv) => tv.isSelected);
-		const initialPrompt = selectedVideo?.prompt ?? pairVideos[0]?.prompt ?? "";
+		const draftPrompt = readTransitionDraft(selectedTransitionPair);
+		const initialPrompt =
+			draftPrompt ?? selectedVideo?.prompt ?? promptVideos[0]?.prompt ?? "";
+		const draftSettings = readTransitionSettings();
+		const initialSettings =
+			draftSettings ??
+			normalizeVideoDefaults({
+				model: selectedVideo?.model ?? promptVideos[0]?.model,
+				modelOptions:
+					selectedVideo?.modelSettings ??
+					promptVideos[0]?.modelSettings ??
+					null,
+			});
 
 		setVideoPrompt(initialPrompt);
-		setVideoDuration(5);
+		setVideoSettings(initialSettings);
 		setIsGeneratingVideo(false);
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
-		cancelVideoRef.current = false;
-	}, [
-		selectedTransitionPair?.fromShotId,
-		selectedTransitionPair?.toShotId,
-		allTransitionVideos,
-	]);
+		setRunStatusesByVideoId({});
+		stopPolling();
+		cancelPollingRef.current = false;
+	}, [selectedTransitionPair, allTransitionVideos, stopPolling]);
 
-	// Auto-resume polling for any stuck generating transition when transition pair is selected
-	// biome-ignore lint/correctness/useExhaustiveDependencies: fromShotId + toShotId uniquely identify the pair; allTransitionVideosRef and isGeneratingVideoRef are refs intentionally excluded
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
+		writeTransitionDraft(selectedTransitionPair, videoPrompt);
+	}, [selectedTransitionPair, videoPrompt]);
+
+	useEffect(() => {
+		if (!selectedTransitionPair) return;
+		writeTransitionSettings(videoSettings);
+	}, [selectedTransitionPair, videoSettings]);
+
+	useEffect(() => {
+		return () => {
+			stopPolling();
+		};
+	}, [stopPolling]);
+
+	const startPolling = useCallback(
+		(pair: { fromShotId: string; toShotId: string }) => {
+			if (isPollingRef.current) return;
+
+			cancelPollingRef.current = false;
+			isPollingRef.current = true;
+			setIsGeneratingVideo(true);
+
+			const POLL_TIMEOUT_MS = 12 * 60 * 1000;
+			const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+			pollingIntervalRef.current = setInterval(async () => {
+				if (cancelPollingRef.current || Date.now() > deadline) {
+					stopPolling();
+					return;
+				}
+
+				try {
+					const runStatusResult = await getTransitionVideoRunStatuses({
+						data: pair,
+					});
+					setRunStatusesByVideoId(
+						Object.fromEntries(
+							runStatusResult.runs.map((run) => [run.assetId, run]),
+						),
+					);
+
+					const result = await pollTransitionVideos({
+						data: pair,
+					});
+
+					if (!result.isGenerating) {
+						if (!result.selectedDoneId && result.latestDoneId) {
+							await selectTransitionVideo({
+								data: { transitionVideoId: result.latestDoneId },
+							});
+						}
+
+						stopPolling();
+						setRunStatusesByVideoId({});
+						await queryClient.invalidateQueries({
+							queryKey: projectKeys.project(projectId),
+						});
+
+						if (result.doneCount > 0) {
+							toast(
+								`${result.doneCount} transition video${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+								result.erroredCount > 0 ? "error" : "success",
+							);
+						} else if (result.erroredCount > 0) {
+							toast(
+								result.latestErrorMessage ??
+									"Transition video generation failed",
+								"error",
+							);
+						}
+					}
+				} catch {
+					// Transient error, keep polling.
+				}
+			}, 3000);
+		},
+		[projectId, queryClient, stopPolling, toast],
+	);
+
+	useEffect(() => {
+		const pair = selectedTransitionPair;
+		if (!pair) return;
 		const generatingTv = allTransitionVideosRef.current.find(
 			(tv) =>
-				tv.fromShotId === selectedTransitionPair.fromShotId &&
-				tv.toShotId === selectedTransitionPair.toShotId &&
+				tv.fromShotId === pair.fromShotId &&
+				tv.toShotId === pair.toShotId &&
 				tv.status === "generating",
 		);
-		if (!generatingTv || isGeneratingVideoRef.current) return;
-
-		const transitionVideoId = generatingTv.id;
-		cancelVideoRef.current = false;
-		isGeneratingVideoRef.current = true;
-		setIsGeneratingVideo(true);
-
-		const POLL_TIMEOUT_MS = 12 * 60 * 1000;
-		const deadline = Date.now() + POLL_TIMEOUT_MS;
-		let consecutiveErrors = 0;
-
-		const interval = setInterval(async () => {
-			if (cancelVideoRef.current || Date.now() > deadline) {
-				clearInterval(interval);
-				isGeneratingVideoRef.current = false;
-				setIsGeneratingVideo(false);
-				return;
-			}
-			try {
-				const result = await pollTransitionVideo({
-					data: { transitionVideoId },
-				});
-				consecutiveErrors = 0;
-				if (result.status === "done") {
-					const isSelected = allTransitionVideosRef.current.find(
-						(tv) =>
-							tv.fromShotId === selectedTransitionPair.fromShotId &&
-							tv.toShotId === selectedTransitionPair.toShotId &&
-							tv.isSelected &&
-							tv.status === "done",
-					);
-					if (!isSelected) {
-						await selectTransitionVideo({ data: { transitionVideoId } });
-					}
-					clearInterval(interval);
-					isGeneratingVideoRef.current = false;
-					setIsGeneratingVideo(false);
-					await queryClient.invalidateQueries({
-						queryKey: projectKeys.project(projectId),
-					});
-					toast("Transition video ready", "success");
-				} else if (result.status === "error") {
-					clearInterval(interval);
-					isGeneratingVideoRef.current = false;
-					setIsGeneratingVideo(false);
-					await deleteTransitionVideo({ data: { transitionVideoId } });
-					await queryClient.invalidateQueries({
-						queryKey: projectKeys.project(projectId),
-					});
-					toast(result.errorMessage ?? "Video generation failed", "error");
-				}
-			} catch (err) {
-				consecutiveErrors++;
-				if (consecutiveErrors >= 3) {
-					clearInterval(interval);
-					isGeneratingVideoRef.current = false;
-					setIsGeneratingVideo(false);
-					const msg = err instanceof Error ? err.message : "Polling failed";
-					toast(msg, "error");
-				}
-			}
-		}, 5000);
-
-		return () => {
-			clearInterval(interval);
-			cancelVideoRef.current = true;
-		};
-	}, [selectedTransitionPair?.fromShotId, selectedTransitionPair?.toShotId]);
+		if (!generatingTv || isPollingRef.current) return;
+		return startPolling(pair);
+	}, [selectedTransitionPair, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedTransitionPair) return;
@@ -209,116 +312,39 @@ export function useVideoStudio({
 	async function handleGenerateVideo() {
 		const pair = selectedTransitionPair;
 		if (!pair || !videoPrompt.trim()) return;
-		isGeneratingVideoRef.current = true;
+		if (isPollingRef.current) return;
 		setIsGeneratingVideo(true);
-		cancelVideoRef.current = false;
+		cancelPollingRef.current = false;
 		setError(null);
 		try {
-			const { transitionVideoId } = await generateTransitionVideo({
+			await generateTransitionVideo({
 				data: {
 					fromShotId: pair.fromShotId,
 					toShotId: pair.toShotId,
 					prompt: videoPrompt.trim(),
-					videoModel,
-					mode: videoMode,
-					generateAudio,
-					negativePrompt,
-					duration: videoDuration,
+					videoSettings,
 				},
 			});
-
-			const POLL_TIMEOUT_MS = 12 * 60 * 1000;
-			const deadline = Date.now() + POLL_TIMEOUT_MS;
-
-			await new Promise<void>((resolve, reject) => {
-				let settled = false;
-				const interval = setInterval(async () => {
-					if (settled) return;
-					if (Date.now() > deadline || cancelVideoRef.current) {
-						settled = true;
-						clearInterval(interval);
-						deleteTransitionVideo({ data: { transitionVideoId } }).catch(
-							(err) =>
-								console.error(
-									"Failed to clean up timed-out transition video:",
-									transitionVideoId,
-									err,
-								),
-						);
-						reject(
-							new Error(
-								cancelVideoRef.current
-									? "Cancelled"
-									: "Video generation timed out",
-							),
-						);
-						return;
-					}
-					try {
-						const result = await pollTransitionVideo({
-							data: { transitionVideoId },
-						});
-						if (result.status === "done") {
-							// Auto-select if nothing is selected yet
-							const hasSelected = allTransitionVideosRef.current.some(
-								(tv) =>
-									tv.fromShotId === pair.fromShotId &&
-									tv.toShotId === pair.toShotId &&
-									tv.isSelected &&
-									tv.status === "done",
-							);
-							if (!hasSelected) {
-								await selectTransitionVideo({ data: { transitionVideoId } });
-							}
-							settled = true;
-							clearInterval(interval);
-							resolve();
-						} else if (result.status === "error") {
-							settled = true;
-							clearInterval(interval);
-							await deleteTransitionVideo({
-								data: { transitionVideoId },
-							}).catch((err) =>
-								console.error(
-									"Failed to clean up errored transition video:",
-									transitionVideoId,
-									err,
-								),
-							);
-							reject(
-								new Error(result.errorMessage ?? "Video generation failed"),
-							);
-						}
-					} catch {
-						// transient error — keep polling
-					}
-				}, 5000);
-			});
-
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
-			toast("Transition video generated", "success");
+			startPolling(pair);
+			toast("Queued transition video", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
 			setError(msg);
 			toast(msg, "error");
-		} finally {
-			isGeneratingVideoRef.current = false;
-			setIsGeneratingVideo(false);
-			cancelVideoRef.current = false;
+			stopPolling();
 		}
 	}
 
-	async function handleSelectTransitionVideo(transitionVideoId: string) {
-		setError(null);
+	async function handleSelectTransitionVideo(id: string) {
 		try {
-			await selectTransitionVideo({ data: { transitionVideoId } });
+			await selectTransitionVideo({ data: { transitionVideoId: id } });
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
-			toast("Video selected", "success");
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Failed to select video";
 			setError(msg);
@@ -326,15 +352,13 @@ export function useVideoStudio({
 		}
 	}
 
-	async function handleDeleteTransitionVideo(transitionVideoId: string) {
-		setDeletingVideoId(transitionVideoId);
-		setError(null);
+	async function handleDeleteTransitionVideo(id: string) {
+		setDeletingVideoId(id);
 		try {
-			await deleteTransitionVideo({ data: { transitionVideoId } });
+			await deleteTransitionVideo({ data: { transitionVideoId: id } });
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
-			toast("Video deleted", "success");
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Failed to delete video";
 			setError(msg);
@@ -347,29 +371,20 @@ export function useVideoStudio({
 	return {
 		videoPrompt,
 		setVideoPrompt,
-		videoModel,
-		setVideoModel,
-		videoMode,
-		setVideoMode,
-		videoDuration,
-		setVideoDuration,
-		generateAudio,
-		setGenerateAudio,
-		negativePrompt,
-		setNegativePrompt,
+		videoSettings,
+		setVideoSettings,
 		isGeneratingVideo,
 		isGeneratingVideoPrompt,
 		isEnhancingVideoPrompt,
 		deletingVideoId,
-		cancelVideoRef,
-		allTransitionVideosRef,
 		useProjectContext,
 		setUseProjectContext,
 		usePrevShotContext,
 		setUsePrevShotContext,
-		handleGenerateVideo,
+		runStatusesByVideoId,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,
+		handleGenerateVideo,
 		handleSelectTransitionVideo,
 		handleDeleteTransitionVideo,
 	};

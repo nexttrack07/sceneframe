@@ -63,6 +63,12 @@ import { VideoControlsPanel } from "./studio/video-controls-panel";
 import { VideoGrid } from "./studio/video-grid";
 import { VoiceoverPanel } from "./voiceover-panel";
 
+type ProjectCacheData = {
+	shots: Shot[];
+	scenes: Scene[];
+	[key: string]: unknown;
+};
+
 function formatTimestamp(seconds: number | null): string {
 	if (seconds == null) return "--:--";
 	const mins = Math.floor(seconds / 60);
@@ -888,7 +894,7 @@ export function Storyboard({
 							isGeneratingPrompt={imageStudio.isGeneratingPrompt}
 							settingsOverrides={imageStudio.settingsOverrides}
 							onSettingsChange={imageStudio.setSettingsOverrides}
-							isGenerating={imageStudio.isGenerating}
+							isQueueing={imageStudio.isQueueing}
 							onGenerate={imageStudio.handleGenerate}
 							editingReferenceUrl={imageStudio.editingReferenceUrl}
 							onClearEditingReference={() =>
@@ -898,8 +904,7 @@ export function Storyboard({
 								// Directly update the cache with the new description
 								queryClient.setQueryData(
 									projectKeys.project(projectId),
-									// eslint-disable-next-line @typescript-eslint/no-explicit-any
-									(oldData: any) => {
+									(oldData: ProjectCacheData | undefined) => {
 										if (!oldData) return oldData;
 										return {
 											...oldData,
@@ -916,8 +921,7 @@ export function Storyboard({
 								// Directly update the cache with the new description
 								queryClient.setQueryData(
 									projectKeys.project(projectId),
-									// eslint-disable-next-line @typescript-eslint/no-explicit-any
-									(oldData: any) => {
+									(oldData: ProjectCacheData | undefined) => {
 										if (!oldData) return oldData;
 										return {
 											...oldData,
@@ -982,16 +986,8 @@ export function Storyboard({
 							isGeneratingPrompt={videoStudio.isGeneratingVideoPrompt}
 							onEnhancePrompt={videoStudio.handleEnhanceVideoPrompt}
 							isEnhancingPrompt={videoStudio.isEnhancingVideoPrompt}
-							videoModel={videoStudio.videoModel}
-							onVideoModelChange={videoStudio.setVideoModel}
-							videoMode={videoStudio.videoMode}
-							onVideoModeChange={videoStudio.setVideoMode}
-							videoDuration={videoStudio.videoDuration}
-							onVideoDurationChange={videoStudio.setVideoDuration}
-							generateAudio={videoStudio.generateAudio}
-							onGenerateAudioChange={videoStudio.setGenerateAudio}
-							negativePrompt={videoStudio.negativePrompt}
-							onNegativePromptChange={videoStudio.setNegativePrompt}
+							videoSettings={videoStudio.videoSettings}
+							onVideoSettingsChange={videoStudio.setVideoSettings}
 							useProjectContext={videoStudio.useProjectContext}
 							onUseProjectContextChange={videoStudio.setUseProjectContext}
 							usePrevShotContext={videoStudio.usePrevShotContext}
@@ -1005,25 +1001,38 @@ export function Storyboard({
 				{/* Col 3: Gallery / Video grid */}
 				<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 					{studioMode === "image" && selectedShot ? (
-						<StudioGallery
-							sceneAssets={assetsByShotId.get(selectedShot.id) ?? []}
-							selectingAssetId={imageStudio.isSelectingAssetId}
-							deletingAssetId={imageStudio.deletingAssetId}
-							onSelectAsset={imageStudio.handleSelectAsset}
-							onDeleteAsset={imageStudio.handleDeleteAsset}
-							onRegenerate={imageStudio.handleGenerate}
-							expandedImageId={imageStudio.expandedImageId}
-							onExpandImage={imageStudio.setExpandedImageId}
-							pendingCount={
-								imageStudio.isGenerating
-									? imageStudio.settingsOverrides.batchCount
-									: 0
-							}
-							onLightboxChange={imageStudio.setIsLightboxOpen}
-							onEditImage={(_assetId, url) =>
-								imageStudio.setEditingReferenceUrl(url)
-							}
-						/>
+						(() => {
+							const shotAssets = assetsByShotId.get(selectedShot.id) ?? [];
+							const generatingCount = shotAssets.filter(
+								(asset) => asset.status === "generating",
+							).length;
+							return (
+								<StudioGallery
+									sceneAssets={shotAssets}
+									selectingAssetId={imageStudio.isSelectingAssetId}
+									deletingAssetId={imageStudio.deletingAssetId}
+									onSelectAsset={imageStudio.handleSelectAsset}
+									onDeleteAsset={imageStudio.handleDeleteAsset}
+									onRegenerate={imageStudio.handleGenerate}
+									expandedImageId={imageStudio.expandedImageId}
+									onExpandImage={imageStudio.setExpandedImageId}
+									pendingCount={
+										imageStudio.isQueueing
+											? Math.max(
+													0,
+													imageStudio.settingsOverrides.batchCount -
+														generatingCount,
+												)
+											: 0
+									}
+									runStatusesByAssetId={imageStudio.runStatusesByAssetId}
+									onLightboxChange={imageStudio.setIsLightboxOpen}
+									onEditImage={(_assetId, url) =>
+										imageStudio.setEditingReferenceUrl(url)
+									}
+								/>
+							);
+						})()
 					) : studioMode === "video" && selectedTransitionPair ? (
 						<VideoGrid
 							transitionVideos={allTransitionVideos.filter(
@@ -1035,6 +1044,7 @@ export function Storyboard({
 							onDelete={videoStudio.handleDeleteTransitionVideo}
 							onSelect={videoStudio.handleSelectTransitionVideo}
 							isGenerating={videoStudio.isGeneratingVideo}
+							runStatusesByVideoId={videoStudio.runStatusesByVideoId}
 						/>
 					) : null}
 				</div>

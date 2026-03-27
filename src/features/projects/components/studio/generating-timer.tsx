@@ -4,9 +4,19 @@ import { useEffect, useRef, useState } from "react";
  * Counts up from the asset's createdAt timestamp (or from 0 if not provided).
  * Persists correctly across navigation and page refreshes.
  */
-export function GeneratingTimer({ createdAt }: { createdAt?: string }) {
+export function GeneratingTimer({
+	createdAt,
+	startedAt,
+}: {
+	createdAt?: string | null;
+	startedAt?: string | null;
+}) {
 	const startMsRef = useRef(
-		createdAt ? new Date(createdAt).getTime() : Date.now(),
+		startedAt
+			? new Date(startedAt).getTime()
+			: createdAt
+				? new Date(createdAt).getTime()
+				: Date.now(),
 	);
 	const [elapsed, setElapsed] = useState(() =>
 		Math.max(0, (Date.now() - startMsRef.current) / 1000),

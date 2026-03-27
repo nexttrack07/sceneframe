@@ -3,6 +3,7 @@
 export {
 	normalizeImageDefaults,
 	normalizeProjectSettings,
+	normalizeVideoDefaults,
 } from "./project-normalize";
 export type {
 	ImageDefaults,
@@ -12,4 +13,5 @@ export type {
 	ScenePlanEntry,
 	ShotPlanEntry,
 	ShotType,
+	VideoDefaults,
 } from "./project-types";

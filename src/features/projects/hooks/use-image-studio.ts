@@ -1,19 +1,61 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
 import { normalizeImageDefaults } from "../project-normalize";
-import type { ImageDefaults, SceneAssetSummary } from "../project-types";
+import type {
+	ImageDefaults,
+	SceneAssetSummary,
+	TriggerRunSummary,
+} from "../project-types";
 import { projectKeys } from "../query-keys";
 import {
 	deleteAsset,
 	enhanceShotImagePrompt,
 	generateShotImagePrompt,
 	generateShotImages,
+	getShotImageRunStatuses,
 	pollShotAssets,
 	selectShotAsset,
 } from "../scene-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
+
+function formatImageFailureToast(
+	errorMessage: string | null,
+	failedCount: number,
+) {
+	const fallback = `${failedCount} image${failedCount !== 1 ? "s" : ""} failed. Try again.`;
+	if (!errorMessage) return fallback;
+
+	const message = errorMessage.trim();
+	const lower = message.toLowerCase();
+
+	if (
+		lower.includes("high demand") ||
+		lower.includes("service is currently unavailable") ||
+		lower.includes("temporarily unavailable") ||
+		lower.includes("e003")
+	) {
+		return `Image generation failed because the model provider is under heavy load. Wait a moment and try again.`;
+	}
+
+	if (
+		lower.includes("api key") ||
+		lower.includes("authentication") ||
+		lower.includes("unauthorized") ||
+		lower.includes("forbidden")
+	) {
+		return `Image generation failed because your Replicate connection is missing or invalid. Reconnect your API key and try again.`;
+	}
+
+	if (lower.includes("timeout") || lower.includes("timed out")) {
+		return `Image generation timed out before the provider returned a result. Try again, or use a simpler prompt/settings combination.`;
+	}
+
+	const shortened =
+		message.length > 180 ? `${message.slice(0, 177)}...` : message;
+	return `Image generation failed: ${shortened} Try again or adjust the prompt/settings.`;
+}
 
 export function useImageStudio({
 	projectId,
@@ -35,12 +77,16 @@ export function useImageStudio({
 	const assetsByShotIdRef = useRef(assetsByShotId);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
 	storyShotsRef.current = storyShots;
 	assetsByShotIdRef.current = assetsByShotId;
 	const [prompt, setPrompt] = useState("");
 	const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(
 		normalizeImageDefaults(null),
 	);
+	const [isQueueing, setIsQueueing] = useState(false);
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
 	const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false);
@@ -50,15 +96,98 @@ export function useImageStudio({
 	const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
 	const [expandedImageId, setExpandedImageId] = useState<string | null>(null);
 	const [isLightboxOpen, setIsLightboxOpen] = useState(false);
-	const [useRefImage, setUseRefImage] = useState(false);
+	const [useRefImage, setUseRefImage] = useState(true);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
 	const [editingReferenceUrl, setEditingReferenceUrl] = useState<string | null>(
 		null,
 	);
+	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
+		Record<string, TriggerRunSummary>
+	>({});
+	const pollingParamsRef = useRef({
+		projectId,
+		queryClient,
+		toast,
+	});
+	pollingParamsRef.current = {
+		projectId,
+		queryClient,
+		toast,
+	};
+
+	const stopPolling = useCallback(() => {
+		cancelPollingRef.current = true;
+		if (pollingIntervalRef.current) {
+			clearInterval(pollingIntervalRef.current);
+			pollingIntervalRef.current = null;
+		}
+		isPollingRef.current = false;
+		setIsGenerating(false);
+	}, []);
+
+	const startPolling = useCallback(
+		(shotId: string) => {
+			if (isPollingRef.current) return;
+
+			cancelPollingRef.current = false;
+			isPollingRef.current = true;
+			setIsGenerating(true);
+
+			const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+			const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+			pollingIntervalRef.current = setInterval(async () => {
+				if (cancelPollingRef.current || Date.now() > deadline) {
+					stopPolling();
+					return;
+				}
+
+				try {
+					const runStatusResult = await getShotImageRunStatuses({
+						data: { shotId },
+					});
+					setRunStatusesByAssetId(
+						Object.fromEntries(
+							runStatusResult.runs.map((run) => [run.assetId, run]),
+						),
+					);
+
+					const result = await pollShotAssets({
+						data: { shotId },
+					});
+
+					if (!result.isGenerating) {
+						stopPolling();
+						setRunStatusesByAssetId({});
+						await pollingParamsRef.current.queryClient.invalidateQueries({
+							queryKey: projectKeys.project(pollingParamsRef.current.projectId),
+						});
+						if (result.doneCount > 0) {
+							pollingParamsRef.current.toast(
+								`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+								result.erroredCount > 0 ? "error" : "success",
+							);
+						} else if (result.erroredCount > 0) {
+							pollingParamsRef.current.toast(
+								formatImageFailureToast(
+									result.latestErrorMessage,
+									result.erroredCount,
+								),
+								"error",
+							);
+						}
+					}
+				} catch {
+					// Transient error, keep polling
+				}
+			}, 3000);
+		},
+		[stopPolling],
+	);
 
 	// Expose reset for use when selecting a shot
-	const resetForShot = (useRefImageReset = false) => {
+	const resetForShot = (useRefImageReset = true) => {
 		setUseRefImage(useRefImageReset);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
@@ -66,7 +195,11 @@ export function useImageStudio({
 
 	// Reset image studio state when selected shot changes
 	useEffect(() => {
-		if (!selectedShotId) return;
+		if (!selectedShotId) {
+			stopPolling();
+			return;
+		}
+		stopPolling();
 		const shot = storyShotsRef.current.find((s) => s.id === selectedShotId);
 		const shotAssets = assetsByShotIdRef.current.get(selectedShotId) ?? [];
 		const lastAssetSettings =
@@ -85,14 +218,16 @@ export function useImageStudio({
 		setPrompt(shot?.imagePrompt ?? "");
 		setSettingsOverrides(normalizeImageDefaults(lastAssetSettings));
 		setExpandedImageId(null);
+		setIsQueueing(false);
 		setIsGenerating(hasGeneratingAssets); // Keep true if assets are generating
 		setIsGeneratingPrompt(false);
 		setIsEnhancingPrompt(false);
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setEditingReferenceUrl(null);
+		setRunStatusesByAssetId({});
 		cancelPollingRef.current = false;
-	}, [selectedShotId]);
+	}, [selectedShotId, stopPolling]);
 
 	// Auto-resume polling for generating assets when switching to a shot
 	useEffect(() => {
@@ -103,52 +238,10 @@ export function useImageStudio({
 		);
 
 		if (!hasGeneratingAssets || isPollingRef.current) return;
+		startPolling(selectedShotId);
+	}, [selectedShotId, startPolling]);
 
-		// Start polling for completion
-		cancelPollingRef.current = false;
-		isPollingRef.current = true;
-
-		const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-		const deadline = Date.now() + POLL_TIMEOUT_MS;
-
-		const interval = setInterval(async () => {
-			if (cancelPollingRef.current || Date.now() > deadline) {
-				clearInterval(interval);
-				isPollingRef.current = false;
-				setIsGenerating(false);
-				return;
-			}
-
-			try {
-				const result = await pollShotAssets({
-					data: { shotId: selectedShotId },
-				});
-
-				if (!result.isGenerating) {
-					// All assets done or errored
-					clearInterval(interval);
-					isPollingRef.current = false;
-					setIsGenerating(false);
-					await queryClient.invalidateQueries({
-						queryKey: projectKeys.project(projectId),
-					});
-					if (result.doneCount > 0) {
-						toast(
-							`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
-							result.erroredCount > 0 ? "error" : "success",
-						);
-					}
-				}
-			} catch {
-				// Transient error, keep polling
-			}
-		}, 3000);
-
-		return () => {
-			clearInterval(interval);
-			cancelPollingRef.current = true;
-		};
-	}, [selectedShotId, projectId, queryClient, toast]);
+	useEffect(() => stopPolling, [stopPolling]);
 
 	// Previous shot for reference image
 	const selectedShot = selectedShotId
@@ -166,10 +259,19 @@ export function useImageStudio({
 			)?.url ?? null)
 		: null;
 
+	useEffect(() => {
+		if (!selectedShotId) {
+			setUseRefImage(false);
+			return;
+		}
+
+		setUseRefImage(Boolean(prevShotSelectedImageUrl));
+	}, [selectedShotId, prevShotSelectedImageUrl]);
+
 	async function handleGenerate() {
 		if (!selectedShotId) return;
 		const promptOverride = prompt.trim();
-		setIsGenerating(true);
+		setIsQueueing(true);
 		setError(null);
 		try {
 			const result = await generateShotImages({
@@ -188,13 +290,14 @@ export function useImageStudio({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			startPolling(selectedShotId);
 			const wasEditing = !!editingReferenceUrl;
 			if (wasEditing) setEditingReferenceUrl(null);
 			toast(
 				wasEditing
-					? `Edited image — ${result.completedCount} variant${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`
-					: `Generated ${result.completedCount} image${result.completedCount !== 1 ? "s" : ""}${result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""}`,
-				result.failedCount > 0 ? "error" : "success",
+					? `Queued ${result.queuedCount} edited variant${result.queuedCount !== 1 ? "s" : ""}`
+					: `Queued ${result.queuedCount} image${result.queuedCount !== 1 ? "s" : ""}`,
+				"success",
 			);
 		} catch (err) {
 			const msg =
@@ -202,7 +305,7 @@ export function useImageStudio({
 			setError(msg);
 			toast(msg, "error");
 		} finally {
-			setIsGenerating(false);
+			setIsQueueing(false);
 		}
 	}
 
@@ -296,6 +399,7 @@ export function useImageStudio({
 		setPrompt,
 		settingsOverrides,
 		setSettingsOverrides,
+		isQueueing,
 		isGenerating,
 		isGeneratingPrompt,
 		isEnhancingPrompt,
@@ -312,6 +416,7 @@ export function useImageStudio({
 		usePrevShotContext,
 		setUsePrevShotContext,
 		prevShotSelectedImageUrl,
+		runStatusesByAssetId,
 		editingReferenceUrl,
 		setEditingReferenceUrl,
 		resetForShot,

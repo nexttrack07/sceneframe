@@ -9,10 +9,17 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { SceneAssetSummary } from "../../project-types";
+import type { SceneAssetSummary, TriggerRunSummary } from "../../project-types";
 import { ImageLightbox } from "../image-lightbox";
 import { GalleryImageCard } from "./gallery-image-card";
 import { GeneratingTimer } from "./generating-timer";
+
+function formatSettingLabel(key: string) {
+	return key
+		.split("_")
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
 
 export function StudioGallery({
 	sceneAssets,
@@ -26,6 +33,7 @@ export function StudioGallery({
 	onLightboxChange,
 	onEditImage,
 	pendingCount = 0,
+	runStatusesByAssetId = {},
 }: {
 	sceneAssets: SceneAssetSummary[];
 	selectingAssetId: string | null;
@@ -38,14 +46,23 @@ export function StudioGallery({
 	onLightboxChange?: (open: boolean) => void;
 	onEditImage?: (assetId: string, url: string) => void;
 	pendingCount?: number;
+	runStatusesByAssetId?: Record<string, TriggerRunSummary>;
 }) {
 	const [showLightbox, setShowLightbox] = useState(false);
 	const [lightboxStartIndex, setLightboxStartIndex] = useState(0);
 
 	const laneAssets = useMemo(
 		() =>
-			sceneAssets.filter((a) =>
-				["start_image", "end_image", "image"].includes(a.type),
+			Array.from(
+				new Map(
+					sceneAssets
+						.filter(
+							(a) =>
+								["start_image", "end_image", "image"].includes(a.type) &&
+								a.status !== "error",
+						)
+						.map((asset) => [asset.id, asset]),
+				).values(),
 			),
 		[sceneAssets],
 	);
@@ -58,6 +75,17 @@ export function StudioGallery({
 		: null;
 
 	const doneAssets = laneAssets.filter((a) => a.status === "done" && a.url);
+	const selectedSettings = selectedAsset?.modelSettings
+		? Object.entries(selectedAsset.modelSettings).filter(
+				([key, value]) =>
+					value !== null &&
+					value !== undefined &&
+					key !== "generationLane" &&
+					key !== "prompt" &&
+					key !== "image_input" &&
+					key !== "input_images",
+			)
+		: [];
 
 	function openLightboxForAsset(assetId: string) {
 		const idx = doneAssets.findIndex((a) => a.id === assetId);
@@ -97,7 +125,7 @@ export function StudioGallery({
 					<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">
 						Images
 					</p>
-					<div className="grid grid-cols-3 gap-2">
+					<div className="grid grid-cols-2 gap-3">
 						{/* Optimistic pending skeletons shown immediately when generating */}
 						{Array.from({ length: pendingCount }).map((_, i) => (
 							<div
@@ -108,7 +136,12 @@ export function StudioGallery({
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 								<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
 									<div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
-									<GeneratingTimer />
+									<div className="flex flex-col items-center gap-1">
+										<span className="rounded-full bg-background/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
+											Queued
+										</span>
+										<GeneratingTimer />
+									</div>
 								</div>
 							</div>
 						))}
@@ -116,6 +149,7 @@ export function StudioGallery({
 							<GalleryImageCard
 								key={asset.id}
 								asset={asset}
+								runStatus={runStatusesByAssetId[asset.id]}
 								selectingAssetId={selectingAssetId}
 								deletingAssetId={deletingAssetId}
 								onSelect={() => onSelectAsset(asset.id)}
@@ -246,36 +280,14 @@ export function StudioGallery({
 								)}
 
 								{/* Model settings */}
-								{selectedAsset.modelSettings && (
-									<>
-										{selectedAsset.modelSettings.aspectRatio && (
-											<MetadataRow
-												label="Aspect Ratio"
-												value={String(selectedAsset.modelSettings.aspectRatio)}
-											/>
-										)}
-										{selectedAsset.modelSettings.qualityPreset && (
-											<MetadataRow
-												label="Quality"
-												value={String(
-													selectedAsset.modelSettings.qualityPreset,
-												)}
-											/>
-										)}
-										{selectedAsset.modelSettings.outputFormat && (
-											<MetadataRow
-												label="Format"
-												value={String(selectedAsset.modelSettings.outputFormat)}
-											/>
-										)}
-										{selectedAsset.modelSettings.batchCount && (
-											<MetadataRow
-												label="Batch Size"
-												value={String(selectedAsset.modelSettings.batchCount)}
-											/>
-										)}
-									</>
-								)}
+								{selectedSettings.length > 0 &&
+									selectedSettings.map(([key, value]) => (
+										<MetadataRow
+											key={key}
+											label={formatSettingLabel(key)}
+											value={String(value)}
+										/>
+									))}
 
 								{/* Status */}
 								<MetadataRow label="Status" value={selectedAsset.status} />

@@ -1,9 +1,10 @@
 import { Loader2, Maximize2, Pencil, Trash2 } from "lucide-react";
-import type { SceneAssetSummary } from "../../project-types";
+import type { SceneAssetSummary, TriggerRunSummary } from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
 
 export function GalleryImageCard({
 	asset,
+	runStatus,
 	selectingAssetId,
 	deletingAssetId,
 	onSelect,
@@ -13,6 +14,7 @@ export function GalleryImageCard({
 	onEdit,
 }: {
 	asset: SceneAssetSummary;
+	runStatus?: TriggerRunSummary;
 	selectingAssetId: string | null;
 	deletingAssetId: string | null;
 	onSelect: () => void;
@@ -23,6 +25,18 @@ export function GalleryImageCard({
 }) {
 	const isDeleting = deletingAssetId === asset.id;
 	const isClickable = asset.status === "done" && !!asset.url;
+	const loadingLabel =
+		runStatus?.status === "completed"
+			? "Finalizing"
+			: runStatus?.status === "failed" || runStatus?.status === "canceled"
+				? "Failed"
+				: runStatus?.status === "retrying"
+					? "Retrying"
+					: runStatus?.status === "running"
+						? "Generating"
+						: runStatus?.status === "queued"
+							? "Queued"
+							: "Generating";
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: role="button" and onKeyDown are present for keyboard users; interactive card can't easily be a <button> due to nested <button> descendants
 		<div
@@ -54,7 +68,15 @@ export function GalleryImageCard({
 					<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 					<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
 						<div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 border-t-foreground/60 animate-spin" />
-						<GeneratingTimer createdAt={asset.createdAt} />
+						<div className="flex flex-col items-center gap-1">
+							<span className="rounded-full bg-background/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
+								{loadingLabel}
+							</span>
+							<GeneratingTimer
+								createdAt={runStatus?.createdAt ?? asset.createdAt}
+								startedAt={runStatus?.startedAt}
+							/>
+						</div>
 					</div>
 				</div>
 			)}
