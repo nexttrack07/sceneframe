@@ -626,16 +626,28 @@ export function Storyboard({
 				{/* Col 1: Storyboard sidebar */}
 				<div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
 					<div className="p-3 space-y-2">
-						{/* Back button */}
-						<button
-							type="button"
-							onClick={() => {
-								selectShot(null);
-							}}
-							className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3"
-						>
-							← Back to storyboard
-						</button>
+						{/* Top navigation */}
+						<div className="flex items-center justify-between mb-3">
+							<button
+								type="button"
+								onClick={() => {
+									selectShot(null);
+								}}
+								className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+							>
+								← Back to storyboard
+							</button>
+							<Link
+								to="/projects/$projectId/editor"
+								params={{ projectId }}
+								search={{ shot: undefined, from: undefined, to: undefined }}
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted px-2 py-1 rounded-md transition-colors"
+								title="Open Editor"
+							>
+								<Film size={12} />
+								Editor
+							</Link>
+						</div>
 
 						{/* Scenes + shots */}
 						{filteredScenes.map((scene, sceneIdx) => {
