@@ -1,12 +1,19 @@
 import { Check, Clock, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { TransitionVideoSummary } from "../../project-types";
+import type { BaseVideoSummary } from "../../project-types";
 
 function formatSettingLabel(key: string) {
 	return key
 		.split("_")
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ");
+}
+
+// Type guard for transition videos (which have the stale property)
+function hasStaleProperty(
+	video: BaseVideoSummary,
+): video is BaseVideoSummary & { stale: boolean } {
+	return "stale" in video;
 }
 
 export function VideoDetailDrawer({
@@ -16,7 +23,7 @@ export function VideoDetailDrawer({
 	onDelete,
 	onSelect,
 }: {
-	video: TransitionVideoSummary | null;
+	video: BaseVideoSummary | null;
 	deletingVideoId: string | null;
 	onClose: () => void;
 	onDelete: (id: string) => void;
@@ -111,7 +118,7 @@ export function VideoDetailDrawer({
 							</div>
 						)}
 						{video.isSelected && <MetaRow label="Status" value="Selected" />}
-						{video.stale && (
+						{hasStaleProperty(video) && video.stale && (
 							<MetaRow label="Warning" value="Stale — source images changed" />
 						)}
 					</div>

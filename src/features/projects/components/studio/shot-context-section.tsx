@@ -17,7 +17,7 @@ export function ShotContextSection({
 }) {
 	const router = useRouter();
 	const id = useId();
-	const [isOpen, setIsOpen] = useState(true);
+	const [isOpen, setIsOpen] = useState(false);
 	const [description, setDescription] = useState(shot.description);
 	const [shotType, setShotType] = useState<ShotType>(shot.shotType as ShotType);
 	const [durationSec, setDurationSec] = useState(shot.durationSec);

@@ -16,6 +16,7 @@ import {
 	getShotImageRunStatuses,
 	pollShotAssets,
 	selectShotAsset,
+	uploadShotReferenceImage,
 } from "../scene-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
@@ -102,6 +103,8 @@ export function useImageStudio({
 	const [editingReferenceUrl, setEditingReferenceUrl] = useState<string | null>(
 		null,
 	);
+	const [userReferenceUrls, setUserReferenceUrls] = useState<string[]>([]);
+	const [isUploadingReference, setIsUploadingReference] = useState(false);
 	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
@@ -225,6 +228,8 @@ export function useImageStudio({
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setEditingReferenceUrl(null);
+		setUserReferenceUrls([]);
+		setIsUploadingReference(false);
 		setRunStatusesByAssetId({});
 		cancelPollingRef.current = false;
 	}, [selectedShotId, stopPolling]);
@@ -282,9 +287,12 @@ export function useImageStudio({
 					settingsOverrides,
 					referenceImageUrls: editingReferenceUrl
 						? [editingReferenceUrl]
-						: useRefImage && prevShotSelectedImageUrl
-							? [prevShotSelectedImageUrl]
-							: [],
+						: [
+								...(useRefImage && prevShotSelectedImageUrl
+									? [prevShotSelectedImageUrl]
+									: []),
+								...userReferenceUrls,
+							],
 				},
 			});
 			await queryClient.invalidateQueries({
@@ -394,6 +402,49 @@ export function useImageStudio({
 		}
 	}
 
+	async function handleUploadReference(file: File) {
+		if (!selectedShotId) return;
+		if (userReferenceUrls.length >= 4) {
+			toast("Maximum 4 reference images allowed", "error");
+			return;
+		}
+
+		setIsUploadingReference(true);
+		setError(null);
+		try {
+			// Convert file to base64
+			const reader = new FileReader();
+			const base64Promise = new Promise<string>((resolve, reject) => {
+				reader.onload = () => resolve(reader.result as string);
+				reader.onerror = reject;
+			});
+			reader.readAsDataURL(file);
+			const fileBase64 = await base64Promise;
+
+			const result = await uploadShotReferenceImage({
+				data: {
+					shotId: selectedShotId,
+					fileBase64,
+					fileName: file.name,
+				},
+			});
+
+			setUserReferenceUrls((prev) => [...prev, result.url]);
+			toast("Reference image added", "success");
+		} catch (err) {
+			const msg =
+				err instanceof Error ? err.message : "Failed to upload reference image";
+			setError(msg);
+			toast(msg, "error");
+		} finally {
+			setIsUploadingReference(false);
+		}
+	}
+
+	function handleRemoveReference(url: string) {
+		setUserReferenceUrls((prev) => prev.filter((u) => u !== url));
+	}
+
 	return {
 		prompt,
 		setPrompt,
@@ -419,6 +470,10 @@ export function useImageStudio({
 		runStatusesByAssetId,
 		editingReferenceUrl,
 		setEditingReferenceUrl,
+		userReferenceUrls,
+		isUploadingReference,
+		handleUploadReference,
+		handleRemoveReference,
 		resetForShot,
 		handleGenerate,
 		handleGeneratePrompt,

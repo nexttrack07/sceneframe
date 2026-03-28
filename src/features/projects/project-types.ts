@@ -59,26 +59,38 @@ export interface ProjectSettings {
 	characters?: Character[];
 }
 
-export interface TransitionVideoSummary {
+// Base video type shared by both transition and shot videos
+export interface BaseVideoSummary {
 	id: string;
 	sceneId: string;
-	fromShotId: string;
-	toShotId: string;
-	fromImageId: string | null;
-	toImageId: string | null;
 	status: "generating" | "done" | "error";
 	url: string | null;
 	errorMessage: string | null;
 	prompt: string | null;
 	model: string;
 	isSelected: boolean;
-	stale: boolean;
 	generationId: string | null;
 	jobId: string | null;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;
 	createdAt: string;
+}
+
+// Transition-specific video (extends base)
+export interface TransitionVideoSummary extends BaseVideoSummary {
+	fromShotId: string;
+	toShotId: string;
+	fromImageId: string | null;
+	toImageId: string | null;
+	stale: boolean;
+}
+
+// Shot-specific video (extends base)
+export interface ShotVideoSummary extends BaseVideoSummary {
+	shotId: string;
+	thumbnailUrl: string | null;
+	durationMs: number | null;
+	generationDurationMs: number | null;
 }
 
 export interface VoiceoverAssetSummary {
@@ -125,6 +137,7 @@ export interface SceneAssetSummary {
 	isSelected: boolean;
 	batchId: string | null;
 	createdAt: string;
+	generationDurationMs: number | null;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	// biome-ignore lint/suspicious/noExplicitAny: flexible JSON column; shape varies by model
 	modelSettings: Record<string, any> | null;

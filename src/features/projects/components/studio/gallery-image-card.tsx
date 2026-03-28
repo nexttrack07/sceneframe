@@ -1,4 +1,4 @@
-import { Loader2, Maximize2, Pencil, Trash2 } from "lucide-react";
+import { Info, Loader2, Maximize2, Pencil, Trash2 } from "lucide-react";
 import type { SceneAssetSummary, TriggerRunSummary } from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
 
@@ -12,6 +12,7 @@ export function GalleryImageCard({
 	onLightbox,
 	onDelete,
 	onEdit,
+	onInfo,
 }: {
 	asset: SceneAssetSummary;
 	runStatus?: TriggerRunSummary;
@@ -22,6 +23,7 @@ export function GalleryImageCard({
 	onLightbox: () => void;
 	onDelete: () => void;
 	onEdit?: () => void;
+	onInfo?: () => void;
 }) {
 	const isDeleting = deletingAssetId === asset.id;
 	const isClickable = asset.status === "done" && !!asset.url;
@@ -117,9 +119,23 @@ export function GalleryImageCard({
 							onLightbox();
 						}}
 						className="bg-white/90 text-black p-1.5 rounded-md hover:bg-white transition-colors"
+						title="Full screen"
 					>
 						<Maximize2 size={14} />
 					</button>
+					{onInfo && (
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								onInfo();
+							}}
+							className="bg-white/90 text-black p-1.5 rounded-md hover:bg-white transition-colors"
+							title="View details"
+						>
+							<Info size={14} />
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={(e) => {

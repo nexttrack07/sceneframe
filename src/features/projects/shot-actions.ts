@@ -12,7 +12,7 @@ import {
 	assertSceneOwner,
 	assertShotOwner,
 } from "@/lib/assert-project-owner.server";
-import { copyObject, deleteObject } from "@/lib/r2.server";
+import { copyObject, deleteObject, uploadBuffer } from "@/lib/r2.server";
 import { generateShotImageAsset, startShotVideoGeneration } from "@/trigger";
 import {
 	buildLanePrompt,
@@ -896,6 +896,8 @@ export const generateShotImages = createServerFn({ method: "POST" })
 							...imageDefaults.modelOptions,
 							batchCount: generationCount,
 							generationLane: lane,
+							referenceImageUrls:
+								referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
 						},
 						status: "generating" as const,
 						isSelected: false,
@@ -1121,25 +1123,46 @@ Return ONLY the final prompt, nothing else.`;
 
 export const generateShotVideo = createServerFn({ method: "POST" })
 	.inputValidator(
-		(data: { shotId: string; prompt: string; videoSettings?: unknown }) => data,
+		(data: {
+			shotId: string;
+			prompt: string;
+			videoSettings?: unknown;
+			referenceImageId?: string;
+		}) => data,
 	)
-	.handler(async ({ data: { shotId, prompt, videoSettings } }) => {
+	.handler(async ({ data: { shotId, prompt, videoSettings, referenceImageId } }) => {
 		const { userId, shot, scene } = await assertShotOwner(shotId);
 		const normalizedVideo = normalizeVideoDefaults(videoSettings);
 
-		const selectedAsset = await db.query.assets.findFirst({
-			where: and(
-				eq(assets.shotId, shotId),
-				inArray(assets.type, ["start_image", "end_image", "image"]),
-				eq(assets.isSelected, true),
-				eq(assets.status, "done"),
-				isNull(assets.deletedAt),
-			),
-		});
-		if (!selectedAsset?.url)
-			throw new Error(
-				"No selected image found — select a start frame image first",
-			);
+		// If referenceImageId provided, verify it exists; otherwise check for selected image
+		if (referenceImageId) {
+			const refAsset = await db.query.assets.findFirst({
+				where: and(
+					eq(assets.id, referenceImageId),
+					inArray(assets.type, ["start_image", "end_image", "image"]),
+					eq(assets.status, "done"),
+					isNull(assets.deletedAt),
+				),
+			});
+			if (!refAsset?.url) {
+				throw new Error("Reference image not found or not ready");
+			}
+		} else {
+			const selectedAsset = await db.query.assets.findFirst({
+				where: and(
+					eq(assets.shotId, shotId),
+					inArray(assets.type, ["start_image", "end_image", "image"]),
+					eq(assets.isSelected, true),
+					eq(assets.status, "done"),
+					isNull(assets.deletedAt),
+				),
+			});
+			if (!selectedAsset?.url) {
+				throw new Error(
+					"No selected image found — select a start frame image first",
+				);
+			}
+		}
 
 		const [placeholder] = await db
 			.insert(assets)
@@ -1163,6 +1186,7 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 			modelId: normalizedVideo.model,
 			prompt,
 			modelOptions: normalizedVideo.modelOptions,
+			referenceImageId,
 		});
 
 		await db
@@ -1240,4 +1264,410 @@ export const selectShotAsset = createServerFn({ method: "POST" })
 					),
 				);
 		}
+	});
+
+// ---------------------------------------------------------------------------
+// uploadShotReferenceImage
+// ---------------------------------------------------------------------------
+
+export const uploadShotReferenceImage = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { shotId: string; fileBase64: string; fileName: string }) => data,
+	)
+	.handler(async ({ data: { shotId, fileBase64, fileName } }) => {
+		const { project, scene } = await assertShotOwner(shotId);
+
+		// Decode base64 to buffer
+		const base64Data = fileBase64.replace(/^data:image\/\w+;base64,/, "");
+		const buffer = Buffer.from(base64Data, "base64");
+
+		// Validate file size (20MB max)
+		const MAX_SIZE_BYTES = 20 * 1024 * 1024;
+		if (buffer.length > MAX_SIZE_BYTES) {
+			throw new Error("File size exceeds 20MB limit");
+		}
+
+		// Determine content type from filename
+		const ext = fileName.split(".").pop()?.toLowerCase() ?? "jpg";
+		const contentTypeMap: Record<string, string> = {
+			jpg: "image/jpeg",
+			jpeg: "image/jpeg",
+			png: "image/png",
+			webp: "image/webp",
+			gif: "image/gif",
+		};
+		const contentType = contentTypeMap[ext] ?? "image/jpeg";
+
+		// Generate unique storage key
+		const uniqueId = randomUUID();
+		const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shotId}/references/${uniqueId}.${ext}`;
+
+		// Upload to R2
+		const url = await uploadBuffer(buffer, storageKey, contentType);
+
+		return { url, storageKey };
+	});
+
+// ---------------------------------------------------------------------------
+// enhanceShotVideoPrompt
+// ---------------------------------------------------------------------------
+
+const STALE_SHOT_VIDEO_MS = 15 * 60 * 1000;
+const ORPHANED_SHOT_VIDEO_ERROR =
+	"Video generation stopped before completion. Please try again.";
+
+export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			shotId: string;
+			userPrompt: string;
+			useProjectContext?: boolean;
+			usePrevShotContext?: boolean;
+		}) => data,
+	)
+	.handler(
+		async ({
+			data: {
+				shotId,
+				userPrompt,
+				useProjectContext = true,
+				usePrevShotContext = true,
+			},
+		}) => {
+			const { userId, shot, project, scene } = await assertShotOwner(shotId);
+			const apiKey = await getUserApiKey(userId);
+			const settings = normalizeProjectSettings(project.settings);
+
+			const intake = settings?.intake;
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
+			const styleCtx =
+				useProjectContext && intake?.style?.length
+					? `Visual style: ${intake.style.join(", ")}`
+					: "";
+
+			const projectContextLines = useProjectContext
+				? [
+						intake?.concept ? `Project concept: ${intake.concept}` : null,
+						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+						styleCtx || null,
+						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+						characterContext,
+					]
+						.filter(Boolean)
+						.join("\n")
+				: null;
+
+			const sceneCtx =
+				usePrevShotContext && scene.description
+					? `Scene: ${scene.description}`
+					: null;
+
+			const contextBlock = [
+				useProjectContext
+					? `PROJECT CONTEXT:\n${projectContextLines || `Project: ${project.name}`}`
+					: null,
+				sceneCtx,
+				`Shot description: ${shot.description}`,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+
+			const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
+The user wrote a motion idea for a shot video. Rewrite it into a strong, concise prompt while preserving the user's intent.
+
+Use this exact lightweight structure:
+
+[Subject]: Describe the subject only as needed to anchor the motion in 1 short sentence.
+
+[Motion]: Describe what the subject does during the clip in 1-2 short sentences.
+
+[Camera]: Describe the camera behavior in 1 short sentence, only if it materially helps.
+
+[Style]: Describe mood, lighting, and pacing in 1 short sentence.
+
+Rules:
+- Preserve all important motion elements the user mentioned
+- Keep it motion-first; do not over-describe static appearance
+- Be specific about direction and pacing when relevant
+- Write in present tense
+- Keep every section compact
+- The start frame image already establishes appearance, so focus on motion
+
+Shot context:
+${contextBlock}
+
+Return ONLY the final prompt, nothing else.`;
+
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream(
+					"anthropic/claude-4.5-haiku",
+					{
+						input: {
+							prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
+							max_tokens: 1024,
+							temperature: 0.7,
+						},
+						signal: controller.signal,
+					},
+				)) {
+					chunks.push(String(event));
+				}
+				const enhanced = chunks.join("").trim();
+				if (!enhanced)
+					throw new Error("AI returned an empty response — please try again");
+				return { prompt: enhanced };
+			} finally {
+				clearTimeout(timeout);
+			}
+		},
+	);
+
+// ---------------------------------------------------------------------------
+// pollShotVideos — poll all video assets for a shot
+// ---------------------------------------------------------------------------
+
+export const pollShotVideos = createServerFn({ method: "POST" })
+	.inputValidator((data: { shotId: string }) => data)
+	.handler(async ({ data: { shotId } }) => {
+		const { userId } = await assertShotOwner(shotId);
+
+		await reconcileGeneratingShotVideos({ shotId, userId });
+
+		const videos = await db.query.assets.findMany({
+			where: and(
+				eq(assets.shotId, shotId),
+				eq(assets.type, "video"),
+				eq(assets.stage, "video"),
+				isNull(assets.deletedAt),
+			),
+			orderBy: desc(assets.createdAt),
+		});
+
+		const generating = videos.filter((v) => v.status === "generating");
+		const done = videos.filter((v) => v.status === "done");
+		const errored = videos.filter((v) => v.status === "error");
+		const selectedDone = done.find((v) => v.isSelected) ?? null;
+
+		return {
+			generatingCount: generating.length,
+			doneCount: done.length,
+			erroredCount: errored.length,
+			isGenerating: generating.length > 0,
+			latestDoneId: done[0]?.id ?? null,
+			selectedDoneId: selectedDone?.id ?? null,
+			latestErrorMessage: errored[0]?.errorMessage ?? null,
+		};
+	});
+
+async function reconcileGeneratingShotVideos(args: {
+	shotId: string;
+	userId: string;
+}) {
+	const generatingVideos = await db.query.assets.findMany({
+		where: and(
+			eq(assets.shotId, args.shotId),
+			eq(assets.type, "video"),
+			eq(assets.stage, "video"),
+			eq(assets.status, "generating"),
+			isNull(assets.deletedAt),
+		),
+		orderBy: desc(assets.createdAt),
+	});
+
+	await Promise.all(
+		generatingVideos.map(async (video) => {
+			if (Date.now() - video.createdAt.getTime() > STALE_SHOT_VIDEO_MS) {
+				await db
+					.update(assets)
+					.set({
+						status: "error",
+						errorMessage:
+							"Video generation timed out before the provider returned a result. Try again or choose a faster model.",
+					})
+					.where(eq(assets.id, video.id));
+				return;
+			}
+
+			if (!video.jobId) {
+				await db
+					.update(assets)
+					.set({
+						status: "error",
+						errorMessage: ORPHANED_SHOT_VIDEO_ERROR,
+					})
+					.where(eq(assets.id, video.id));
+				return;
+			}
+
+			try {
+				const run = await runs.retrieve(video.jobId);
+				const runStatus = mapTriggerRunStatus(run);
+
+				if (runStatus === "failed" || runStatus === "canceled") {
+					await db
+						.update(assets)
+						.set({
+							status: "error",
+							errorMessage: run.error?.message ?? ORPHANED_SHOT_VIDEO_ERROR,
+						})
+						.where(eq(assets.id, video.id));
+				}
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message.toLowerCase() : "";
+				const looksMissingRun =
+					message.includes("not found") ||
+					message.includes("no run") ||
+					message.includes("404");
+
+				if (looksMissingRun) {
+					await db
+						.update(assets)
+						.set({
+							status: "error",
+							errorMessage: ORPHANED_SHOT_VIDEO_ERROR,
+						})
+						.where(eq(assets.id, video.id));
+				}
+			}
+		}),
+	);
+}
+
+// ---------------------------------------------------------------------------
+// getShotVideoRunStatuses
+// ---------------------------------------------------------------------------
+
+export const getShotVideoRunStatuses = createServerFn({ method: "POST" })
+	.inputValidator((data: { shotId: string }) => data)
+	.handler(async ({ data: { shotId } }) => {
+		await assertShotOwner(shotId);
+
+		const generatingVideos = await db.query.assets.findMany({
+			where: and(
+				eq(assets.shotId, shotId),
+				eq(assets.type, "video"),
+				eq(assets.stage, "video"),
+				eq(assets.status, "generating"),
+				isNull(assets.deletedAt),
+			),
+			orderBy: desc(assets.createdAt),
+		});
+
+		const statuses = await Promise.all(
+			generatingVideos.map(async (video): Promise<TriggerRunSummary> => {
+				if (!video.jobId) {
+					return {
+						assetId: video.id,
+						jobId: "",
+						status: "unknown",
+						attemptCount: 0,
+						createdAt: video.createdAt.toISOString(),
+						startedAt: null,
+						finishedAt: null,
+						errorMessage: null,
+					};
+				}
+
+				try {
+					const run = await runs.retrieve(video.jobId);
+
+					return {
+						assetId: video.id,
+						jobId: video.jobId,
+						status: mapTriggerRunStatus(run),
+						attemptCount: run.attemptCount,
+						createdAt: run.createdAt.toISOString(),
+						startedAt: run.startedAt?.toISOString() ?? null,
+						finishedAt: run.finishedAt?.toISOString() ?? null,
+						errorMessage: run.error?.message ?? null,
+					};
+				} catch (error) {
+					return {
+						assetId: video.id,
+						jobId: video.jobId,
+						status: "unknown",
+						attemptCount: 0,
+						createdAt: video.createdAt.toISOString(),
+						startedAt: null,
+						finishedAt: null,
+						errorMessage:
+							error instanceof Error ? error.message : "Failed to load run",
+					};
+				}
+			}),
+		);
+
+		return { runs: statuses };
+	});
+
+// ---------------------------------------------------------------------------
+// selectShotVideo
+// ---------------------------------------------------------------------------
+
+export const selectShotVideo = createServerFn({ method: "POST" })
+	.inputValidator((data: { videoId: string }) => data)
+	.handler(async ({ data: { videoId } }) => {
+		const { asset, shot } = await assertAssetOwnerViaShot(videoId);
+
+		if (asset.type !== "video" || asset.stage !== "video") {
+			throw new Error("Only video assets can be selected here");
+		}
+		if (asset.status !== "done") {
+			throw new Error("Only completed videos can be selected");
+		}
+
+		// Deselect all video assets for this shot, then select the target
+		await db.transaction(async (tx) => {
+			await tx
+				.update(assets)
+				.set({ isSelected: false })
+				.where(
+					and(
+						eq(assets.shotId, shot.id),
+						eq(assets.type, "video"),
+						eq(assets.stage, "video"),
+						isNull(assets.deletedAt),
+					),
+				);
+			await tx
+				.update(assets)
+				.set({ isSelected: true })
+				.where(eq(assets.id, asset.id));
+		});
+	});
+
+// ---------------------------------------------------------------------------
+// deleteShotVideo
+// ---------------------------------------------------------------------------
+
+export const deleteShotVideo = createServerFn({ method: "POST" })
+	.inputValidator((data: { videoId: string }) => data)
+	.handler(async ({ data: { videoId } }) => {
+		const { asset } = await assertAssetOwnerViaShot(videoId);
+
+		if (asset.type !== "video" || asset.stage !== "video") {
+			throw new Error("Only video assets can be deleted here");
+		}
+
+		if (asset.storageKey) {
+			await deleteObject(asset.storageKey).catch((err) =>
+				console.error("R2 deleteObject failed for key:", asset.storageKey, err),
+			);
+		}
+
+		await db
+			.update(assets)
+			.set({ deletedAt: new Date() })
+			.where(eq(assets.id, videoId));
 	});

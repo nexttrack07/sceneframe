@@ -30,7 +30,7 @@ export function SceneContextSection({
 }) {
 	const router = useRouter();
 	const id = useId();
-	const [isOpen, setIsOpen] = useState(true);
+	const [isOpen, setIsOpen] = useState(false);
 	const [title, setTitle] = useState(scene.title ?? "");
 	const [description, setDescription] = useState(scene.description);
 	const [isDirty, setIsDirty] = useState(false);

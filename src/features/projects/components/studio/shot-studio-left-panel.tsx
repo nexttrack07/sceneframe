@@ -6,6 +6,7 @@ import { InlineSettingsRow } from "./inline-settings-row";
 import { PromptEditor } from "./prompt-editor";
 import { SceneContextSection } from "./scene-context-section";
 import { ShotContextSection } from "./shot-context-section";
+import { VisualReferencesSection } from "./visual-references-section";
 
 function ContextToggleCard({
 	label,
@@ -77,6 +78,11 @@ export function ShotStudioLeftPanel({
 	onUsePrevShotContextChange,
 	editingReferenceUrl,
 	onClearEditingReference,
+	userReferenceUrls,
+	isUploadingReference,
+	onUploadReference,
+	onRemoveReference,
+	hideContext,
 }: {
 	shot: Shot;
 	parentScene: Scene;
@@ -102,24 +108,34 @@ export function ShotStudioLeftPanel({
 	onUsePrevShotContextChange?: (v: boolean) => void;
 	editingReferenceUrl?: string | null;
 	onClearEditingReference?: () => void;
+	userReferenceUrls?: string[];
+	isUploadingReference?: boolean;
+	onUploadReference?: (file: File) => void;
+	onRemoveReference?: (url: string) => void;
+	/** When true, hides SceneContextSection and ShotContextSection (rendered externally) */
+	hideContext?: boolean;
 }) {
 	return (
 		<div className="flex flex-col h-full bg-card">
 			{/* Scrollable content */}
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
-				<SceneContextSection
-					scene={parentScene}
-					plan={scenePlan}
-					onDescriptionSaved={onSceneDescriptionSaved}
-				/>
+				{!hideContext && (
+					<>
+						<SceneContextSection
+							scene={parentScene}
+							plan={scenePlan}
+							onDescriptionSaved={onSceneDescriptionSaved}
+						/>
 
-				<ShotContextSection
-					shot={shot}
-					parentScene={parentScene}
-					onDescriptionSaved={onDescriptionSaved}
-				/>
+						<ShotContextSection
+							shot={shot}
+							parentScene={parentScene}
+							onDescriptionSaved={onDescriptionSaved}
+						/>
+					</>
+				)}
 
-				<div className="border-t pt-4 space-y-3">
+				<div className={hideContext ? "space-y-3" : "border-t pt-4 space-y-3"}>
 					{/* Context toggle cards */}
 					<div className="space-y-1.5">
 						<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
@@ -181,6 +197,16 @@ export function ShotStudioLeftPanel({
 								</button>
 							)}
 						</div>
+					)}
+
+					{/* User-uploaded visual references */}
+					{onUploadReference && onRemoveReference && (
+						<VisualReferencesSection
+							referenceUrls={userReferenceUrls ?? []}
+							isUploading={isUploadingReference ?? false}
+							onUpload={onUploadReference}
+							onRemove={onRemoveReference}
+						/>
 					)}
 
 					<PromptEditor

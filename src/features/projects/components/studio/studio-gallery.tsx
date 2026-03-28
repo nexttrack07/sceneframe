@@ -21,6 +21,15 @@ function formatSettingLabel(key: string) {
 		.join(" ");
 }
 
+function formatDuration(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	const seconds = ms / 1000;
+	if (seconds < 60) return `${seconds.toFixed(1)}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = Math.round(seconds % 60);
+	return `${minutes}m ${remainingSeconds}s`;
+}
+
 export function StudioGallery({
 	sceneAssets,
 	selectingAssetId,
@@ -83,7 +92,9 @@ export function StudioGallery({
 					key !== "generationLane" &&
 					key !== "prompt" &&
 					key !== "image_input" &&
-					key !== "input_images",
+					key !== "input_images" &&
+					key !== "referenceImageUrls" &&
+					key !== "batchCount",
 			)
 		: [];
 
@@ -162,6 +173,9 @@ export function StudioGallery({
 									onEditImage && asset.url
 										? () => onEditImage(asset.id, asset.url as string)
 										: undefined
+								}
+								onInfo={() =>
+									onExpandImage(asset.id === expandedImageId ? null : asset.id)
 								}
 							/>
 						))}
@@ -255,6 +269,15 @@ export function StudioGallery({
 
 							{/* Metadata */}
 							<div className="space-y-3">
+								{/* Generation duration */}
+								{selectedAsset.generationDurationMs && (
+									<MetadataRow
+										icon={<Clock size={12} />}
+										label="Generation Time"
+										value={formatDuration(selectedAsset.generationDurationMs)}
+									/>
+								)}
+
 								{/* Timestamp */}
 								<MetadataRow
 									icon={<Clock size={12} />}
@@ -273,6 +296,30 @@ export function StudioGallery({
 										</p>
 									</div>
 								)}
+
+								{/* Reference Images */}
+								{selectedAsset.modelSettings?.referenceImageUrls &&
+									(selectedAsset.modelSettings.referenceImageUrls as string[])
+										.length > 0 && (
+										<div className="space-y-1">
+											<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+												Reference Images
+											</p>
+											<div className="grid grid-cols-3 gap-1.5">
+												{(
+													selectedAsset.modelSettings
+														.referenceImageUrls as string[]
+												).map((url) => (
+													<img
+														key={url}
+														src={url}
+														alt="Reference"
+														className="w-full aspect-square object-cover rounded"
+													/>
+												))}
+											</div>
+										</div>
+									)}
 
 								{/* Model */}
 								{selectedAsset.model && (

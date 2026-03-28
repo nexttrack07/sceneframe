@@ -193,6 +193,7 @@ export const assets = pgTable(
 		height: integer("height"),
 		durationMs: integer("duration_ms"),
 		fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
+		generationDurationMs: integer("generation_duration_ms"),
 		status: text("status")
 			.notNull()
 			.default("generating")

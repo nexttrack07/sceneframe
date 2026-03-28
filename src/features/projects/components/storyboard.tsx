@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import type { Scene, Shot } from "@/db/schema";
 import { useImageStudio } from "../hooks/use-image-studio";
+import { useShotVideoStudio } from "../hooks/use-shot-video-studio";
 import { useVideoStudio } from "../hooks/use-video-studio";
 import { resetWorkshop } from "../project-mutations";
 import { exportProjectHandoff } from "../project-queries";
@@ -39,6 +40,7 @@ import type {
 	ProjectSettings,
 	SceneAssetSummary,
 	ScenePlanEntry,
+	ShotVideoSummary,
 	TransitionVideoSummary,
 	VoiceoverAssetSummary,
 } from "../project-types";
@@ -50,6 +52,7 @@ import {
 	deleteScene,
 	deleteShot,
 	reorderScene,
+	reorderShot,
 } from "../scene-actions";
 import { CharactersPanel } from "./characters";
 import { ResetDialog } from "./reset-dialog";
@@ -57,9 +60,15 @@ import { SceneHeader } from "./scene-header";
 import { SceneImageStudio } from "./scene-image-studio";
 import { ShotCard } from "./shot-card";
 import { StoryboardCard } from "./storyboard-card";
+import { SceneContextSection } from "./studio/scene-context-section";
+import { ShotContextSection } from "./studio/shot-context-section";
+import { type ShotMediaTab, ShotMediaTabs } from "./studio/shot-media-tabs";
 import { ShotStudioLeftPanel } from "./studio/shot-studio-left-panel";
 import { StudioGallery } from "./studio/studio-gallery";
-import { VideoControlsPanel } from "./studio/video-controls-panel";
+import {
+	TransitionContextSection,
+	VideoControlsPanel,
+} from "./studio/video-controls-panel";
 import { VideoGrid } from "./studio/video-grid";
 import { VoiceoverPanel } from "./voiceover-panel";
 
@@ -84,6 +93,7 @@ export function Storyboard({
 	projectSettings,
 	scenePlan,
 	transitionVideos: allTransitionVideos,
+	shotVideoAssets: allShotVideoAssets,
 	voiceovers: allVoiceovers,
 	backgroundMusic: allBackgroundMusic,
 	initialShotId,
@@ -97,6 +107,7 @@ export function Storyboard({
 	projectSettings: ProjectSettings | null;
 	scenePlan: ScenePlanEntry[];
 	transitionVideos: TransitionVideoSummary[];
+	shotVideoAssets: ShotVideoSummary[];
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
 	initialShotId?: string;
@@ -122,9 +133,19 @@ export function Storyboard({
 			: null,
 	);
 
-	// Drag-to-reorder state
+	// Tab state for shot media (images vs video)
+	const [shotMediaTab, setShotMediaTab] = useState<ShotMediaTab>("images");
+
+	// Drag-to-reorder state for scenes
 	const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
 	const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+	// Drag-to-reorder state for shots (within a scene)
+	const [draggedShotId, setDraggedShotId] = useState<string | null>(null);
+	const [dragOverShotIndex, setDragOverShotIndex] = useState<{
+		sceneId: string;
+		index: number;
+	} | null>(null);
 
 	// Add scene form state
 	const [showAddForm, setShowAddForm] = useState(false);
@@ -233,10 +254,19 @@ export function Storyboard({
 		setError,
 	});
 
+	const shotVideoStudio = useShotVideoStudio({
+		projectId,
+		selectedShotId,
+		allShotVideos: allShotVideoAssets,
+		toast,
+		setError,
+	});
+
 	function selectShot(id: string | null) {
 		setSelectedShotIdState(id);
 		setSelectedTransitionPairState(null);
 		setVoiceoverSceneId(null);
+		setShotMediaTab("images");
 		imageStudio.resetForShot(false);
 		if (id) {
 			void navigate({
@@ -586,6 +616,75 @@ export function Storyboard({
 		setDragOverIndex(null);
 	}
 
+	// Shot drag-and-drop handlers
+	function handleShotDragStart(e: React.DragEvent, shotId: string) {
+		e.stopPropagation(); // Prevent scene drag
+		setDraggedShotId(shotId);
+		e.dataTransfer.effectAllowed = "move";
+		e.dataTransfer.setData("text/plain", shotId);
+	}
+
+	function handleShotDragOver(
+		e: React.DragEvent,
+		sceneId: string,
+		index: number,
+	) {
+		e.preventDefault();
+		e.stopPropagation();
+		e.dataTransfer.dropEffect = "move";
+		if (draggedShotId) {
+			// Only allow drops within the same scene
+			const draggedShot = storyShots.find((s) => s.id === draggedShotId);
+			if (draggedShot?.sceneId === sceneId) {
+				setDragOverShotIndex({ sceneId, index });
+			}
+		}
+	}
+
+	async function handleShotDrop(
+		e: React.DragEvent,
+		sceneId: string,
+		dropIndex: number,
+	) {
+		e.preventDefault();
+		e.stopPropagation();
+		setDragOverShotIndex(null);
+
+		const shotId = draggedShotId;
+		setDraggedShotId(null);
+		if (!shotId) return;
+
+		const sceneShots = shotsBySceneId.get(sceneId) ?? [];
+		const draggedIndex = sceneShots.findIndex((s) => s.id === shotId);
+		if (draggedIndex === -1 || draggedIndex === dropIndex) return;
+
+		let newOrder: number;
+		if (dropIndex === 0) {
+			newOrder = sceneShots[0].order - 1;
+		} else if (dropIndex >= sceneShots.length) {
+			newOrder = sceneShots[sceneShots.length - 1].order + 1;
+		} else {
+			const prev = sceneShots[dropIndex - 1];
+			const next = sceneShots[dropIndex];
+			newOrder = (prev.order + next.order) / 2;
+		}
+
+		setError(null);
+		try {
+			await reorderShot({ data: { shotId, newOrder } });
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to reorder shot");
+		}
+	}
+
+	function handleShotDragEnd() {
+		setDraggedShotId(null);
+		setDragOverShotIndex(null);
+	}
+
 	function toggleCollapse(sceneId: string) {
 		setCollapseState((prev) => {
 			const next = new Map(prev);
@@ -632,29 +731,6 @@ export function Storyboard({
 				{/* Col 1: Storyboard sidebar */}
 				<div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
 					<div className="p-3 space-y-2">
-						{/* Top navigation */}
-						<div className="flex items-center justify-between mb-3">
-							<button
-								type="button"
-								onClick={() => {
-									selectShot(null);
-								}}
-								className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-							>
-								← Back to storyboard
-							</button>
-							<Link
-								to="/projects/$projectId/editor"
-								params={{ projectId }}
-								search={{ shot: undefined, from: undefined, to: undefined }}
-								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted px-2 py-1 rounded-md transition-colors"
-								title="Open Editor"
-							>
-								<Film size={12} />
-								Editor
-							</Link>
-						</div>
-
 						{/* Scenes + shots */}
 						{filteredScenes.map((scene, sceneIdx) => {
 							const sceneShots = shotsBySceneId.get(scene.id) ?? [];
@@ -709,7 +785,25 @@ export function Storyboard({
 											)?.url ?? null;
 
 										return (
-											<div key={shot.id}>
+											<div
+												key={shot.id}
+												draggable
+												onDragStart={(e) => handleShotDragStart(e, shot.id)}
+												onDragOver={(e) =>
+													handleShotDragOver(e, scene.id, shotIdx)
+												}
+												onDrop={(e) => handleShotDrop(e, scene.id, shotIdx)}
+												onDragEnd={handleShotDragEnd}
+												className={
+													draggedShotId === shot.id ? "opacity-50" : ""
+												}
+											>
+												{/* Drop indicator */}
+												{dragOverShotIndex?.sceneId === scene.id &&
+													dragOverShotIndex.index === shotIdx &&
+													draggedShotId !== shot.id && (
+														<div className="h-0.5 bg-primary rounded-full mb-1" />
+													)}
 												{/* Shot card */}
 												<div className="relative group/shot mb-1">
 													<button
@@ -866,6 +960,23 @@ export function Storyboard({
 											</div>
 										);
 									})}
+
+									{/* Drop zone at end of shots */}
+									{draggedShotId && (
+										<div
+											className="h-6"
+											onDragOver={(e) =>
+												handleShotDragOver(e, scene.id, sceneShots.length)
+											}
+											onDrop={(e) =>
+												handleShotDrop(e, scene.id, sceneShots.length)
+											}
+										/>
+									)}
+									{dragOverShotIndex?.sceneId === scene.id &&
+										dragOverShotIndex.index >= sceneShots.length && (
+											<div className="h-0.5 bg-primary rounded-full mb-1" />
+										)}
 								</div>
 							);
 						})}
@@ -874,67 +985,133 @@ export function Storyboard({
 
 				{/* Col 2: Controls panel */}
 				<div className="w-[360px] border-r flex-shrink-0 flex flex-col bg-card overflow-hidden">
-					{studioMode === "image" && selectedShot && shotParentScene ? (
-						<ShotStudioLeftPanel
-							shot={selectedShot}
-							parentScene={shotParentScene}
-							scenePlan={planBySceneId.get(shotParentScene.id)}
-							prompt={imageStudio.prompt}
-							onPromptChange={imageStudio.setPrompt}
-							onGeneratePrompt={imageStudio.handleGeneratePrompt}
-							onEnhancePrompt={imageStudio.handleEnhancePrompt}
-							isEnhancingPrompt={imageStudio.isEnhancingPrompt}
-							refImageUrl={imageStudio.prevShotSelectedImageUrl}
-							useRefImage={imageStudio.useRefImage}
-							onUseRefImageChange={imageStudio.setUseRefImage}
-							useProjectContext={imageStudio.useProjectContext}
-							onUseProjectContextChange={imageStudio.setUseProjectContext}
-							usePrevShotContext={imageStudio.usePrevShotContext}
-							onUsePrevShotContextChange={imageStudio.setUsePrevShotContext}
-							isGeneratingPrompt={imageStudio.isGeneratingPrompt}
-							settingsOverrides={imageStudio.settingsOverrides}
-							onSettingsChange={imageStudio.setSettingsOverrides}
-							isQueueing={imageStudio.isQueueing}
-							onGenerate={imageStudio.handleGenerate}
-							editingReferenceUrl={imageStudio.editingReferenceUrl}
-							onClearEditingReference={() =>
-								imageStudio.setEditingReferenceUrl(null)
-							}
-							onDescriptionSaved={async (newDescription) => {
-								// Directly update the cache with the new description
-								queryClient.setQueryData(
-									projectKeys.project(projectId),
-									(oldData: ProjectCacheData | undefined) => {
-										if (!oldData) return oldData;
-										return {
-											...oldData,
-											shots: oldData.shots.map((s: Shot) =>
-												s.id === selectedShot.id
-													? { ...s, description: newDescription }
-													: s,
-											),
-										};
-									},
-								);
-							}}
-							onSceneDescriptionSaved={async (newDescription) => {
-								// Directly update the cache with the new description
-								queryClient.setQueryData(
-									projectKeys.project(projectId),
-									(oldData: ProjectCacheData | undefined) => {
-										if (!oldData) return oldData;
-										return {
-											...oldData,
-											scenes: oldData.scenes.map((s: Scene) =>
-												s.id === shotParentScene.id
-													? { ...s, description: newDescription }
-													: s,
-											),
-										};
-									},
-								);
-							}}
-						/>
+					{/* Shared context section for shot studio (above tabs) */}
+					{studioMode === "image" && selectedShot && shotParentScene && (
+						<div className="p-4 border-b flex-shrink-0 space-y-4">
+							<SceneContextSection
+								scene={shotParentScene}
+								plan={planBySceneId.get(shotParentScene.id)}
+								onDescriptionSaved={async (newDescription) => {
+									queryClient.setQueryData(
+										projectKeys.project(projectId),
+										(oldData: ProjectCacheData | undefined) => {
+											if (!oldData) return oldData;
+											return {
+												...oldData,
+												scenes: oldData.scenes.map((s: Scene) =>
+													s.id === shotParentScene.id
+														? { ...s, description: newDescription }
+														: s,
+												),
+											};
+										},
+									);
+								}}
+							/>
+							<ShotContextSection
+								shot={selectedShot}
+								parentScene={shotParentScene}
+								onDescriptionSaved={async (newDescription) => {
+									queryClient.setQueryData(
+										projectKeys.project(projectId),
+										(oldData: ProjectCacheData | undefined) => {
+											if (!oldData) return oldData;
+											return {
+												...oldData,
+												shots: oldData.shots.map((s: Shot) =>
+													s.id === selectedShot.id
+														? { ...s, description: newDescription }
+														: s,
+												),
+											};
+										},
+									);
+								}}
+							/>
+						</div>
+					)}
+
+					{/* Tab bar for shot media types */}
+					{studioMode === "image" && selectedShot && shotParentScene && (
+						<div className="p-3 border-b flex-shrink-0">
+							<ShotMediaTabs
+								activeTab={shotMediaTab}
+								onTabChange={setShotMediaTab}
+							/>
+						</div>
+					)}
+
+					{studioMode === "image" &&
+					selectedShot &&
+					shotParentScene &&
+					shotMediaTab === "images" ? (
+						<div className="flex-1 min-h-0 overflow-hidden">
+							<ShotStudioLeftPanel
+								shot={selectedShot}
+								parentScene={shotParentScene}
+								scenePlan={planBySceneId.get(shotParentScene.id)}
+								prompt={imageStudio.prompt}
+								onPromptChange={imageStudio.setPrompt}
+								onGeneratePrompt={imageStudio.handleGeneratePrompt}
+								onEnhancePrompt={imageStudio.handleEnhancePrompt}
+								isEnhancingPrompt={imageStudio.isEnhancingPrompt}
+								refImageUrl={imageStudio.prevShotSelectedImageUrl}
+								useRefImage={imageStudio.useRefImage}
+								onUseRefImageChange={imageStudio.setUseRefImage}
+								useProjectContext={imageStudio.useProjectContext}
+								onUseProjectContextChange={imageStudio.setUseProjectContext}
+								usePrevShotContext={imageStudio.usePrevShotContext}
+								onUsePrevShotContextChange={imageStudio.setUsePrevShotContext}
+								isGeneratingPrompt={imageStudio.isGeneratingPrompt}
+								settingsOverrides={imageStudio.settingsOverrides}
+								onSettingsChange={imageStudio.setSettingsOverrides}
+								isQueueing={imageStudio.isQueueing}
+								onGenerate={imageStudio.handleGenerate}
+								editingReferenceUrl={imageStudio.editingReferenceUrl}
+								onClearEditingReference={() =>
+									imageStudio.setEditingReferenceUrl(null)
+								}
+								userReferenceUrls={imageStudio.userReferenceUrls}
+								isUploadingReference={imageStudio.isUploadingReference}
+								onUploadReference={imageStudio.handleUploadReference}
+								onRemoveReference={imageStudio.handleRemoveReference}
+								hideContext
+							/>
+						</div>
+					) : studioMode === "image" &&
+						selectedShot &&
+						shotParentScene &&
+						shotMediaTab === "video" ? (
+						<div className="flex-1 min-h-0 overflow-hidden">
+							<VideoControlsPanel
+								contextSection={null}
+								videoPrompt={shotVideoStudio.videoPrompt}
+								onVideoPromptChange={shotVideoStudio.setVideoPrompt}
+								onGeneratePrompt={shotVideoStudio.handleGenerateVideoPrompt}
+								isGeneratingPrompt={shotVideoStudio.isGeneratingVideoPrompt}
+								onEnhancePrompt={shotVideoStudio.handleEnhanceVideoPrompt}
+								isEnhancingPrompt={shotVideoStudio.isEnhancingVideoPrompt}
+								videoSettings={shotVideoStudio.videoSettings}
+								onVideoSettingsChange={shotVideoStudio.setVideoSettings}
+								useProjectContext={shotVideoStudio.useProjectContext}
+								onUseProjectContextChange={shotVideoStudio.setUseProjectContext}
+								usePrevShotContext={shotVideoStudio.usePrevShotContext}
+								onUsePrevShotContextChange={shotVideoStudio.setUsePrevShotContext}
+								isGenerating={shotVideoStudio.isGeneratingVideo}
+								onGenerate={shotVideoStudio.handleGenerateVideo}
+								generateButtonLabel="Generate shot video"
+								generatingButtonLabel="Generating shot video..."
+								availableImages={(assetsByShotId.get(selectedShot.id) ?? [])
+									.filter((a) => a.status === "done" && a.url)
+									.map((a) => ({
+										id: a.id,
+										url: a.url!,
+										isSelected: a.isSelected,
+									}))}
+								referenceImageId={shotVideoStudio.referenceImageId}
+								onReferenceImageChange={shotVideoStudio.setReferenceImageId}
+							/>
+						</div>
 					) : studioMode === "voiceover" && voiceoverScene ? (
 						<div className="flex flex-col h-full overflow-y-auto">
 							<div className="p-4 border-b">
@@ -978,8 +1155,9 @@ export function Storyboard({
 						</div>
 					) : studioMode === "video" && fromShot && toShot ? (
 						<VideoControlsPanel
-							fromShot={fromShot}
-							toShot={toShot}
+							contextSection={
+								<TransitionContextSection fromShot={fromShot} toShot={toShot} />
+							}
 							videoPrompt={videoStudio.videoPrompt}
 							onVideoPromptChange={videoStudio.setVideoPrompt}
 							onGeneratePrompt={videoStudio.handleGenerateVideoPrompt}
@@ -1000,7 +1178,9 @@ export function Storyboard({
 
 				{/* Col 3: Gallery / Video grid */}
 				<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-					{studioMode === "image" && selectedShot ? (
+					{studioMode === "image" &&
+					selectedShot &&
+					shotMediaTab === "images" ? (
 						(() => {
 							const shotAssets = assetsByShotId.get(selectedShot.id) ?? [];
 							const generatingCount = shotAssets.filter(
@@ -1033,9 +1213,23 @@ export function Storyboard({
 								/>
 							);
 						})()
+					) : studioMode === "image" &&
+						selectedShot &&
+						shotMediaTab === "video" ? (
+						<VideoGrid
+							videos={allShotVideoAssets.filter(
+								(v) => v.shotId === selectedShot.id,
+							)}
+							deletingVideoId={shotVideoStudio.deletingVideoId}
+							onDelete={shotVideoStudio.handleDeleteShotVideo}
+							onSelect={shotVideoStudio.handleSelectShotVideo}
+							isGenerating={shotVideoStudio.isGeneratingVideo}
+							runStatusesByVideoId={shotVideoStudio.runStatusesByVideoId}
+							emptyMessage="No shot videos yet"
+						/>
 					) : studioMode === "video" && selectedTransitionPair ? (
 						<VideoGrid
-							transitionVideos={allTransitionVideos.filter(
+							videos={allTransitionVideos.filter(
 								(tv) =>
 									tv.fromShotId === selectedTransitionPair.fromShotId &&
 									tv.toShotId === selectedTransitionPair.toShotId,
@@ -1045,6 +1239,7 @@ export function Storyboard({
 							onSelect={videoStudio.handleSelectTransitionVideo}
 							isGenerating={videoStudio.isGeneratingVideo}
 							runStatusesByVideoId={videoStudio.runStatusesByVideoId}
+							emptyMessage="No transition videos yet"
 						/>
 					) : null}
 				</div>
@@ -1211,9 +1406,27 @@ export function Storyboard({
 
 									{!isCollapsed && (
 										<div className="ml-6 mt-2 space-y-2">
-											{sceneShots.map((shot) => {
+											{sceneShots.map((shot, shotIdx) => {
 												return (
-													<div key={shot.id}>
+													<div
+														key={shot.id}
+														draggable
+														onDragStart={(e) => handleShotDragStart(e, shot.id)}
+														onDragOver={(e) =>
+															handleShotDragOver(e, scene.id, shotIdx)
+														}
+														onDrop={(e) => handleShotDrop(e, scene.id, shotIdx)}
+														onDragEnd={handleShotDragEnd}
+														className={
+															draggedShotId === shot.id ? "opacity-50" : ""
+														}
+													>
+														{/* Drop indicator before this shot */}
+														{dragOverShotIndex?.sceneId === scene.id &&
+															dragOverShotIndex.index === shotIdx &&
+															draggedShotId !== shot.id && (
+																<div className="h-0.5 bg-primary rounded-full mb-1 transition-all" />
+															)}
 														<ShotCard
 															shot={shot}
 															globalIndex={globalShotIndex.get(shot.id) ?? 0}
@@ -1228,6 +1441,24 @@ export function Storyboard({
 													</div>
 												);
 											})}
+											{/* Drop zone at end of shots */}
+											{draggedShotId && (
+												// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone
+												<div
+													className="h-8"
+													onDragOver={(e) =>
+														handleShotDragOver(e, scene.id, sceneShots.length)
+													}
+													onDrop={(e) =>
+														handleShotDrop(e, scene.id, sceneShots.length)
+													}
+												/>
+											)}
+											{/* Drop indicator at end */}
+											{dragOverShotIndex?.sceneId === scene.id &&
+												dragOverShotIndex.index >= sceneShots.length && (
+													<div className="h-0.5 bg-primary rounded-full mb-1 transition-all" />
+												)}
 
 											{/* Add Shot button */}
 											<button

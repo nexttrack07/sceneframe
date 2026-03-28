@@ -14,6 +14,8 @@ export interface StartShotVideoGenerationPayload {
 	modelId: string;
 	prompt: string;
 	modelOptions: Record<string, VideoSettingValue>;
+	/** Optional: specific image ID to use as reference. If not provided, uses the selected image. */
+	referenceImageId?: string;
 }
 
 type StartShotVideoGenerationResult =
@@ -74,25 +76,37 @@ export const startShotVideoGeneration = task({
 			throw new Error("Shot video asset is missing its shot reference");
 		}
 
-		const [user, selectedImage] = await Promise.all([
+		// If a specific reference image ID is provided, use that; otherwise fall back to selected image
+		const [user, referenceImage] = await Promise.all([
 			db.query.users.findFirst({ where: eq(users.id, payload.userId) }),
-			db.query.assets.findFirst({
-				where: and(
-					eq(assets.shotId, asset.shotId),
-					inArray(assets.type, ["start_image", "end_image", "image"]),
-					eq(assets.isSelected, true),
-					eq(assets.status, "done"),
-					isNull(assets.deletedAt),
-				),
-			}),
+			payload.referenceImageId
+				? db.query.assets.findFirst({
+						where: and(
+							eq(assets.id, payload.referenceImageId),
+							inArray(assets.type, ["start_image", "end_image", "image"]),
+							eq(assets.status, "done"),
+							isNull(assets.deletedAt),
+						),
+					})
+				: db.query.assets.findFirst({
+						where: and(
+							eq(assets.shotId, asset.shotId),
+							inArray(assets.type, ["start_image", "end_image", "image"]),
+							eq(assets.isSelected, true),
+							eq(assets.status, "done"),
+							isNull(assets.deletedAt),
+						),
+					}),
 		]);
 
 		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
 			throw new Error("No Replicate API key found for user");
 		}
-		if (!selectedImage?.url) {
+		if (!referenceImage?.url) {
 			throw new Error(
-				"No selected image found for this shot. Select an image first.",
+				payload.referenceImageId
+					? "Reference image not found or not ready."
+					: "No selected image found for this shot. Select an image first.",
 			);
 		}
 
@@ -104,7 +118,7 @@ export const startShotVideoGeneration = task({
 				modelId: payload.modelId,
 				prompt: payload.prompt,
 				modelOptions: payload.modelOptions,
-				startImageUrl: selectedImage.url,
+				startImageUrl: referenceImage.url,
 			}),
 		});
 

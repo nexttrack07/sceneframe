@@ -2,47 +2,58 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeVideoDefaults } from "../project-normalize";
 import type {
-	TransitionVideoSummary,
+	ShotVideoSummary,
 	TriggerRunSummary,
 	VideoDefaults,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
 import {
-	deleteTransitionVideo,
-	enhanceTransitionVideoPrompt,
-	generateTransitionVideo,
-	generateTransitionVideoPrompt,
-	getTransitionVideoRunStatuses,
-	pollTransitionVideos,
-	selectTransitionVideo,
+	deleteShotVideo,
+	enhanceShotVideoPrompt,
+	generateShotVideo,
+	generateShotVideoPrompt,
+	getShotVideoRunStatuses,
+	pollShotVideos,
+	selectShotVideo,
 } from "../scene-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
 
-function getTransitionDraftStorageKey(pair: {
-	fromShotId: string;
-	toShotId: string;
-}) {
-	return `transition-video-draft:${pair.fromShotId}:${pair.toShotId}`;
+function getShotVideoDraftStorageKey(shotId: string) {
+	return `shot-video-draft:${shotId}`;
 }
 
-function readTransitionDraft(pair: { fromShotId: string; toShotId: string }) {
+function readShotVideoDraft(shotId: string) {
 	if (typeof window === "undefined") return null;
 	try {
-		return window.localStorage.getItem(getTransitionDraftStorageKey(pair));
+		return window.localStorage.getItem(getShotVideoDraftStorageKey(shotId));
 	} catch {
 		return null;
 	}
 }
 
-function getTransitionSettingsStorageKey() {
-	return `video-studio:last-settings`;
+function writeShotVideoDraft(shotId: string, prompt: string) {
+	if (typeof window === "undefined") return;
+	try {
+		const key = getShotVideoDraftStorageKey(shotId);
+		if (prompt.trim().length === 0) {
+			window.localStorage.removeItem(key);
+			return;
+		}
+		window.localStorage.setItem(key, prompt);
+	} catch {
+		// Ignore storage failures; drafts are a UX enhancement.
+	}
 }
 
-function readTransitionSettings(): VideoDefaults | null {
+function getShotVideoSettingsStorageKey() {
+	return `shot-video-studio:last-settings`;
+}
+
+function readShotVideoSettings(): VideoDefaults | null {
 	if (typeof window === "undefined") return null;
 	try {
-		const raw = window.localStorage.getItem(getTransitionSettingsStorageKey());
+		const raw = window.localStorage.getItem(getShotVideoSettingsStorageKey());
 		if (!raw) return null;
 		return normalizeVideoDefaults(JSON.parse(raw));
 	} catch {
@@ -50,45 +61,28 @@ function readTransitionSettings(): VideoDefaults | null {
 	}
 }
 
-function writeTransitionSettings(settings: VideoDefaults) {
+function writeShotVideoSettings(settings: VideoDefaults) {
 	if (typeof window === "undefined") return;
 	try {
 		window.localStorage.setItem(
-			getTransitionSettingsStorageKey(),
+			getShotVideoSettingsStorageKey(),
 			JSON.stringify(settings),
 		);
 	} catch {
-		// Ignore storage failures; draft settings are a UX enhancement.
+		// Ignore storage failures.
 	}
 }
 
-function writeTransitionDraft(
-	pair: { fromShotId: string; toShotId: string },
-	prompt: string,
-) {
-	if (typeof window === "undefined") return;
-	try {
-		const key = getTransitionDraftStorageKey(pair);
-		if (prompt.trim().length === 0) {
-			window.localStorage.removeItem(key);
-			return;
-		}
-		window.localStorage.setItem(key, prompt);
-	} catch {
-		// Ignore storage failures; drafts are a UX enhancement, not critical state.
-	}
-}
-
-export function useVideoStudio({
+export function useShotVideoStudio({
 	projectId,
-	selectedTransitionPair,
-	allTransitionVideos,
+	selectedShotId,
+	allShotVideos,
 	toast,
 	setError,
 }: {
 	projectId: string;
-	selectedTransitionPair: { fromShotId: string; toShotId: string } | null;
-	allTransitionVideos: TransitionVideoSummary[];
+	selectedShotId: string | null;
+	allShotVideos: ShotVideoSummary[];
 	toast: ToastFn;
 	setError: (msg: string | null) => void;
 }) {
@@ -103,13 +97,15 @@ export function useVideoStudio({
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
-	const allTransitionVideosRef = useRef(allTransitionVideos);
+	// Reference image for video generation (null = use selected image)
+	const [referenceImageId, setReferenceImageId] = useState<string | null>(null);
+	const allShotVideosRef = useRef(allShotVideos);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
-	allTransitionVideosRef.current = allTransitionVideos;
+	allShotVideosRef.current = allShotVideos;
 	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
@@ -124,23 +120,22 @@ export function useVideoStudio({
 		setIsGeneratingVideo(false);
 	}, []);
 
+	// Reset state when shot changes
 	useEffect(() => {
-		if (!selectedTransitionPair) {
+		if (!selectedShotId) {
 			stopPolling();
 			return;
 		}
 
-		const pairVideos = allTransitionVideosRef.current.filter(
-			(tv) =>
-				tv.fromShotId === selectedTransitionPair.fromShotId &&
-				tv.toShotId === selectedTransitionPair.toShotId,
+		const shotVideos = allShotVideosRef.current.filter(
+			(v) => v.shotId === selectedShotId,
 		);
-		const promptVideos = pairVideos.filter((tv) => tv.prompt);
-		const selectedVideo = pairVideos.find((tv) => tv.isSelected);
-		const draftPrompt = readTransitionDraft(selectedTransitionPair);
+		const promptVideos = shotVideos.filter((v) => v.prompt);
+		const selectedVideo = shotVideos.find((v) => v.isSelected);
+		const draftPrompt = readShotVideoDraft(selectedShotId);
 		const initialPrompt =
 			draftPrompt ?? selectedVideo?.prompt ?? promptVideos[0]?.prompt ?? "";
-		const draftSettings = readTransitionSettings();
+		const draftSettings = readShotVideoSettings();
 		const initialSettings =
 			draftSettings ??
 			normalizeVideoDefaults({
@@ -151,34 +146,38 @@ export function useVideoStudio({
 					null,
 			});
 
-		// Check if there are any generating videos for this pair
-		const hasGeneratingVideos = pairVideos.some(
-			(tv) => tv.status === "generating",
+		// Check if there are any generating videos for this shot
+		const hasGeneratingVideos = shotVideos.some(
+			(v) => v.status === "generating",
 		);
 
 		setVideoPrompt(initialPrompt);
 		setVideoSettings(initialSettings);
-		setIsGeneratingVideo(hasGeneratingVideos); // Keep true if videos are generating
+		setIsGeneratingVideo(hasGeneratingVideos);
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
+		setReferenceImageId(null);
 		setRunStatusesByVideoId({});
 		stopPolling();
 		cancelPollingRef.current = false;
-	}, [selectedTransitionPair, stopPolling]);
+	}, [selectedShotId, stopPolling]);
 
+	// Persist draft prompt
 	useEffect(() => {
-		if (!selectedTransitionPair) return;
-		writeTransitionDraft(selectedTransitionPair, videoPrompt);
-	}, [selectedTransitionPair, videoPrompt]);
+		if (!selectedShotId) return;
+		writeShotVideoDraft(selectedShotId, videoPrompt);
+	}, [selectedShotId, videoPrompt]);
 
+	// Persist settings
 	useEffect(() => {
-		if (!selectedTransitionPair) return;
-		writeTransitionSettings(videoSettings);
-	}, [selectedTransitionPair, videoSettings]);
+		if (!selectedShotId) return;
+		writeShotVideoSettings(videoSettings);
+	}, [selectedShotId, videoSettings]);
 
+	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
 			stopPolling();
@@ -186,7 +185,7 @@ export function useVideoStudio({
 	}, [stopPolling]);
 
 	const startPolling = useCallback(
-		(pair: { fromShotId: string; toShotId: string }) => {
+		(shotId: string) => {
 			if (isPollingRef.current) return;
 
 			cancelPollingRef.current = false;
@@ -203,8 +202,8 @@ export function useVideoStudio({
 				}
 
 				try {
-					const runStatusResult = await getTransitionVideoRunStatuses({
-						data: pair,
+					const runStatusResult = await getShotVideoRunStatuses({
+						data: { shotId },
 					});
 					setRunStatusesByVideoId(
 						Object.fromEntries(
@@ -212,14 +211,14 @@ export function useVideoStudio({
 						),
 					);
 
-					const result = await pollTransitionVideos({
-						data: pair,
+					const result = await pollShotVideos({
+						data: { shotId },
 					});
 
 					if (!result.isGenerating) {
 						if (!result.selectedDoneId && result.latestDoneId) {
-							await selectTransitionVideo({
-								data: { transitionVideoId: result.latestDoneId },
+							await selectShotVideo({
+								data: { videoId: result.latestDoneId },
 							});
 						}
 
@@ -231,13 +230,12 @@ export function useVideoStudio({
 
 						if (result.doneCount > 0) {
 							toast(
-								`${result.doneCount} transition video${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
+								`${result.doneCount} video${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
 								result.erroredCount > 0 ? "error" : "success",
 							);
 						} else if (result.erroredCount > 0) {
 							toast(
-								result.latestErrorMessage ??
-									"Transition video generation failed",
+								result.latestErrorMessage ?? "Video generation failed",
 								"error",
 							);
 						}
@@ -250,31 +248,24 @@ export function useVideoStudio({
 		[projectId, queryClient, stopPolling, toast],
 	);
 
+	// Auto-start polling if there are generating videos on mount
 	useEffect(() => {
-		const pair = selectedTransitionPair;
-		if (!pair) return;
-		const generatingTv = allTransitionVideosRef.current.find(
-			(tv) =>
-				tv.fromShotId === pair.fromShotId &&
-				tv.toShotId === pair.toShotId &&
-				tv.status === "generating",
+		const shotId = selectedShotId;
+		if (!shotId) return;
+		const generatingVideo = allShotVideosRef.current.find(
+			(v) => v.shotId === shotId && v.status === "generating",
 		);
-		if (!generatingTv || isPollingRef.current) return;
-		return startPolling(pair);
-	}, [selectedTransitionPair, startPolling]);
+		if (!generatingVideo || isPollingRef.current) return;
+		startPolling(shotId);
+	}, [selectedShotId, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
-		if (!selectedTransitionPair) return;
+		if (!selectedShotId) return;
 		setIsGeneratingVideoPrompt(true);
 		setError(null);
 		try {
-			const result = await generateTransitionVideoPrompt({
-				data: {
-					fromShotId: selectedTransitionPair.fromShotId,
-					toShotId: selectedTransitionPair.toShotId,
-					useProjectContext,
-					usePrevShotContext,
-				},
+			const result = await generateShotVideoPrompt({
+				data: { shotId: selectedShotId },
 			});
 			setVideoPrompt(result.prompt);
 			toast("Prompt generated", "success");
@@ -289,14 +280,13 @@ export function useVideoStudio({
 	}
 
 	async function handleEnhanceVideoPrompt() {
-		if (!selectedTransitionPair || !videoPrompt.trim()) return;
+		if (!selectedShotId || !videoPrompt.trim()) return;
 		setIsEnhancingVideoPrompt(true);
 		setError(null);
 		try {
-			const result = await enhanceTransitionVideoPrompt({
+			const result = await enhanceShotVideoPrompt({
 				data: {
-					fromShotId: selectedTransitionPair.fromShotId,
-					toShotId: selectedTransitionPair.toShotId,
+					shotId: selectedShotId,
 					userPrompt: videoPrompt,
 					useProjectContext,
 					usePrevShotContext,
@@ -315,26 +305,26 @@ export function useVideoStudio({
 	}
 
 	async function handleGenerateVideo() {
-		const pair = selectedTransitionPair;
-		if (!pair || !videoPrompt.trim()) return;
+		const shotId = selectedShotId;
+		if (!shotId || !videoPrompt.trim()) return;
 		if (isPollingRef.current) return;
 		setIsGeneratingVideo(true);
 		cancelPollingRef.current = false;
 		setError(null);
 		try {
-			await generateTransitionVideo({
+			await generateShotVideo({
 				data: {
-					fromShotId: pair.fromShotId,
-					toShotId: pair.toShotId,
+					shotId,
 					prompt: videoPrompt.trim(),
 					videoSettings,
+					referenceImageId: referenceImageId ?? undefined,
 				},
 			});
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
-			startPolling(pair);
-			toast("Queued transition video", "success");
+			startPolling(shotId);
+			toast("Queued video generation", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
@@ -344,9 +334,9 @@ export function useVideoStudio({
 		}
 	}
 
-	async function handleSelectTransitionVideo(id: string) {
+	async function handleSelectShotVideo(id: string) {
 		try {
-			await selectTransitionVideo({ data: { transitionVideoId: id } });
+			await selectShotVideo({ data: { videoId: id } });
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
@@ -357,10 +347,10 @@ export function useVideoStudio({
 		}
 	}
 
-	async function handleDeleteTransitionVideo(id: string) {
+	async function handleDeleteShotVideo(id: string) {
 		setDeletingVideoId(id);
 		try {
-			await deleteTransitionVideo({ data: { transitionVideoId: id } });
+			await deleteShotVideo({ data: { videoId: id } });
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
@@ -386,11 +376,13 @@ export function useVideoStudio({
 		setUseProjectContext,
 		usePrevShotContext,
 		setUsePrevShotContext,
+		referenceImageId,
+		setReferenceImageId,
 		runStatusesByVideoId,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,
 		handleGenerateVideo,
-		handleSelectTransitionVideo,
-		handleDeleteTransitionVideo,
+		handleSelectShotVideo,
+		handleDeleteShotVideo,
 	};
 }

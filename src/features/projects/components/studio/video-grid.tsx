@@ -1,48 +1,50 @@
 import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type {
-	TransitionVideoSummary,
-	TriggerRunSummary,
-} from "../../project-types";
+import type { BaseVideoSummary, TriggerRunSummary } from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
 import { VideoDetailDrawer } from "./video-detail-drawer";
 
+// Type guard for transition videos (which have the stale property)
+function hasStaleProperty(
+	video: BaseVideoSummary,
+): video is BaseVideoSummary & { stale: boolean } {
+	return "stale" in video;
+}
+
 export function VideoGrid({
-	transitionVideos,
+	videos,
 	deletingVideoId,
 	onDelete,
 	onSelect,
 	isGenerating = false,
 	runStatusesByVideoId = {},
+	emptyMessage = "No videos yet",
+	emptySubMessage = "Generate a video from the controls on the left",
 }: {
-	transitionVideos: TransitionVideoSummary[];
+	videos: BaseVideoSummary[];
 	deletingVideoId: string | null;
 	onDelete: (id: string) => void;
 	onSelect: (id: string) => void;
 	isGenerating?: boolean;
 	runStatusesByVideoId?: Record<string, TriggerRunSummary>;
+	emptyMessage?: string;
+	emptySubMessage?: string;
 }) {
 	const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 	const [expandedId, setExpandedId] = useState<string | null>(null);
 
 	// Filter out error records — errors surface as toasts, not grid items
-	const sorted = [
-		...transitionVideos.filter((tv) => tv.status !== "error"),
-	].reverse();
+	const sorted = [...videos.filter((v) => v.status !== "error")].reverse();
 	const expandedVideo = expandedId
-		? (sorted.find((tv) => tv.id === expandedId) ?? null)
+		? (sorted.find((v) => v.id === expandedId) ?? null)
 		: null;
 
 	if (sorted.length === 0 && !isGenerating) {
 		return (
 			<div className="flex-1 flex items-center justify-center p-6">
 				<div className="text-center space-y-2">
-					<p className="text-sm text-muted-foreground">
-						No transition videos yet
-					</p>
-					<p className="text-xs text-muted-foreground/70">
-						Generate a video from the controls on the left
-					</p>
+					<p className="text-sm text-muted-foreground">{emptyMessage}</p>
+					<p className="text-xs text-muted-foreground/70">{emptySubMessage}</p>
 				</div>
 			</div>
 		);
@@ -55,7 +57,7 @@ export function VideoGrid({
 			</p>
 			<div className="grid grid-cols-3 gap-2">
 				{/* Optimistic skeleton — only shown before the DB record appears */}
-				{isGenerating && !sorted.some((tv) => tv.status === "generating") && (
+				{isGenerating && !sorted.some((v) => v.status === "generating") && (
 					<div className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video">
 						<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 						<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -65,20 +67,20 @@ export function VideoGrid({
 					</div>
 				)}
 
-				{sorted.map((tv) => (
+				{sorted.map((video) => (
 					<div
-						key={tv.id}
+						key={video.id}
 						className="relative rounded-lg overflow-hidden bg-muted group aspect-video"
 					>
-						{tv.status === "done" && tv.url ? (
+						{video.status === "done" && video.url ? (
 							<>
 								<button
 									type="button"
-									onClick={() => setLightboxUrl(tv.url)}
+									onClick={() => setLightboxUrl(video.url)}
 									className="w-full h-full relative"
 								>
 									<video
-										src={tv.url}
+										src={video.url}
 										preload="metadata"
 										className="w-full h-full object-cover pointer-events-none"
 									>
@@ -88,21 +90,21 @@ export function VideoGrid({
 										<Play size={20} className="text-white fill-white" />
 									</div>
 								</button>
-								{tv.isSelected && (
+								{video.isSelected && (
 									<span className="absolute top-1.5 left-1.5 bg-primary text-primary-foreground text-[10px] font-medium px-1.5 py-0.5 rounded">
 										Selected
 									</span>
 								)}
-								{tv.stale && (
+								{hasStaleProperty(video) && video.stale && (
 									<span className="absolute top-1.5 right-1.5 flex items-center gap-0.5 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 rounded">
 										<AlertTriangle size={9} />
 									</span>
 								)}
 								<div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-									{!tv.isSelected && (
+									{!video.isSelected && (
 										<button
 											type="button"
-											onClick={() => onSelect(tv.id)}
+											onClick={() => onSelect(video.id)}
 											className="bg-white/90 text-black text-[10px] font-medium px-2 py-0.5 rounded hover:bg-white transition-colors"
 										>
 											Select
@@ -110,18 +112,18 @@ export function VideoGrid({
 									)}
 									<button
 										type="button"
-										onClick={() => setExpandedId(tv.id)}
+										onClick={() => setExpandedId(video.id)}
 										className="bg-white/90 text-black text-[10px] font-medium px-2 py-0.5 rounded hover:bg-white transition-colors"
 									>
 										Info
 									</button>
 									<button
 										type="button"
-										onClick={() => onDelete(tv.id)}
-										disabled={deletingVideoId === tv.id}
+										onClick={() => onDelete(video.id)}
+										disabled={deletingVideoId === video.id}
 										className="bg-white/90 text-red-600 p-1 rounded hover:bg-white transition-colors disabled:opacity-50"
 									>
-										{deletingVideoId === tv.id ? (
+										{deletingVideoId === video.id ? (
 											<Loader2 size={11} className="animate-spin" />
 										) : (
 											<Trash2 size={11} />
@@ -129,7 +131,7 @@ export function VideoGrid({
 									</button>
 								</div>
 							</>
-						) : tv.status === "generating" ? (
+						) : video.status === "generating" ? (
 							<div className="absolute inset-0 border border-border bg-card overflow-hidden">
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 								<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -137,7 +139,7 @@ export function VideoGrid({
 									<div className="flex flex-col items-center gap-1">
 										<span className="rounded-full bg-background/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
 											{(() => {
-												const runStatus = runStatusesByVideoId[tv.id];
+												const runStatus = runStatusesByVideoId[video.id];
 												if (runStatus?.status === "completed")
 													return "Finalizing";
 												if (
@@ -152,7 +154,7 @@ export function VideoGrid({
 												return "Generating";
 											})()}
 										</span>
-										<GeneratingTimer createdAt={tv.createdAt} />
+										<GeneratingTimer createdAt={video.createdAt} />
 									</div>
 								</div>
 							</div>

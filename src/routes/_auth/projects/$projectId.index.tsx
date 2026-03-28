@@ -56,6 +56,7 @@ function ProjectPage() {
 		messages: projectMessages,
 		assets: projectAssets,
 		transitionVideos: projectTransitionVideos,
+		shotVideoAssets: projectShotVideoAssets,
 		voiceovers: projectVoiceovers,
 		backgroundMusic: projectBackgroundMusic,
 	} = data_;
@@ -71,48 +72,62 @@ function ProjectPage() {
 
 	const isWorkshopPhase = project.scriptStatus !== "done";
 	const navigate = useNavigate();
+	const isDetailView = Boolean(shot || (from && to));
 
 	return (
 		<div className="flex flex-col h-[calc(100vh-3.5rem)]">
-			<ProjectHeader>
-				<div className="flex items-start justify-between gap-4">
-					<div>
-						<h1 className="text-xl font-bold text-foreground">
+			<ProjectHeader
+				projectId={project.id}
+				isDetailView={isDetailView}
+				showEditorLink={!isWorkshopPhase}
+				onBackToStoryboard={() => {
+					navigate({
+						to: "/projects/$projectId",
+						params: { projectId: project.id },
+						search: { shot: undefined, from: undefined, to: undefined },
+					});
+				}}
+			>
+				<div className="flex items-center gap-3 min-w-0">
+					<div className="flex items-center gap-3 min-w-0">
+						<h1 className="text-sm font-semibold text-foreground truncate">
 							{project.name}
 						</h1>
 						{!isWorkshopPhase && projectScenes.length > 0 && (
-							<p className="text-sm text-muted-foreground mt-0.5">
+							<span className="text-xs text-muted-foreground shrink-0">
 								{projectShots.length > 0
-									? `${projectShots.length} shots across ${projectScenes.length} scenes`
+									? `${projectShots.length} shots · ${projectScenes.length} scenes`
 									: `${projectScenes.length} scene${projectScenes.length !== 1 ? "s" : ""}`}
-							</p>
+							</span>
 						)}
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
 						{isWorkshopPhase ? (
 							<Badge
 								variant="outline"
-								className="gap-1.5 text-primary border-primary/40 bg-primary/10 shrink-0"
+								className="gap-1 text-[10px] py-0.5 px-1.5 text-primary border-primary/40 bg-primary/10"
 							>
-								<Film size={11} />
-								Script Workshop
+								<Film size={10} />
+								Workshop
 							</Badge>
 						) : (
 							<Badge
 								variant="outline"
-								className="gap-1.5 text-success border-success/40 bg-success/10 shrink-0"
+								className="gap-1 text-[10px] py-0.5 px-1.5 text-success border-success/40 bg-success/10"
 							>
-								<Check size={11} />
-								Script approved
+								<Check size={10} />
+								Approved
 							</Badge>
 						)}
-						<DeleteProjectDialog
-							projectName={project.name}
-							onConfirm={async () => {
-								await deleteProject({ data: { projectId: project.id } });
-								await navigate({ to: "/dashboard" });
-							}}
-						/>
+						{!isDetailView && (
+							<DeleteProjectDialog
+								projectName={project.name}
+								onConfirm={async () => {
+									await deleteProject({ data: { projectId: project.id } });
+									await navigate({ to: "/dashboard" });
+								}}
+							/>
+						)}
 					</div>
 				</div>
 			</ProjectHeader>
@@ -134,6 +149,7 @@ function ProjectPage() {
 					projectSettings={project.settings}
 					scenePlan={scenePlan}
 					transitionVideos={projectTransitionVideos}
+					shotVideoAssets={projectShotVideoAssets}
 					voiceovers={projectVoiceovers}
 					backgroundMusic={projectBackgroundMusic}
 					initialShotId={shot}
@@ -149,17 +165,48 @@ function ProjectPage() {
 // Shared header
 // ---------------------------------------------------------------------------
 
-function ProjectHeader({ children }: { children?: React.ReactNode }) {
+function ProjectHeader({
+	children,
+	projectId,
+	isDetailView = false,
+	showEditorLink = false,
+	onBackToStoryboard,
+}: {
+	children?: React.ReactNode;
+	projectId?: string;
+	isDetailView?: boolean;
+	showEditorLink?: boolean;
+	onBackToStoryboard?: () => void;
+}) {
 	return (
-		<div className="px-6 py-4 border-b bg-card shrink-0">
-			<Link
-				to="/dashboard"
-				className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-2 transition-colors"
-			>
-				<ArrowLeft size={14} />
-				All projects
-			</Link>
+		<div className="px-4 py-2 border-b bg-card shrink-0 flex items-center gap-3">
+			{isDetailView && (
+				<>
+					<button
+						type="button"
+						onClick={onBackToStoryboard}
+						className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+					>
+						<ArrowLeft size={12} />
+						Back to Storyboard
+					</button>
+					<div className="h-4 w-px bg-border" />
+				</>
+			)}
 			{children}
+			{showEditorLink && projectId && (
+				<>
+					<div className="h-4 w-px bg-border ml-auto" />
+					<Link
+						to="/projects/$projectId/editor"
+						params={{ projectId }}
+						className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+					>
+						<Film size={12} />
+						Editor
+					</Link>
+				</>
+			)}
 		</div>
 	);
 }
@@ -245,11 +292,12 @@ function DeleteProjectDialog({
 		>
 			<AlertDialogTrigger asChild>
 				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+					variant="destructive"
+					size="sm"
+					className="gap-1.5"
 				>
 					<Trash2 size={14} />
+					Delete project
 				</Button>
 			</AlertDialogTrigger>
 			<AlertDialogContent>

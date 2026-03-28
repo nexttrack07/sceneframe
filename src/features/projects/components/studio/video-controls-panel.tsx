@@ -1,13 +1,16 @@
 import {
 	Check,
 	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
 	ChevronUp,
 	Film,
 	Loader2,
 	Sparkles,
 	Wand2,
 } from "lucide-react";
-import { useId, useState } from "react";
+import type { ReactNode } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { Shot } from "@/db/schema";
 import type { VideoDefaults, VideoSettingValue } from "../../project-types";
@@ -32,9 +35,145 @@ function updateVideoOption(
 	};
 }
 
-export function VideoControlsPanel({
+// Reusable context section for transition videos
+export function TransitionContextSection({
 	fromShot,
 	toShot,
+}: {
+	fromShot: Shot;
+	toShot: Shot;
+}) {
+	const [showDescriptions, setShowDescriptions] = useState(true);
+
+	return (
+		<div className="space-y-2">
+			<button
+				type="button"
+				onClick={() => setShowDescriptions(!showDescriptions)}
+				className="flex items-center gap-2 w-full text-left"
+			>
+				{showDescriptions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+				<span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+					Transition context
+				</span>
+			</button>
+			{showDescriptions && (
+				<div className="space-y-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
+					<div>
+						<span className="font-medium text-foreground">From:</span>{" "}
+						{fromShot.description}
+					</div>
+					<div>
+						<span className="font-medium text-foreground">To:</span>{" "}
+						{toShot.description}
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** Minimal image info for reference image picker */
+export interface ReferenceImageOption {
+	id: string;
+	url: string;
+	isSelected: boolean;
+}
+
+function ReferenceImageSlider({
+	images,
+	selectedId,
+	onSelect,
+}: {
+	images: ReferenceImageOption[];
+	selectedId: string | null | undefined;
+	onSelect: (id: string | null) => void;
+}) {
+	const scrollRef = useRef<HTMLDivElement>(null);
+
+	const scroll = (direction: "left" | "right") => {
+		if (!scrollRef.current) return;
+		const scrollAmount = 120;
+		scrollRef.current.scrollBy({
+			left: direction === "left" ? -scrollAmount : scrollAmount,
+			behavior: "smooth",
+		});
+	};
+
+	return (
+		<div className="space-y-2">
+			<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+				Reference image (optional)
+			</p>
+			<p className="text-[10px] text-muted-foreground">
+				Select a starting frame for video generation
+			</p>
+
+			<div className="relative">
+				{/* Left arrow */}
+				{images.length > 2 && (
+					<button
+						type="button"
+						onClick={() => scroll("left")}
+						className="absolute left-0 top-1/2 -translate-y-1/2 z-10 h-8 w-8 flex items-center justify-center bg-background/90 border border-border rounded-full shadow-sm hover:bg-muted transition-colors"
+					>
+						<ChevronLeft size={16} />
+					</button>
+				)}
+
+				{/* Scrollable container */}
+				<div
+					ref={scrollRef}
+					className="flex gap-2 overflow-x-auto scrollbar-hide px-1 py-1 scroll-smooth"
+					style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+				>
+					{images.map((img) => {
+						const isActive = img.id === selectedId;
+						return (
+							<button
+								key={img.id}
+								type="button"
+								onClick={() => onSelect(selectedId === img.id ? null : img.id)}
+								className={`relative flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border-2 transition-all ${
+									isActive
+										? "border-primary ring-2 ring-primary/30"
+										: "border-border/50 hover:border-border"
+								}`}
+							>
+								<img
+									src={img.url}
+									alt="Reference option"
+									className="w-full h-full object-cover"
+								/>
+								{isActive && (
+									<div className="absolute inset-0 bg-primary/15 flex items-center justify-center">
+										<div className="bg-primary rounded-full p-1">
+											<Check size={12} className="text-primary-foreground" />
+										</div>
+									</div>
+								)}
+							</button>
+						);
+					})}
+				</div>
+
+				{/* Right arrow */}
+				{images.length > 2 && (
+					<button
+						type="button"
+						onClick={() => scroll("right")}
+						className="absolute right-0 top-1/2 -translate-y-1/2 z-10 h-8 w-8 flex items-center justify-center bg-background/90 border border-border rounded-full shadow-sm hover:bg-muted transition-colors"
+					>
+						<ChevronRight size={16} />
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+export function VideoControlsPanel({
+	contextSection,
 	videoPrompt,
 	onVideoPromptChange,
 	onGeneratePrompt,
@@ -49,9 +188,14 @@ export function VideoControlsPanel({
 	onUsePrevShotContextChange,
 	isGenerating,
 	onGenerate,
+	generateButtonLabel = "Generate video",
+	generatingButtonLabel = "Generating video...",
+	// Optional reference image selection (for shot videos)
+	availableImages,
+	referenceImageId,
+	onReferenceImageChange,
 }: {
-	fromShot: Shot;
-	toShot: Shot;
+	contextSection: ReactNode | null;
 	videoPrompt: string;
 	onVideoPromptChange: (v: string) => void;
 	onGeneratePrompt: () => void;
@@ -66,8 +210,13 @@ export function VideoControlsPanel({
 	onUsePrevShotContextChange: (v: boolean) => void;
 	isGenerating: boolean;
 	onGenerate: () => void;
+	generateButtonLabel?: string;
+	generatingButtonLabel?: string;
+	// Optional: available images for reference selection
+	availableImages?: ReferenceImageOption[];
+	referenceImageId?: string | null;
+	onReferenceImageChange?: (id: string | null) => void;
 }) {
-	const [showDescriptions, setShowDescriptions] = useState(true);
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const motionPromptId = useId();
 	const negativePromptId = useId();
@@ -76,34 +225,7 @@ export function VideoControlsPanel({
 	return (
 		<div className="flex flex-col h-full">
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
-				<div className="space-y-2">
-					<button
-						type="button"
-						onClick={() => setShowDescriptions(!showDescriptions)}
-						className="flex items-center gap-2 w-full text-left"
-					>
-						{showDescriptions ? (
-							<ChevronUp size={14} />
-						) : (
-							<ChevronDown size={14} />
-						)}
-						<span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-							Transition context
-						</span>
-					</button>
-					{showDescriptions && (
-						<div className="space-y-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
-							<div>
-								<span className="font-medium text-foreground">From:</span>{" "}
-								{fromShot.description}
-							</div>
-							<div>
-								<span className="font-medium text-foreground">To:</span>{" "}
-								{toShot.description}
-							</div>
-						</div>
-					)}
-				</div>
+				{contextSection}
 
 				<div className="space-y-1.5">
 					<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
@@ -174,6 +296,15 @@ export function VideoControlsPanel({
 						</button>
 					</div>
 				</div>
+
+				{/* Reference image slider (for shot videos) */}
+				{availableImages && availableImages.length > 0 && onReferenceImageChange && (
+					<ReferenceImageSlider
+						images={availableImages}
+						selectedId={referenceImageId}
+						onSelect={onReferenceImageChange}
+					/>
+				)}
 
 				<div className="border-t pt-4 space-y-4">
 					<div className="flex items-center justify-between">
@@ -356,7 +487,7 @@ export function VideoControlsPanel({
 					) : (
 						<Film size={16} />
 					)}
-					{isGenerating ? "Generating video..." : "Generate video"}
+					{isGenerating ? generatingButtonLabel : generateButtonLabel}
 				</Button>
 			</div>
 		</div>

@@ -78,9 +78,11 @@ export const generateShotImageAsset = task({
 			referenceImageUrls: payload.referenceImageUrls,
 		});
 
+		const generationStartTime = Date.now();
 		const output = await replicate.run(payload.model as `${string}/${string}`, {
 			input: replicateInput,
 		});
+		const generationDurationMs = Date.now() - generationStartTime;
 
 		const urls = parseGeneratedMediaUrls(output);
 		const sourceUrl = urls[0];
@@ -116,6 +118,7 @@ export const generateShotImageAsset = task({
 				storageKey,
 				status: "done",
 				errorMessage: null,
+				generationDurationMs,
 			})
 			.where(eq(assets.id, payload.assetId));
 

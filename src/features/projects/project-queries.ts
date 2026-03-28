@@ -99,6 +99,20 @@ export const loadProject = createServerFn({ method: "GET" })
 			(a) => a.type === "background_music",
 		);
 
+		// Load shot video assets (shot-level, type="video", stage="video")
+		const shotVideoAssets =
+			shotIds.length === 0
+				? []
+				: await db.query.assets.findMany({
+						where: and(
+							eq(assets.type, "video"),
+							eq(assets.stage, "video"),
+							inArray(assets.shotId, shotIds),
+							isNull(assets.deletedAt),
+						),
+						orderBy: asc(assets.createdAt),
+					});
+
 		return {
 			project: {
 				...project,
@@ -142,6 +156,7 @@ export const loadProject = createServerFn({ method: "GET" })
 					isSelected: asset.isSelected,
 					batchId: asset.batchId,
 					createdAt: asset.createdAt.toISOString(),
+					generationDurationMs: asset.generationDurationMs,
 					// biome-ignore lint/suspicious/noExplicitAny: modelSettings is a flexible JSON column; typed as Record<string, unknown> at DB layer but any is needed here for the cast
 					modelSettings: (asset.modelSettings as Record<string, any>) ?? null,
 				})),
@@ -207,6 +222,32 @@ export const loadProject = createServerFn({ method: "GET" })
 				modelSettings: (tv.modelSettings as Record<string, any>) ?? null,
 				createdAt: tv.createdAt.toISOString(),
 			})),
+			shotVideoAssets: shotVideoAssets
+				.filter(
+					(a): a is typeof a & { status: "generating" | "done" | "error" } =>
+						a.status === "generating" ||
+						a.status === "done" ||
+						a.status === "error",
+				)
+				.map((a) => ({
+					id: a.id,
+					sceneId: a.sceneId,
+					shotId: a.shotId!,
+					status: a.status,
+					url: a.url,
+					errorMessage: a.errorMessage,
+					prompt: a.prompt,
+					model: a.model ?? "",
+					isSelected: a.isSelected,
+					generationId: a.generationId,
+					jobId: a.jobId,
+					// biome-ignore lint/suspicious/noExplicitAny: modelSettings is a flexible JSON column
+					modelSettings: (a.modelSettings as Record<string, any>) ?? null,
+					createdAt: a.createdAt.toISOString(),
+					thumbnailUrl: null,
+					durationMs: a.durationMs,
+					generationDurationMs: a.generationDurationMs,
+				})),
 		};
 	});
 
