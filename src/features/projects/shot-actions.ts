@@ -1521,6 +1521,23 @@ async function reconcileGeneratingShotVideos(args: {
 							errorMessage: run.error?.message ?? ORPHANED_SHOT_VIDEO_ERROR,
 						})
 						.where(eq(assets.id, video.id));
+				} else if (runStatus === "completed") {
+					// Trigger job completed but asset is still "generating" — DB update was lost
+					// Re-check the asset status in case it was updated between our query and now
+					const freshAsset = await db.query.assets.findFirst({
+						where: eq(assets.id, video.id),
+					});
+					if (freshAsset?.status === "generating") {
+						// The job really did complete but DB wasn't updated — mark as error
+						await db
+							.update(assets)
+							.set({
+								status: "error",
+								errorMessage:
+									"Video generation completed but failed to save. Please try again.",
+							})
+							.where(eq(assets.id, video.id));
+					}
 				}
 			} catch (error) {
 				const message =
