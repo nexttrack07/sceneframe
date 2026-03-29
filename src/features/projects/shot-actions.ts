@@ -1127,75 +1127,74 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 			shotId: string;
 			prompt: string;
 			videoSettings?: unknown;
-			referenceImageId?: string;
+			referenceImageIds?: string[];
 		}) => data,
 	)
-	.handler(async ({ data: { shotId, prompt, videoSettings, referenceImageId } }) => {
-		const { userId, shot, scene } = await assertShotOwner(shotId);
-		const normalizedVideo = normalizeVideoDefaults(videoSettings);
+	.handler(
+		async ({ data: { shotId, prompt, videoSettings, referenceImageIds } }) => {
+			const { userId, shot, scene } = await assertShotOwner(shotId);
+			const normalizedVideo = normalizeVideoDefaults(videoSettings);
+			const safeReferenceImageIds = Array.isArray(referenceImageIds)
+				? referenceImageIds.filter((id): id is string => typeof id === "string")
+				: [];
 
-		// If referenceImageId provided, verify it exists; otherwise check for selected image
-		if (referenceImageId) {
-			const refAsset = await db.query.assets.findFirst({
-				where: and(
-					eq(assets.id, referenceImageId),
-					inArray(assets.type, ["start_image", "end_image", "image"]),
-					eq(assets.status, "done"),
-					isNull(assets.deletedAt),
-				),
-			});
-			if (!refAsset?.url) {
-				throw new Error("Reference image not found or not ready");
-			}
-		} else {
-			const selectedAsset = await db.query.assets.findFirst({
-				where: and(
-					eq(assets.shotId, shotId),
-					inArray(assets.type, ["start_image", "end_image", "image"]),
-					eq(assets.isSelected, true),
-					eq(assets.status, "done"),
-					isNull(assets.deletedAt),
-				),
-			});
-			if (!selectedAsset?.url) {
-				throw new Error(
-					"No selected image found — select a start frame image first",
+			// If referenceImageIds were provided, verify they all exist.
+			if (safeReferenceImageIds.length > 0) {
+				const refAssets = await db.query.assets.findMany({
+					where: and(
+						inArray(assets.id, safeReferenceImageIds),
+						inArray(assets.type, ["start_image", "end_image", "image"]),
+						eq(assets.status, "done"),
+						isNull(assets.deletedAt),
+					),
+				});
+				const validIds = new Set(
+					refAssets.filter((asset) => asset.url).map((asset) => asset.id),
 				);
+				const hasAllRequestedRefs = safeReferenceImageIds.every((id) =>
+					validIds.has(id),
+				);
+				if (!hasAllRequestedRefs) {
+					throw new Error(
+						"One or more reference images were not found or not ready",
+					);
+				}
 			}
-		}
 
-		const [placeholder] = await db
-			.insert(assets)
-			.values({
-				sceneId: scene.id,
-				shotId: shot.id,
-				type: "video" as const,
-				stage: "video" as const,
+			const [placeholder] = await db
+				.insert(assets)
+				.values({
+					sceneId: scene.id,
+					shotId: shot.id,
+					type: "video" as const,
+					stage: "video" as const,
+					prompt,
+					model: normalizedVideo.model,
+					modelSettings: normalizedVideo.modelOptions,
+					status: "generating" as const,
+					isSelected: false,
+					batchId: randomUUID(),
+				})
+				.returning({ id: assets.id });
+
+			const handle = await startShotVideoGeneration.trigger({
+				assetId: placeholder.id,
+				userId,
+				modelId: normalizedVideo.model,
 				prompt,
-				model: normalizedVideo.model,
-				modelSettings: normalizedVideo.modelOptions,
-				status: "generating" as const,
-				isSelected: false,
-				batchId: randomUUID(),
-			})
-			.returning({ id: assets.id });
+				modelOptions: normalizedVideo.modelOptions,
+				referenceImageIds:
+					safeReferenceImageIds.length > 0 ? safeReferenceImageIds : undefined,
+			});
 
-		const handle = await startShotVideoGeneration.trigger({
-			assetId: placeholder.id,
-			userId,
-			modelId: normalizedVideo.model,
-			prompt,
-			modelOptions: normalizedVideo.modelOptions,
-			referenceImageId,
-		});
+			await db
+				.update(assets)
+				.set({ jobId: handle.id })
+				.where(eq(assets.id, placeholder.id));
 
-		await db
-			.update(assets)
-			.set({ jobId: handle.id })
-			.where(eq(assets.id, placeholder.id));
-
-		return { assetId: placeholder.id, jobId: handle.id };
-	});
+			return { assetId: placeholder.id, jobId: handle.id };
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // pollVideoAsset — called by client to check generation progress
@@ -1458,6 +1457,14 @@ export const pollShotVideos = createServerFn({ method: "POST" })
 		const errored = videos.filter((v) => v.status === "error");
 		const selectedDone = done.find((v) => v.isSelected) ?? null;
 
+		if (generating.length === 0) {
+			console.info("[ShotVideoServer] poll:complete", {
+				shotId,
+				doneCount: done.length,
+				erroredCount: errored.length,
+			});
+		}
+
 		return {
 			generatingCount: generating.length,
 			doneCount: done.length,
@@ -1487,6 +1494,9 @@ async function reconcileGeneratingShotVideos(args: {
 	await Promise.all(
 		generatingVideos.map(async (video) => {
 			if (Date.now() - video.createdAt.getTime() > STALE_SHOT_VIDEO_MS) {
+				console.warn("[ShotVideoServer] reconcile:timed-out", {
+					videoId: video.id,
+				});
 				await db
 					.update(assets)
 					.set({
@@ -1499,6 +1509,9 @@ async function reconcileGeneratingShotVideos(args: {
 			}
 
 			if (!video.jobId) {
+				console.warn("[ShotVideoServer] reconcile:missing-job", {
+					videoId: video.id,
+				});
 				await db
 					.update(assets)
 					.set({
@@ -1512,7 +1525,6 @@ async function reconcileGeneratingShotVideos(args: {
 			try {
 				const run = await runs.retrieve(video.jobId);
 				const runStatus = mapTriggerRunStatus(run);
-
 				if (runStatus === "failed" || runStatus === "canceled") {
 					await db
 						.update(assets)
@@ -1521,6 +1533,10 @@ async function reconcileGeneratingShotVideos(args: {
 							errorMessage: run.error?.message ?? ORPHANED_SHOT_VIDEO_ERROR,
 						})
 						.where(eq(assets.id, video.id));
+					console.warn("[ShotVideoServer] reconcile:trigger-failed", {
+						videoId: video.id,
+						runStatus,
+					});
 				} else if (runStatus === "completed") {
 					// Trigger job completed but asset is still "generating" — DB update was lost
 					// Re-check the asset status in case it was updated between our query and now
@@ -1537,6 +1553,12 @@ async function reconcileGeneratingShotVideos(args: {
 									"Video generation completed but failed to save. Please try again.",
 							})
 							.where(eq(assets.id, video.id));
+						console.warn(
+							"[ShotVideoServer] reconcile:completed-run-db-mismatch",
+							{
+								videoId: video.id,
+							},
+						);
 					}
 				}
 			} catch (error) {
@@ -1548,6 +1570,10 @@ async function reconcileGeneratingShotVideos(args: {
 					message.includes("404");
 
 				if (looksMissingRun) {
+					console.warn("[ShotVideoServer] reconcile:missing-trigger-run", {
+						videoId: video.id,
+						jobId: video.jobId,
+					});
 					await db
 						.update(assets)
 						.set({

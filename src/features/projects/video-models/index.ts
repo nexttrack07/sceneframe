@@ -46,7 +46,8 @@ export interface VideoModelDefinition {
 	buildShotInput: (args: {
 		prompt: string;
 		modelOptions: Record<string, VideoSettingValue>;
-		startImageUrl: string;
+		startImageUrl?: string;
+		referenceImageUrls: string[];
 	}) => Record<string, unknown>;
 }
 
@@ -231,9 +232,17 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			mode: modelOptions.mode === "standard" ? "standard" : "pro",
 			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
-		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
+		buildShotInput: ({
 			prompt,
-			start_image: startImageUrl,
+			modelOptions,
+			startImageUrl,
+			referenceImageUrls,
+		}) => ({
+			prompt,
+			...(startImageUrl ? { start_image: startImageUrl } : {}),
+			...(referenceImageUrls.length > 1
+				? { reference_images: referenceImageUrls.slice(1, 8) }
+				: {}),
 			duration: Math.max(3, Math.min(15, Number(modelOptions.duration) || 5)),
 			mode: modelOptions.mode === "standard" ? "standard" : "pro",
 			generate_audio: Boolean(modelOptions.generate_audio),
@@ -270,7 +279,7 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			start_image: startImageUrl,
+			...(startImageUrl ? { start_image: startImageUrl } : {}),
 			duration: Number(modelOptions.duration) <= 7 ? 5 : 10,
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
@@ -304,7 +313,7 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			image: startImageUrl,
+			...(startImageUrl ? { image: startImageUrl } : {}),
 			duration: Math.max(1, Math.min(15, Number(modelOptions.duration) || 5)),
 			aspect_ratio:
 				typeof modelOptions.aspect_ratio === "string"
@@ -348,9 +357,18 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 					? modelOptions.generate_audio
 					: true,
 		}),
-		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
+		buildShotInput: ({
 			prompt,
-			image: startImageUrl,
+			modelOptions,
+			startImageUrl,
+			referenceImageUrls,
+		}) => ({
+			prompt,
+			...(referenceImageUrls.length > 1
+				? { reference_images: referenceImageUrls.slice(0, 4) }
+				: startImageUrl
+					? { image: startImageUrl }
+					: {}),
 			aspect_ratio: modelOptions.aspect_ratio === "9:16" ? "9:16" : "16:9",
 			duration: 8,
 			resolution: "1080p",
@@ -387,7 +405,7 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			input_reference: startImageUrl,
+			...(startImageUrl ? { input_reference: startImageUrl } : {}),
 			seconds: Math.max(4, Math.min(20, Number(modelOptions.seconds) || 4)),
 			aspect_ratio:
 				modelOptions.aspect_ratio === "landscape" ? "landscape" : "portrait",
@@ -423,7 +441,7 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			image: startImageUrl,
+			...(startImageUrl ? { image: startImageUrl } : {}),
 			duration: 5,
 			resolution: "720p",
 			negative_prompt:
@@ -655,8 +673,14 @@ export function buildShotVideoInput(args: {
 	modelId: string;
 	prompt: string;
 	modelOptions: Record<string, VideoSettingValue>;
-	startImageUrl: string;
+	startImageUrl?: string;
+	referenceImageUrls?: string[];
 }) {
 	const model = getVideoModelDefinition(args.modelId);
-	return model.buildShotInput(args);
+	return model.buildShotInput({
+		...args,
+		referenceImageUrls:
+			args.referenceImageUrls ??
+			(args.startImageUrl ? [args.startImageUrl] : []),
+	});
 }

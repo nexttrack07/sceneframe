@@ -93,6 +93,7 @@ export function useVideoStudio({
 	setError: (msg: string | null) => void;
 }) {
 	const queryClient = useQueryClient();
+	const logPrefix = "[TransitionVideo]";
 	const [videoPrompt, setVideoPrompt] = useState("");
 	const [videoSettings, setVideoSettings] = useState<VideoDefaults>(
 		normalizeVideoDefaults(null),
@@ -106,6 +107,7 @@ export function useVideoStudio({
 	const allTransitionVideosRef = useRef(allTransitionVideos);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
+	const completedRunIdsRef = useRef<Set<string>>(new Set());
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
@@ -165,6 +167,7 @@ export function useVideoStudio({
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
 		setRunStatusesByVideoId({});
+		completedRunIdsRef.current.clear();
 		stopPolling();
 		cancelPollingRef.current = false;
 	}, [selectedTransitionPair, stopPolling]);
@@ -179,6 +182,31 @@ export function useVideoStudio({
 		writeTransitionSettings(videoSettings);
 	}, [selectedTransitionPair, videoSettings]);
 
+	// Keep local loading state aligned with fresh query data for the selected transition pair.
+	useEffect(() => {
+		if (!selectedTransitionPair) {
+			setIsGeneratingVideo(false);
+			setRunStatusesByVideoId({});
+			return;
+		}
+
+		const hasGeneratingVideos = allTransitionVideos.some(
+			(video) =>
+				video.fromShotId === selectedTransitionPair.fromShotId &&
+				video.toShotId === selectedTransitionPair.toShotId &&
+				video.status === "generating",
+		);
+
+		if (!hasGeneratingVideos) {
+			if (isPollingRef.current) {
+				stopPolling();
+			} else {
+				setIsGeneratingVideo(false);
+			}
+			setRunStatusesByVideoId({});
+		}
+	}, [allTransitionVideos, selectedTransitionPair, stopPolling]);
+
 	useEffect(() => {
 		return () => {
 			stopPolling();
@@ -189,6 +217,8 @@ export function useVideoStudio({
 		(pair: { fromShotId: string; toShotId: string }) => {
 			if (isPollingRef.current) return;
 
+			console.info(`${logPrefix} poll:start`, pair);
+
 			cancelPollingRef.current = false;
 			isPollingRef.current = true;
 			setIsGeneratingVideo(true);
@@ -198,6 +228,11 @@ export function useVideoStudio({
 
 			pollingIntervalRef.current = setInterval(async () => {
 				if (cancelPollingRef.current || Date.now() > deadline) {
+					console.warn(`${logPrefix} poll:stopped`, {
+						...pair,
+						cancelled: cancelPollingRef.current,
+						pastDeadline: Date.now() > deadline,
+					});
 					stopPolling();
 					return;
 				}
@@ -206,27 +241,69 @@ export function useVideoStudio({
 					const runStatusResult = await getTransitionVideoRunStatuses({
 						data: pair,
 					});
+					const interestingRuns = runStatusResult.runs.filter(
+						(run) =>
+							run.status === "completed" ||
+							run.status === "failed" ||
+							run.status === "canceled",
+					);
+					if (interestingRuns.length > 0) {
+						console.info(`${logPrefix} run:stage`, {
+							...pair,
+							runs: interestingRuns.map((run) => ({
+								assetId: run.assetId,
+								status: run.status,
+							})),
+						});
+					}
+					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
+						if (run.status !== "completed" || !run.jobId) return false;
+						if (completedRunIdsRef.current.has(run.jobId)) return false;
+						completedRunIdsRef.current.add(run.jobId);
+						return true;
+					});
 					setRunStatusesByVideoId(
 						Object.fromEntries(
 							runStatusResult.runs.map((run) => [run.assetId, run]),
 						),
 					);
+					if (newlyCompletedRuns.length > 0) {
+						await queryClient.refetchQueries({
+							queryKey: projectKeys.project(projectId),
+							type: "active",
+						});
+						console.info(`${logPrefix} run:completed-refetch`, pair);
+					}
 
 					const result = await pollTransitionVideos({
 						data: pair,
 					});
 
 					if (!result.isGenerating) {
-						if (!result.selectedDoneId && result.latestDoneId) {
-							await selectTransitionVideo({
-								data: { transitionVideoId: result.latestDoneId },
-							});
-						}
-
 						stopPolling();
 						setRunStatusesByVideoId({});
-						await queryClient.invalidateQueries({
+						if (!result.selectedDoneId && result.latestDoneId) {
+							try {
+								await selectTransitionVideo({
+									data: { transitionVideoId: result.latestDoneId },
+								});
+							} catch (error) {
+								console.warn(`${logPrefix} auto-select failed`, {
+									...pair,
+									videoId: result.latestDoneId,
+									error: error instanceof Error ? error.message : String(error),
+								});
+							}
+						}
+						await queryClient.refetchQueries({
 							queryKey: projectKeys.project(projectId),
+							type: "active",
+						});
+						console.info(`${logPrefix} poll:complete`, {
+							...pair,
+							latestDoneId: result.latestDoneId,
+							doneCount: result.doneCount,
+							erroredCount: result.erroredCount,
 						});
 
 						if (result.doneCount > 0) {
@@ -242,8 +319,12 @@ export function useVideoStudio({
 							);
 						}
 					}
-				} catch {
+				} catch (error) {
 					// Transient error, keep polling.
+					console.error(`${logPrefix} poll error`, {
+						...pair,
+						error: error instanceof Error ? error.message : String(error),
+					});
 				}
 			}, 3000);
 		},
@@ -253,7 +334,7 @@ export function useVideoStudio({
 	useEffect(() => {
 		const pair = selectedTransitionPair;
 		if (!pair) return;
-		const generatingTv = allTransitionVideosRef.current.find(
+		const generatingTv = allTransitionVideos.find(
 			(tv) =>
 				tv.fromShotId === pair.fromShotId &&
 				tv.toShotId === pair.toShotId &&
@@ -261,7 +342,7 @@ export function useVideoStudio({
 		);
 		if (!generatingTv || isPollingRef.current) return;
 		return startPolling(pair);
-	}, [selectedTransitionPair, startPolling]);
+	}, [allTransitionVideos, selectedTransitionPair, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedTransitionPair) return;
@@ -318,6 +399,10 @@ export function useVideoStudio({
 		const pair = selectedTransitionPair;
 		if (!pair || !videoPrompt.trim()) return;
 		if (isPollingRef.current) return;
+		console.info(`${logPrefix} queue:start`, {
+			...pair,
+			model: videoSettings.model,
+		});
 		setIsGeneratingVideo(true);
 		cancelPollingRef.current = false;
 		setError(null);
@@ -330,14 +415,20 @@ export function useVideoStudio({
 					videoSettings,
 				},
 			});
-			await queryClient.invalidateQueries({
+			await queryClient.refetchQueries({
 				queryKey: projectKeys.project(projectId),
+				type: "active",
 			});
 			startPolling(pair);
+			console.info(`${logPrefix} queue:done`, pair);
 			toast("Queued transition video", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
+			console.error(`${logPrefix} queue request failed`, {
+				...pair,
+				error: msg,
+			});
 			setError(msg);
 			toast(msg, "error");
 			stopPolling();

@@ -217,18 +217,36 @@ export const assets = pgTable(
 		index("idx_assets_scene_stage").on(table.sceneId, table.stage),
 		index("idx_assets_batch_id").on(table.batchId),
 		index("idx_assets_deleted").on(table.deletedAt),
-		// One selected asset per scene — partial unique index enforced at DB level
-		uniqueIndex("idx_assets_selected")
+		// One selected scene-level image asset per scene.
+		uniqueIndex("idx_assets_scene_image_selected")
 			.on(table.sceneId)
 			.where(
-				sql`${table.isSelected} = true AND ${table.shotId} IS NULL AND ${table.deletedAt} IS NULL`,
+				sql`${table.isSelected} = true AND ${table.shotId} IS NULL AND ${table.stage} = 'images' AND ${table.deletedAt} IS NULL`,
+			),
+		// One selected voiceover per scene.
+		uniqueIndex("idx_assets_scene_voiceover_selected")
+			.on(table.sceneId)
+			.where(
+				sql`${table.isSelected} = true AND ${table.type} = 'voiceover' AND ${table.deletedAt} IS NULL`,
+			),
+		// One selected background-music track per scene.
+		uniqueIndex("idx_assets_scene_background_music_selected")
+			.on(table.sceneId)
+			.where(
+				sql`${table.isSelected} = true AND ${table.type} = 'background_music' AND ${table.deletedAt} IS NULL`,
 			),
 		index("idx_assets_shot_id").on(table.shotId),
-		// One selected asset per shot — partial unique index enforced at DB level
-		uniqueIndex("idx_assets_shot_selected")
+		// One selected shot-level image asset per shot.
+		uniqueIndex("idx_assets_shot_image_selected")
 			.on(table.shotId)
 			.where(
-				sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL AND ${table.deletedAt} IS NULL`,
+				sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL AND ${table.stage} = 'images' AND ${table.deletedAt} IS NULL`,
+			),
+		// One selected shot-level video asset per shot.
+		uniqueIndex("idx_assets_shot_video_selected")
+			.on(table.shotId)
+			.where(
+				sql`${table.isSelected} = true AND ${table.shotId} IS NOT NULL AND ${table.stage} = 'video' AND ${table.deletedAt} IS NULL`,
 			),
 		check(
 			"assets_type_check",

@@ -78,6 +78,7 @@ export function useImageStudio({
 	const assetsByShotIdRef = useRef(assetsByShotId);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
+	const completedRunIdsRef = useRef<Set<string>>(new Set());
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
@@ -150,11 +151,23 @@ export function useImageStudio({
 					const runStatusResult = await getShotImageRunStatuses({
 						data: { shotId },
 					});
+					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
+						if (run.status !== "completed" || !run.jobId) return false;
+						if (completedRunIdsRef.current.has(run.jobId)) return false;
+						completedRunIdsRef.current.add(run.jobId);
+						return true;
+					});
 					setRunStatusesByAssetId(
 						Object.fromEntries(
 							runStatusResult.runs.map((run) => [run.assetId, run]),
 						),
 					);
+					if (newlyCompletedRuns.length > 0) {
+						await pollingParamsRef.current.queryClient.invalidateQueries({
+							queryKey: projectKeys.project(pollingParamsRef.current.projectId),
+							refetchType: "active",
+						});
+					}
 
 					const result = await pollShotAssets({
 						data: { shotId },
@@ -231,6 +244,7 @@ export function useImageStudio({
 		setUserReferenceUrls([]);
 		setIsUploadingReference(false);
 		setRunStatusesByAssetId({});
+		completedRunIdsRef.current.clear();
 		cancelPollingRef.current = false;
 	}, [selectedShotId, stopPolling]);
 

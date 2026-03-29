@@ -434,6 +434,15 @@ export const pollTransitionVideos = createServerFn({ method: "POST" })
 		const errored = videos.filter((video) => video.status === "error");
 		const selectedDone = done.find((video) => video.isSelected) ?? null;
 
+		if (generating.length === 0) {
+			console.info("[TransitionVideoServer] poll:complete", {
+				fromShotId,
+				toShotId,
+				doneCount: done.length,
+				erroredCount: errored.length,
+			});
+		}
+
 		return {
 			generatingCount: generating.length,
 			doneCount: done.length,
@@ -467,6 +476,9 @@ async function reconcileGeneratingTransitionVideos(args: {
 	await Promise.all(
 		generatingVideos.map(async (video) => {
 			if (Date.now() - video.createdAt.getTime() > STALE_TRANSITION_VIDEO_MS) {
+				console.warn("[TransitionVideoServer] reconcile:timed-out", {
+					videoId: video.id,
+				});
 				await db
 					.update(transitionVideos)
 					.set({
@@ -480,6 +492,14 @@ async function reconcileGeneratingTransitionVideos(args: {
 
 			if (!video.jobId) {
 				if (!replicate || !video.generationId) {
+					console.warn(
+						"[TransitionVideoServer] reconcile:missing-job-and-generation",
+						{
+							videoId: video.id,
+							hasReplicate: Boolean(replicate),
+							hasGenerationId: Boolean(video.generationId),
+						},
+					);
 					await db
 						.update(transitionVideos)
 						.set({
@@ -496,11 +516,17 @@ async function reconcileGeneratingTransitionVideos(args: {
 					const prediction = await replicate.predictions.get(
 						video.generationId,
 					);
-
 					if (prediction.status === "succeeded") {
 						const urls = parseGeneratedMediaUrls(prediction.output);
 						const sourceUrl = urls[0];
 						if (!sourceUrl) {
+							console.error(
+								"[TransitionVideoServer] reconcile:missing-output-url",
+								{
+									videoId: video.id,
+									generationId: video.generationId,
+								},
+							);
 							await db
 								.update(transitionVideos)
 								.set({
@@ -517,7 +543,6 @@ async function reconcileGeneratingTransitionVideos(args: {
 							storageKey,
 							"video/mp4",
 						);
-
 						await db
 							.update(transitionVideos)
 							.set({
@@ -527,6 +552,12 @@ async function reconcileGeneratingTransitionVideos(args: {
 								errorMessage: null,
 							})
 							.where(eq(transitionVideos.id, video.id));
+						console.info(
+							"[TransitionVideoServer] reconcile:provider-succeeded",
+							{
+								videoId: video.id,
+							},
+						);
 						return;
 					}
 
@@ -549,10 +580,21 @@ async function reconcileGeneratingTransitionVideos(args: {
 								errorMessage,
 							})
 							.where(eq(transitionVideos.id, video.id));
+						console.warn("[TransitionVideoServer] reconcile:provider-failed", {
+							videoId: video.id,
+						});
 						return;
 					}
-				} catch {
+				} catch (error) {
 					// Fall through to Trigger-run reconciliation below.
+					console.warn(
+						"[TransitionVideoServer] reconcile:provider-check-failed",
+						{
+							videoId: video.id,
+							generationId: video.generationId,
+							error: error instanceof Error ? error.message : String(error),
+						},
+					);
 				}
 			}
 
@@ -573,6 +615,10 @@ async function reconcileGeneratingTransitionVideos(args: {
 								run.error?.message ?? ORPHANED_TRANSITION_VIDEO_ERROR,
 						})
 						.where(eq(transitionVideos.id, video.id));
+					console.warn("[TransitionVideoServer] reconcile:trigger-failed", {
+						videoId: video.id,
+						runStatus,
+					});
 				}
 			} catch (error) {
 				const message =
@@ -583,6 +629,13 @@ async function reconcileGeneratingTransitionVideos(args: {
 					message.includes("404");
 
 				if (looksMissingRun) {
+					console.warn(
+						"[TransitionVideoServer] reconcile:missing-trigger-run",
+						{
+							videoId: video.id,
+							jobId: video.jobId,
+						},
+					);
 					await db
 						.update(transitionVideos)
 						.set({

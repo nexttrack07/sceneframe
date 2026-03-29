@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Shot } from "@/db/schema";
 import { normalizeVideoDefaults } from "../project-normalize";
 import type {
+	SceneAssetSummary,
 	ShotVideoSummary,
 	TriggerRunSummary,
 	VideoDefaults,
@@ -76,32 +78,40 @@ function writeShotVideoSettings(settings: VideoDefaults) {
 export function useShotVideoStudio({
 	projectId,
 	selectedShotId,
+	storyShots,
+	assetsByShotId,
 	allShotVideos,
 	toast,
 	setError,
 }: {
 	projectId: string;
 	selectedShotId: string | null;
+	storyShots: Shot[];
+	assetsByShotId: Map<string, SceneAssetSummary[]>;
 	allShotVideos: ShotVideoSummary[];
 	toast: ToastFn;
 	setError: (msg: string | null) => void;
 }) {
 	const queryClient = useQueryClient();
+	const logPrefix = "[ShotVideo]";
 	const [videoPrompt, setVideoPrompt] = useState("");
 	const [videoSettings, setVideoSettings] = useState<VideoDefaults>(
 		normalizeVideoDefaults(null),
 	);
+	const [isQueueingVideo, setIsQueueingVideo] = useState(false);
 	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
-	// Reference image for video generation (null = use selected image)
-	const [referenceImageId, setReferenceImageId] = useState<string | null>(null);
+	const [usePrevShotImage, setUsePrevShotImage] = useState(true);
+	// Reference images for video generation selected manually in the slider.
+	const [referenceImageIds, setReferenceImageIds] = useState<string[]>([]);
 	const allShotVideosRef = useRef(allShotVideos);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
+	const completedRunIdsRef = useRef<Set<string>>(new Set());
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
@@ -153,14 +163,17 @@ export function useShotVideoStudio({
 
 		setVideoPrompt(initialPrompt);
 		setVideoSettings(initialSettings);
+		setIsQueueingVideo(false);
 		setIsGeneratingVideo(hasGeneratingVideos);
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
-		setReferenceImageId(null);
+		setUsePrevShotImage(false);
+		setReferenceImageIds([]);
 		setRunStatusesByVideoId({});
+		completedRunIdsRef.current.clear();
 		stopPolling();
 		cancelPollingRef.current = false;
 	}, [selectedShotId, stopPolling]);
@@ -177,6 +190,29 @@ export function useShotVideoStudio({
 		writeShotVideoSettings(videoSettings);
 	}, [selectedShotId, videoSettings]);
 
+	// Keep local loading state aligned with fresh query data for the selected shot.
+	useEffect(() => {
+		if (!selectedShotId) {
+			setIsGeneratingVideo(false);
+			setRunStatusesByVideoId({});
+			return;
+		}
+
+		const hasGeneratingVideos = allShotVideos.some(
+			(video) =>
+				video.shotId === selectedShotId && video.status === "generating",
+		);
+
+		if (!hasGeneratingVideos) {
+			if (isPollingRef.current) {
+				stopPolling();
+			} else {
+				setIsGeneratingVideo(false);
+			}
+			setRunStatusesByVideoId({});
+		}
+	}, [allShotVideos, selectedShotId, stopPolling]);
+
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
@@ -184,9 +220,35 @@ export function useShotVideoStudio({
 		};
 	}, [stopPolling]);
 
+	const selectedShot = selectedShotId
+		? (storyShots.find((shot) => shot.id === selectedShotId) ?? null)
+		: null;
+	const prevShot = selectedShot
+		? (() => {
+				const idx = storyShots.findIndex((shot) => shot.id === selectedShot.id);
+				return idx > 0 ? storyShots[idx - 1] : null;
+			})()
+		: null;
+	const prevShotSelectedImage = prevShot
+		? ((assetsByShotId.get(prevShot.id) ?? []).find(
+				(asset) => asset.isSelected && asset.status === "done" && asset.url,
+			) ?? null)
+		: null;
+
+	useEffect(() => {
+		if (!selectedShotId) {
+			setUsePrevShotImage(false);
+			return;
+		}
+
+		setUsePrevShotImage(Boolean(prevShotSelectedImage));
+	}, [selectedShotId, prevShotSelectedImage]);
+
 	const startPolling = useCallback(
 		(shotId: string) => {
 			if (isPollingRef.current) return;
+
+			console.info(`${logPrefix} poll:start`, { shotId });
 
 			cancelPollingRef.current = false;
 			isPollingRef.current = true;
@@ -197,6 +259,11 @@ export function useShotVideoStudio({
 
 			pollingIntervalRef.current = setInterval(async () => {
 				if (cancelPollingRef.current || Date.now() > deadline) {
+					console.warn(`${logPrefix} poll:stopped`, {
+						shotId,
+						cancelled: cancelPollingRef.current,
+						pastDeadline: Date.now() > deadline,
+					});
 					stopPolling();
 					return;
 				}
@@ -205,27 +272,72 @@ export function useShotVideoStudio({
 					const runStatusResult = await getShotVideoRunStatuses({
 						data: { shotId },
 					});
+					const interestingRuns = runStatusResult.runs.filter(
+						(run) =>
+							run.status === "completed" ||
+							run.status === "failed" ||
+							run.status === "canceled",
+					);
+					if (interestingRuns.length > 0) {
+						console.info(`${logPrefix} run:stage`, {
+							shotId,
+							runs: interestingRuns.map((run) => ({
+								assetId: run.assetId,
+								status: run.status,
+							})),
+						});
+					}
+					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
+						if (run.status !== "completed" || !run.jobId) return false;
+						if (completedRunIdsRef.current.has(run.jobId)) return false;
+						completedRunIdsRef.current.add(run.jobId);
+						return true;
+					});
 					setRunStatusesByVideoId(
 						Object.fromEntries(
 							runStatusResult.runs.map((run) => [run.assetId, run]),
 						),
 					);
+					if (newlyCompletedRuns.length > 0) {
+						await queryClient.refetchQueries({
+							queryKey: projectKeys.project(projectId),
+							type: "active",
+						});
+						console.info(`${logPrefix} run:completed-refetch`, {
+							shotId,
+							count: newlyCompletedRuns.length,
+						});
+					}
 
 					const result = await pollShotVideos({
 						data: { shotId },
 					});
 
 					if (!result.isGenerating) {
-						if (!result.selectedDoneId && result.latestDoneId) {
-							await selectShotVideo({
-								data: { videoId: result.latestDoneId },
-							});
-						}
-
+						console.info(`${logPrefix} poll:complete`, {
+							shotId,
+							latestDoneId: result.latestDoneId,
+							doneCount: result.doneCount,
+							erroredCount: result.erroredCount,
+						});
 						stopPolling();
 						setRunStatusesByVideoId({});
-						await queryClient.invalidateQueries({
+						if (!result.selectedDoneId && result.latestDoneId) {
+							try {
+								await selectShotVideo({
+									data: { videoId: result.latestDoneId },
+								});
+							} catch (error) {
+								console.warn(`${logPrefix} auto-select failed`, {
+									shotId,
+									videoId: result.latestDoneId,
+									error: error instanceof Error ? error.message : String(error),
+								});
+							}
+						}
+						await queryClient.refetchQueries({
 							queryKey: projectKeys.project(projectId),
+							type: "active",
 						});
 
 						if (result.doneCount > 0) {
@@ -240,8 +352,12 @@ export function useShotVideoStudio({
 							);
 						}
 					}
-				} catch {
+				} catch (err) {
 					// Transient error, keep polling.
+					console.error(`${logPrefix} poll error`, {
+						shotId,
+						error: err instanceof Error ? err.message : String(err),
+					});
 				}
 			}, 3000);
 		},
@@ -252,12 +368,12 @@ export function useShotVideoStudio({
 	useEffect(() => {
 		const shotId = selectedShotId;
 		if (!shotId) return;
-		const generatingVideo = allShotVideosRef.current.find(
+		const generatingVideo = allShotVideos.find(
 			(v) => v.shotId === shotId && v.status === "generating",
 		);
 		if (!generatingVideo || isPollingRef.current) return;
 		startPolling(shotId);
-	}, [selectedShotId, startPolling]);
+	}, [allShotVideos, selectedShotId, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedShotId) return;
@@ -307,8 +423,18 @@ export function useShotVideoStudio({
 	async function handleGenerateVideo() {
 		const shotId = selectedShotId;
 		if (!shotId || !videoPrompt.trim()) return;
-		if (isPollingRef.current) return;
-		setIsGeneratingVideo(true);
+		const effectiveReferenceImageIds = [
+			...(usePrevShotImage && prevShotSelectedImage
+				? [prevShotSelectedImage.id]
+				: []),
+			...referenceImageIds,
+		];
+		console.info(`${logPrefix} queue:start`, {
+			shotId,
+			model: videoSettings.model,
+			referenceCount: effectiveReferenceImageIds.length,
+		});
+		setIsQueueingVideo(true);
 		cancelPollingRef.current = false;
 		setError(null);
 		try {
@@ -317,20 +443,31 @@ export function useShotVideoStudio({
 					shotId,
 					prompt: videoPrompt.trim(),
 					videoSettings,
-					referenceImageId: referenceImageId ?? undefined,
+					referenceImageIds:
+						effectiveReferenceImageIds.length > 0
+							? effectiveReferenceImageIds
+							: undefined,
 				},
 			});
-			await queryClient.invalidateQueries({
+			await queryClient.refetchQueries({
 				queryKey: projectKeys.project(projectId),
+				type: "active",
 			});
 			startPolling(shotId);
+			console.info(`${logPrefix} queue:done`, { shotId });
 			toast("Queued video generation", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
+			console.error(`${logPrefix} queue request failed`, {
+				shotId,
+				error: msg,
+			});
 			setError(msg);
 			toast(msg, "error");
 			stopPolling();
+		} finally {
+			setIsQueueingVideo(false);
 		}
 	}
 
@@ -368,6 +505,7 @@ export function useShotVideoStudio({
 		setVideoPrompt,
 		videoSettings,
 		setVideoSettings,
+		isQueueingVideo,
 		isGeneratingVideo,
 		isGeneratingVideoPrompt,
 		isEnhancingVideoPrompt,
@@ -376,8 +514,11 @@ export function useShotVideoStudio({
 		setUseProjectContext,
 		usePrevShotContext,
 		setUsePrevShotContext,
-		referenceImageId,
-		setReferenceImageId,
+		usePrevShotImage,
+		setUsePrevShotImage,
+		prevShotSelectedImage,
+		referenceImageIds,
+		setReferenceImageIds,
 		runStatusesByVideoId,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,

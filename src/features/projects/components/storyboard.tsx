@@ -257,6 +257,8 @@ export function Storyboard({
 	const shotVideoStudio = useShotVideoStudio({
 		projectId,
 		selectedShotId,
+		storyShots,
+		assetsByShotId,
 		allShotVideos: allShotVideoAssets,
 		toast,
 		setError,
@@ -1096,20 +1098,43 @@ export function Storyboard({
 								useProjectContext={shotVideoStudio.useProjectContext}
 								onUseProjectContextChange={shotVideoStudio.setUseProjectContext}
 								usePrevShotContext={shotVideoStudio.usePrevShotContext}
-								onUsePrevShotContextChange={shotVideoStudio.setUsePrevShotContext}
+								onUsePrevShotContextChange={
+									shotVideoStudio.setUsePrevShotContext
+								}
 								isGenerating={shotVideoStudio.isGeneratingVideo}
+								isQueueing={shotVideoStudio.isQueueingVideo}
 								onGenerate={shotVideoStudio.handleGenerateVideo}
 								generateButtonLabel="Generate shot video"
 								generatingButtonLabel="Generating shot video..."
 								availableImages={(assetsByShotId.get(selectedShot.id) ?? [])
-									.filter((a) => a.status === "done" && a.url)
+									.filter(
+										(
+											a,
+										): a is typeof a & {
+											url: string;
+										} => a.status === "done" && typeof a.url === "string",
+									)
 									.map((a) => ({
 										id: a.id,
-										url: a.url!,
+										url: a.url,
 										isSelected: a.isSelected,
 									}))}
-								referenceImageId={shotVideoStudio.referenceImageId}
-								onReferenceImageChange={shotVideoStudio.setReferenceImageId}
+								prevShotReferenceImage={
+									shotVideoStudio.prevShotSelectedImage?.url
+										? {
+												id: shotVideoStudio.prevShotSelectedImage.id,
+												url: shotVideoStudio.prevShotSelectedImage.url,
+												isSelected:
+													shotVideoStudio.prevShotSelectedImage.isSelected,
+											}
+										: null
+								}
+								usePrevShotReferenceImage={shotVideoStudio.usePrevShotImage}
+								onUsePrevShotReferenceImageChange={
+									shotVideoStudio.setUsePrevShotImage
+								}
+								referenceImageIds={shotVideoStudio.referenceImageIds}
+								onReferenceImageIdsChange={shotVideoStudio.setReferenceImageIds}
 							/>
 						</div>
 					) : studioMode === "voiceover" && voiceoverScene ? (
@@ -1171,6 +1196,7 @@ export function Storyboard({
 							usePrevShotContext={videoStudio.usePrevShotContext}
 							onUsePrevShotContextChange={videoStudio.setUsePrevShotContext}
 							isGenerating={videoStudio.isGeneratingVideo}
+							isQueueing={videoStudio.isGeneratingVideo}
 							onGenerate={videoStudio.handleGenerateVideo}
 						/>
 					) : null}

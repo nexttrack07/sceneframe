@@ -80,14 +80,56 @@ export interface ReferenceImageOption {
 	isSelected: boolean;
 }
 
+function ContextToggleCard({
+	label,
+	description,
+	checked,
+	onChange,
+}: {
+	label: string;
+	description: string;
+	checked: boolean;
+	onChange: (value: boolean) => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onChange(!checked)}
+			className={`flex items-start gap-2 p-2 rounded-lg border text-left transition-all w-full ${
+				checked
+					? "border-primary/40 bg-primary/5"
+					: "border-border/50 bg-muted/20 hover:border-border hover:bg-muted/40"
+			}`}
+		>
+			<div
+				className={`mt-0.5 h-3.5 w-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+					checked ? "bg-primary border-primary" : "border-muted-foreground/40"
+				}`}
+			>
+				{checked && <Check size={9} className="text-primary-foreground" />}
+			</div>
+			<div>
+				<p
+					className={`text-xs font-medium leading-tight ${checked ? "text-foreground" : "text-muted-foreground"}`}
+				>
+					{label}
+				</p>
+				<p className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">
+					{description}
+				</p>
+			</div>
+		</button>
+	);
+}
+
 function ReferenceImageSlider({
 	images,
-	selectedId,
+	selectedIds,
 	onSelect,
 }: {
 	images: ReferenceImageOption[];
-	selectedId: string | null | undefined;
-	onSelect: (id: string | null) => void;
+	selectedIds: string[];
+	onSelect: (ids: string[]) => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -103,10 +145,10 @@ function ReferenceImageSlider({
 	return (
 		<div className="space-y-2">
 			<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-				Reference image (optional)
+				Reference images (optional)
 			</p>
 			<p className="text-[10px] text-muted-foreground">
-				Select a starting frame for video generation
+				Select one or more images to guide video generation
 			</p>
 
 			<div className="relative">
@@ -128,12 +170,18 @@ function ReferenceImageSlider({
 					style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
 				>
 					{images.map((img) => {
-						const isActive = img.id === selectedId;
+						const isActive = selectedIds.includes(img.id);
 						return (
 							<button
 								key={img.id}
 								type="button"
-								onClick={() => onSelect(selectedId === img.id ? null : img.id)}
+								onClick={() =>
+									onSelect(
+										isActive
+											? selectedIds.filter((id) => id !== img.id)
+											: [...selectedIds, img.id],
+									)
+								}
 								className={`relative flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border-2 transition-all ${
 									isActive
 										? "border-primary ring-2 ring-primary/30"
@@ -187,13 +235,17 @@ export function VideoControlsPanel({
 	usePrevShotContext,
 	onUsePrevShotContextChange,
 	isGenerating,
+	isQueueing = isGenerating,
 	onGenerate,
 	generateButtonLabel = "Generate video",
 	generatingButtonLabel = "Generating video...",
 	// Optional reference image selection (for shot videos)
 	availableImages,
-	referenceImageId,
-	onReferenceImageChange,
+	referenceImageIds,
+	onReferenceImageIdsChange,
+	prevShotReferenceImage,
+	usePrevShotReferenceImage,
+	onUsePrevShotReferenceImageChange,
 }: {
 	contextSection: ReactNode | null;
 	videoPrompt: string;
@@ -209,13 +261,17 @@ export function VideoControlsPanel({
 	usePrevShotContext: boolean;
 	onUsePrevShotContextChange: (v: boolean) => void;
 	isGenerating: boolean;
+	isQueueing?: boolean;
 	onGenerate: () => void;
 	generateButtonLabel?: string;
 	generatingButtonLabel?: string;
 	// Optional: available images for reference selection
 	availableImages?: ReferenceImageOption[];
-	referenceImageId?: string | null;
-	onReferenceImageChange?: (id: string | null) => void;
+	referenceImageIds?: string[];
+	onReferenceImageIdsChange?: (ids: string[]) => void;
+	prevShotReferenceImage?: ReferenceImageOption | null;
+	usePrevShotReferenceImage?: boolean;
+	onUsePrevShotReferenceImageChange?: (value: boolean) => void;
 }) {
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const motionPromptId = useId();
@@ -297,14 +353,34 @@ export function VideoControlsPanel({
 					</div>
 				</div>
 
-				{/* Reference image slider (for shot videos) */}
-				{availableImages && availableImages.length > 0 && onReferenceImageChange && (
-					<ReferenceImageSlider
-						images={availableImages}
-						selectedId={referenceImageId}
-						onSelect={onReferenceImageChange}
-					/>
+				{prevShotReferenceImage && onUsePrevShotReferenceImageChange && (
+					<div className="space-y-2">
+						<ContextToggleCard
+							label="Previous shot selected image"
+							description="Include the previous shot's selected image as a reference"
+							checked={usePrevShotReferenceImage ?? false}
+							onChange={onUsePrevShotReferenceImageChange}
+						/>
+						{usePrevShotReferenceImage && (
+							<img
+								src={prevShotReferenceImage.url}
+								alt="Previous shot selected reference"
+								className="w-full rounded-lg border border-border object-cover aspect-video opacity-80"
+							/>
+						)}
+					</div>
 				)}
+
+				{/* Reference image slider (for shot videos) */}
+				{availableImages &&
+					availableImages.length > 0 &&
+					onReferenceImageIdsChange && (
+						<ReferenceImageSlider
+							images={availableImages}
+							selectedIds={referenceImageIds ?? []}
+							onSelect={onReferenceImageIdsChange}
+						/>
+					)}
 
 				<div className="border-t pt-4 space-y-4">
 					<div className="flex items-center justify-between">
@@ -478,16 +554,16 @@ export function VideoControlsPanel({
 			<div className="p-4 border-t bg-card">
 				<Button
 					onClick={onGenerate}
-					disabled={isGenerating || !videoPrompt.trim()}
+					disabled={isQueueing || !videoPrompt.trim()}
 					className="w-full gap-2"
 					size="lg"
 				>
-					{isGenerating ? (
+					{isQueueing ? (
 						<Loader2 size={16} className="animate-spin" />
 					) : (
 						<Film size={16} />
 					)}
-					{isGenerating ? generatingButtonLabel : generateButtonLabel}
+					{isQueueing ? generatingButtonLabel : generateButtonLabel}
 				</Button>
 			</div>
 		</div>
