@@ -10,7 +10,6 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	unique,
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
@@ -109,7 +108,9 @@ export const scenes = pgTable(
 	(table) => [
 		index("idx_scenes_project_id").on(table.projectId),
 		index("idx_scenes_project_stage").on(table.projectId, table.stage),
-		unique("idx_scenes_project_order").on(table.projectId, table.order),
+		uniqueIndex("idx_scenes_project_order")
+			.on(table.projectId, table.order)
+			.where(sql`${table.deletedAt} IS NULL`),
 		index("idx_scenes_deleted").on(table.deletedAt),
 		check(
 			"scenes_stage_check",
