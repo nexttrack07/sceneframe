@@ -1,5 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	or,
+} from "drizzle-orm";
 import Replicate from "replicate";
 import { db } from "@/db/index";
 import {
@@ -18,17 +27,31 @@ import {
 	getUserApiKey,
 	parseShotBreakdownResponse,
 } from "./image-generation-helpers.server";
+import { parseOpeningHook } from "./lib/script-helpers";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
 	IntakeAnswers,
+	OpeningHookDraft,
 	ProjectSettings,
 	ScenePlanEntry,
+	ScriptEditDraft,
+	ScriptEditSelection,
 	ShotPlanEntry,
 } from "./project-types";
 
 const MAX_MESSAGE_LENGTH = 5_000;
 const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
+
+function extractJsonBlock<T>(response: string): T | null {
+	try {
+		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+		const jsonStr = fenceMatch ? fenceMatch[1] : response;
+		return JSON.parse(jsonStr.trim()) as T;
+	} catch {
+		return null;
+	}
+}
 
 export const saveIntake = createServerFn({ method: "POST" })
 	.inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
@@ -111,6 +134,414 @@ export const sendMessage = createServerFn({ method: "POST" })
 		} finally {
 			clearTimeout(timeout);
 		}
+	});
+
+export const generateOpeningHook = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; feedback?: string }) => ({
+		projectId: data.projectId,
+		feedback: data.feedback?.trim() || undefined,
+	}))
+	.handler(async ({ data: { projectId, feedback } }) => {
+		const { userId, project } = await assertProjectOwner(projectId, "error");
+		const settings = normalizeProjectSettings(project.settings) ?? {};
+		const intake = settings.intake ?? null;
+		if (!intake) {
+			throw new Error("Save the creative brief before generating a hook");
+		}
+
+		const existingHook = settings.workshop?.openingHook ?? null;
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+		const prompt = `You are a creative director developing only the opening hook for a video.
+
+CREATIVE BRIEF:
+- Channel preset: ${intake.channelPreset}
+- Purpose: ${intake.purpose ?? "Not specified"}
+- Target length: ${intake.length}
+- Target duration: ${intake.targetDurationSec ?? 300} seconds total
+- Visual style: ${intake.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audience: ${intake.audience ?? "Not specified"}
+- Desired viewer action: ${intake.viewerAction ?? "Not specified"}
+- Working title: ${intake.workingTitle || "Not provided"}
+- Thumbnail promise: ${intake.thumbnailPromise || "Not provided"}
+- Concept: ${intake.concept}
+
+TASK:
+- Generate only the opening hook for the first 3-10 seconds.
+- Do not outline the full script or scene plan.
+- The hook should be specific, visually direct, and strong enough to build the rest of the script around.
+- The visual direction must describe what the viewer sees, not generic placeholders.
+- The narration should be concise and usable as spoken or on-screen hook copy.
+
+${
+	existingHook
+		? `CURRENT OPENING HOOK:
+- Headline: ${existingHook.headline}
+- Narration: ${existingHook.narration}
+- Visual direction: ${existingHook.visualDirection}
+`
+		: ""
+}${
+	feedback
+		? `USER FEEDBACK TO APPLY:
+${feedback}
+`
+		: ""
+}
+Return only this fenced block:
+\`\`\`opening_hook
+{
+  "headline": "Short internal label for the hook",
+  "narration": "1-2 lines of opening narration or on-screen hook copy",
+  "visualDirection": "Specific visual direction for what appears on screen in the hook"
+}
+\`\`\``;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 1200, temperature: 0.5 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+			const content = chunks.join("");
+			const openingHook =
+				parseOpeningHook(content) ??
+				buildFallbackOpeningHook(existingHook, intake.concept, feedback);
+			const nextSettings: ProjectSettings = {
+				...settings,
+				workshop: {
+					...(settings.workshop ?? {}),
+					openingHook,
+				},
+			};
+			const assistantContent = feedback
+				? "I updated the opening hook in the workspace. Tell me what to sharpen next."
+				: "I drafted an opening hook in the workspace. Tell me what to change before we expand it.";
+
+			await db.transaction(async (tx) => {
+				if (feedback) {
+					await tx.insert(messages).values({
+						projectId,
+						role: "user",
+						content: feedback,
+					});
+				}
+
+				await tx
+					.update(projects)
+					.set({ settings: nextSettings })
+					.where(eq(projects.id, projectId));
+
+				await tx.insert(messages).values({
+					projectId,
+					role: "assistant",
+					content: assistantContent,
+				});
+			});
+
+			return { openingHook, assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+export const proposeScriptEdit = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			scope: ScriptEditSelection;
+			instructions: string;
+		}) => {
+			const instructions = data.instructions.trim();
+			if (!instructions) throw new Error("Edit instructions cannot be empty");
+			return {
+				projectId: data.projectId,
+				scope: data.scope,
+				instructions,
+			};
+		},
+	)
+	.handler(async ({ data: { projectId, scope, instructions } }) => {
+		const { userId, project } = await assertProjectOwner(projectId, "error");
+		const hasSelection =
+			scope.project || scope.sceneIds.length > 0 || scope.shotIds.length > 0;
+		if (!hasSelection) {
+			throw new Error(
+				"Select at least one scene, shot, or the project to edit",
+			);
+		}
+		const apiKey = await getUserApiKey(userId);
+		const settings = normalizeProjectSettings(project.settings);
+
+		const projectScenes = await db.query.scenes.findMany({
+			where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
+			orderBy: asc(scenes.order),
+		});
+		const sceneIds = projectScenes.map((scene) => scene.id);
+		const projectShots =
+			sceneIds.length > 0
+				? await db.query.shots.findMany({
+						where: and(
+							inArray(shots.sceneId, sceneIds),
+							isNull(shots.deletedAt),
+						),
+						orderBy: asc(shots.order),
+					})
+				: [];
+		const shotsBySceneId = new Map<string, typeof projectShots>();
+		for (const shot of projectShots) {
+			const existing = shotsBySceneId.get(shot.sceneId) ?? [];
+			existing.push(shot);
+			shotsBySceneId.set(shot.sceneId, existing);
+		}
+
+		const sceneOrderMap = new Map(
+			projectScenes.map((scene, index) => [scene.id, index + 1]),
+		);
+		const selectedScenes = scope.project
+			? projectScenes
+			: projectScenes.filter((scene) => scope.sceneIds.includes(scene.id));
+		if (selectedScenes.length === 0) {
+			// Allow shot-only edits.
+			if (scope.shotIds.length === 0) {
+				throw new Error("Nothing is selected to edit");
+			}
+		}
+		const scopeLabel = scope.project
+			? "the whole project"
+			: [
+					scope.sceneIds.length
+						? `${scope.sceneIds.length} selected scene${scope.sceneIds.length === 1 ? "" : "s"}`
+						: null,
+					scope.shotIds.length
+						? `${scope.shotIds.length} selected shot${scope.shotIds.length === 1 ? "" : "s"}`
+						: null,
+				]
+					.filter(Boolean)
+					.join(" and ");
+
+		const selectedSceneBlock = projectScenes
+			.filter(
+				(scene) =>
+					scope.project ||
+					scope.sceneIds.includes(scene.id) ||
+					(scope.shotIds.length > 0 &&
+						(projectShots.some(
+							(shot) =>
+								shot.sceneId === scene.id && scope.shotIds.includes(shot.id),
+						) ||
+							false)),
+			)
+			.map((scene) => {
+				const sceneOrder = sceneOrderMap.get(scene.id) ?? 0;
+				const sceneShotsForPrompt = shotsBySceneId.get(scene.id) ?? [];
+				const shotLines = sceneShotsForPrompt
+					.map((shot, index) => ({
+						shot,
+						shotOrder: index + 1,
+					}))
+					.filter(
+						({ shot }) =>
+							scope.project ||
+							scope.sceneIds.includes(scene.id) ||
+							scope.shotIds.includes(shot.id),
+					)
+					.map(
+						({ shot, shotOrder }) =>
+							`  - shotOrder: ${shotOrder}; description: ${shot.description}`,
+					)
+					.join("\n");
+				return [
+					`sceneOrder: ${sceneOrder}`,
+					`sceneDescription: ${scene.description}`,
+					shotLines ? "shots:" : null,
+					shotLines || null,
+				]
+					.filter(Boolean)
+					.join("\n");
+			})
+			.join("\n\n");
+
+		const prompt = `You are a script editor making a targeted draft edit to an existing video outline.
+
+Project: ${project.name}
+Concept: ${settings?.intake?.concept ?? "Not provided"}
+Purpose: ${settings?.intake?.purpose ?? "Not provided"}
+
+Selected scope: ${scopeLabel}
+User edit request:
+${instructions}
+
+Current selected material:
+${selectedSceneBlock}
+
+Rules:
+- Only edit the selected scope.
+- If the scope is a scene, rewrite that scene description and all shots in that scene.
+- If the scope is a shot, rewrite only that one shot description.
+- If the scope is the whole project, you may rewrite any scene and shot descriptions.
+- Keep the structure intact. Do not add or remove scenes or shots.
+- Be concrete and production-ready.
+
+Return only JSON:
+\`\`\`json
+{
+  "summary": "short one-line summary of what changed",
+  "sceneUpdates": [
+    { "sceneOrder": 2, "description": "updated description" }
+  ],
+  "shotUpdates": [
+    { "sceneOrder": 2, "shotOrder": 1, "description": "updated shot description" }
+  ]
+}
+\`\`\``;
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 2048, temperature: 0.5 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const parsed = extractJsonBlock<{
+				summary?: string;
+				sceneUpdates?: Array<{ sceneOrder?: number; description?: string }>;
+				shotUpdates?: Array<{
+					sceneOrder?: number;
+					shotOrder?: number;
+					description?: string;
+				}>;
+			}>(chunks.join("").trim());
+			if (!parsed) {
+				throw new Error("AI returned an invalid edit draft");
+			}
+
+			const sceneUpdates =
+				parsed.sceneUpdates
+					?.map((update) => {
+						const scene = projectScenes[(update.sceneOrder ?? 0) - 1];
+						const description = String(update.description ?? "").trim();
+						if (!scene || !description) return null;
+						if (!scope.project && !scope.sceneIds.includes(scene.id)) {
+							return null;
+						}
+						return { sceneId: scene.id, description };
+					})
+					.filter((value): value is { sceneId: string; description: string } =>
+						Boolean(value),
+					) ?? [];
+
+			const shotUpdates =
+				parsed.shotUpdates
+					?.map((update) => {
+						const scene = projectScenes[(update.sceneOrder ?? 0) - 1];
+						if (!scene) return null;
+						const sceneShots = shotsBySceneId.get(scene.id) ?? [];
+						const shot = sceneShots[(update.shotOrder ?? 0) - 1];
+						const description = String(update.description ?? "").trim();
+						if (!shot || !description) return null;
+						if (
+							!scope.project &&
+							!scope.sceneIds.includes(scene.id) &&
+							!scope.shotIds.includes(shot.id)
+						) {
+							return null;
+						}
+						return { shotId: shot.id, description };
+					})
+					.filter((value): value is { shotId: string; description: string } =>
+						Boolean(value),
+					) ?? [];
+
+			if (sceneUpdates.length === 0 && shotUpdates.length === 0) {
+				throw new Error("The draft did not contain any editable changes");
+			}
+
+			const draft: ScriptEditDraft = {
+				scope,
+				instructions,
+				summary:
+					String(parsed.summary ?? "Draft updated").trim() || "Draft updated",
+				sceneUpdates,
+				shotUpdates,
+			};
+
+			return draft;
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+export const applyScriptEditDraft = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; draft: ScriptEditDraft }) => data)
+	.handler(async ({ data: { projectId, draft } }) => {
+		await assertProjectOwner(projectId, "error");
+
+		await db.transaction(async (tx) => {
+			for (const update of draft.sceneUpdates) {
+				await tx
+					.update(scenes)
+					.set({ description: update.description })
+					.where(eq(scenes.id, update.sceneId));
+			}
+
+			for (const update of draft.shotUpdates) {
+				await tx
+					.update(shots)
+					.set({ description: update.description })
+					.where(eq(shots.id, update.shotId));
+			}
+
+			const project = await tx.query.projects.findFirst({
+				where: eq(projects.id, projectId),
+				columns: { scriptRaw: true },
+			});
+			if (project?.scriptRaw) {
+				try {
+					const parsed = JSON.parse(project.scriptRaw) as ScenePlanEntry[];
+					const projectScenes = await tx.query.scenes.findMany({
+						where: and(
+							eq(scenes.projectId, projectId),
+							isNull(scenes.deletedAt),
+						),
+						orderBy: asc(scenes.order),
+						columns: { id: true },
+					});
+					const sceneOrderById = new Map(
+						projectScenes.map((scene, index) => [scene.id, index]),
+					);
+					for (const update of draft.sceneUpdates) {
+						const sceneIndex = sceneOrderById.get(update.sceneId);
+						if (sceneIndex !== undefined && parsed[sceneIndex]) {
+							parsed[sceneIndex] = {
+								...parsed[sceneIndex],
+								description: update.description,
+							};
+						}
+					}
+					await tx
+						.update(projects)
+						.set({ scriptRaw: JSON.stringify(parsed) })
+						.where(eq(projects.id, projectId));
+				} catch {
+					// Non-blocking if scriptRaw cannot be rewritten.
+				}
+			}
+		});
+
+		return { ok: true };
 	});
 
 export const approveScenes = createServerFn({ method: "POST" })
@@ -369,6 +800,13 @@ export const approveScenes = createServerFn({ method: "POST" })
 					order: number;
 					description: string;
 					shotType: "talking" | "visual";
+					shotSize:
+						| "extreme-wide"
+						| "wide"
+						| "medium"
+						| "close-up"
+						| "extreme-close-up"
+						| "insert";
 					durationSec: number;
 					timestampStart: number;
 					timestampEnd: number;
@@ -383,6 +821,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 							order: i + 1,
 							description: shot.description,
 							shotType: shot.shotType,
+							shotSize: shot.shotSize,
 							durationSec: shot.durationSec,
 							timestampStart: shot.timestampStart,
 							timestampEnd: shot.timestampEnd,
@@ -508,11 +947,37 @@ function buildFallbackShotPlan(
 						? scene.description
 						: `${scene.description} (continuation ${j + 1})`,
 				shotType: "visual" as const,
+				shotSize:
+					(["wide", "medium", "close-up", "insert"] as const)[j % 4] ??
+					"medium",
 				durationSec: shotDuration,
 			});
 		}
 	}
 	return result;
+}
+
+function buildFallbackOpeningHook(
+	existingHook: OpeningHookDraft | null,
+	concept: string,
+	feedback?: string,
+): OpeningHookDraft {
+	if (existingHook && feedback) {
+		return {
+			headline: existingHook.headline,
+			narration: `${existingHook.narration} ${feedback}`.trim(),
+			visualDirection: existingHook.visualDirection,
+		};
+	}
+
+	return {
+		headline: "Opening hook",
+		narration:
+			concept.trim().slice(0, 220) ||
+			"Lead with the strongest promise in the first few seconds.",
+		visualDirection:
+			"Open on the single most arresting visual from the concept and frame it so the viewer immediately understands the tension.",
+	};
 }
 
 export const resetWorkshop = createServerFn({ method: "POST" })

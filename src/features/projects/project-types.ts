@@ -2,6 +2,21 @@ export type ImageModelId = string;
 export type ImageSettingValue = string | number | boolean;
 export type VideoModelId = string;
 export type VideoSettingValue = string | number | boolean;
+export type MotionGraphicPreset = "lower_third" | "callout";
+export type PromptAssetType =
+	| "cinematic"
+	| "documentary"
+	| "infographic"
+	| "text_graphic"
+	| "talking_head"
+	| "transition";
+export type PromptAssetTypeSelection = "auto" | PromptAssetType;
+export type VideoLifecycleStatus =
+	| "queued"
+	| "generating"
+	| "finalizing"
+	| "done"
+	| "error";
 
 export interface IntakeAnswers {
 	channelPreset: string;
@@ -19,6 +34,7 @@ export interface IntakeAnswers {
 }
 
 export interface ScenePlanEntry {
+	sceneNumber?: number;
 	title: string;
 	description: string;
 	durationSec?: number;
@@ -26,11 +42,45 @@ export interface ScenePlanEntry {
 	hookRole?: "hook" | "body" | "cta";
 }
 
+export interface OpeningHookDraft {
+	headline: string;
+	narration: string;
+	visualDirection: string;
+}
+
+export interface ScriptEditSelection {
+	project: boolean;
+	sceneIds: string[];
+	shotIds: string[];
+}
+
+export interface ScriptEditDraft {
+	scope: ScriptEditSelection;
+	instructions: string;
+	summary: string;
+	sceneUpdates: Array<{
+		sceneId: string;
+		description: string;
+	}>;
+	shotUpdates: Array<{
+		shotId: string;
+		description: string;
+	}>;
+}
+
 export type ShotType = "talking" | "visual";
+export type ShotSize =
+	| "extreme-wide"
+	| "wide"
+	| "medium"
+	| "close-up"
+	| "extreme-close-up"
+	| "insert";
 
 export interface ShotPlanEntry {
 	description: string;
 	shotType: ShotType;
+	shotSize: ShotSize;
 	durationSec: number;
 	sceneIndex: number;
 }
@@ -57,13 +107,50 @@ export interface Character {
 export interface ProjectSettings {
 	intake?: IntakeAnswers;
 	characters?: Character[];
+	workshop?: {
+		openingHook?: OpeningHookDraft | null;
+	};
+}
+
+export interface MotionGraphicTextItemSpec {
+	id: string;
+	text: string;
+	role: "headline" | "subheadline" | "label";
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+	fontSize: number;
+	color: string;
+	align: "left" | "center" | "right";
+	fromOffsetFrames: number;
+	durationInFrames: number;
+	enterAnimation: "fade" | "slide-up" | "slide-left" | "pop";
+	enterAnimationDurationInSeconds: number;
+	exitAnimation: "fade" | "slide-up" | "slide-left" | "pop";
+	exitAnimationDurationInSeconds: number;
+}
+
+export interface MotionGraphicSpec {
+	items: MotionGraphicTextItemSpec[];
+}
+
+export interface MotionGraphicSummary {
+	id: string;
+	sceneId: string;
+	shotId: string;
+	preset: MotionGraphicPreset;
+	title: string;
+	sourceText: string;
+	spec: MotionGraphicSpec;
+	createdAt: string;
 }
 
 // Base video type shared by both transition and shot videos
 export interface BaseVideoSummary {
 	id: string;
 	sceneId: string;
-	status: "generating" | "done" | "error";
+	status: VideoLifecycleStatus;
 	url: string | null;
 	errorMessage: string | null;
 	prompt: string | null;

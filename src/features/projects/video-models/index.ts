@@ -30,6 +30,18 @@ export interface VideoModelDefinition {
 	id: string;
 	label: string;
 	provider: string;
+	execution:
+		| {
+				provider: "replicate";
+				model: string;
+		  }
+		| {
+				provider: "fal";
+				shotTextToVideo?: string;
+				shotImageToVideo: string;
+				shotReferenceToVideo?: string;
+				transitionImageToVideo: string;
+		  };
 	description: string;
 	logoText: string;
 	logoImageUrl?: string;
@@ -61,11 +73,29 @@ const klingV3OmniSchema = {
 			enum: [3, 5, 7, 10, 15],
 			default: 5,
 		},
-		mode: {
+		aspect_ratio: {
 			type: "string",
-			title: "Resolution",
-			enum: ["standard", "pro"],
-			default: "pro",
+			title: "Aspect Ratio",
+			enum: ["16:9", "9:16", "1:1"],
+			default: "16:9",
+		},
+		shot_type: {
+			type: "string",
+			title: "Shot Type",
+			enum: ["customize", "intelligent"],
+			default: "customize",
+		},
+		negative_prompt: {
+			type: "string",
+			title: "Negative Prompt",
+			default: "",
+		},
+		cfg_scale: {
+			type: "number",
+			title: "CFG Scale",
+			default: 0.5,
+			minimum: 0,
+			maximum: 1,
 		},
 		generate_audio: {
 			type: "boolean",
@@ -85,10 +115,28 @@ const klingV25TurboSchema = {
 			enum: [5, 10],
 			default: 5,
 		},
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: ["16:9", "9:16", "1:1"],
+			default: "16:9",
+		},
 		negative_prompt: {
 			type: "string",
 			title: "Negative Prompt",
 			default: "",
+		},
+		cfg_scale: {
+			type: "number",
+			title: "CFG Scale",
+			default: 0.5,
+			minimum: 0,
+			maximum: 1,
+		},
+		generate_audio: {
+			type: "boolean",
+			title: "Audio",
+			default: false,
 		},
 	},
 } as const;
@@ -210,15 +258,27 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "kwaivgi/kling-v3-omni-video",
 		label: "Kling V3 Omni",
 		provider: "Kwai",
+		execution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/kling-video/o3/pro/text-to-video",
+			shotImageToVideo: "fal-ai/kling-video/o3/pro/image-to-video",
+			shotReferenceToVideo: "fal-ai/kling-video/o3/pro/reference-to-video",
+			transitionImageToVideo: "fal-ai/kling-video/o3/pro/image-to-video",
+		},
 		description:
-			"Higher-end Kling motion model with 720p or 1080p output options.",
+			"Higher-end Kling motion model with prompt-driven cinematic motion and optional native audio.",
 		logoText: "K",
 		logoImageUrl: "/model-media/kling-logo.jpg",
 		previewImageUrl: "/model-media/kling-v3-omni-preview.mp4",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#1f2937_0%,#6d28d9_30%,#ec4899_68%,#fce7f3_100%)]",
 		schema: klingV3OmniSchema,
-		visibleSettings: ["duration", "mode", "generate_audio"],
+		visibleSettings: [
+			"duration",
+			"aspect_ratio",
+			"negative_prompt",
+			"generate_audio",
+		],
 		buildTransitionInput: ({
 			prompt,
 			modelOptions,
@@ -226,10 +286,24 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			endImageUrl,
 		}) => ({
 			prompt,
-			start_image: startImageUrl,
-			end_image: endImageUrl,
+			image_url: startImageUrl,
+			end_image_url: endImageUrl,
 			duration: Math.max(3, Math.min(15, Number(modelOptions.duration) || 5)),
-			mode: modelOptions.mode === "standard" ? "standard" : "pro",
+			aspect_ratio:
+				typeof modelOptions.aspect_ratio === "string"
+					? modelOptions.aspect_ratio
+					: "16:9",
+			shot_type:
+				modelOptions.shot_type === "intelligent" ? "intelligent" : "customize",
+			cfg_scale:
+				typeof modelOptions.cfg_scale === "number"
+					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
+					: 0.5,
+			negative_prompt:
+				typeof modelOptions.negative_prompt === "string" &&
+				modelOptions.negative_prompt.trim().length > 0
+					? modelOptions.negative_prompt.trim()
+					: undefined,
 			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 		buildShotInput: ({
@@ -239,12 +313,26 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			referenceImageUrls,
 		}) => ({
 			prompt,
-			...(startImageUrl ? { start_image: startImageUrl } : {}),
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
 			...(referenceImageUrls.length > 1
-				? { reference_images: referenceImageUrls.slice(1, 8) }
+				? { image_urls: referenceImageUrls.slice(1, 8) }
 				: {}),
 			duration: Math.max(3, Math.min(15, Number(modelOptions.duration) || 5)),
-			mode: modelOptions.mode === "standard" ? "standard" : "pro",
+			aspect_ratio:
+				typeof modelOptions.aspect_ratio === "string"
+					? modelOptions.aspect_ratio
+					: "16:9",
+			shot_type:
+				modelOptions.shot_type === "intelligent" ? "intelligent" : "customize",
+			cfg_scale:
+				typeof modelOptions.cfg_scale === "number"
+					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
+					: 0.5,
+			negative_prompt:
+				typeof modelOptions.negative_prompt === "string" &&
+				modelOptions.negative_prompt.trim().length > 0
+					? modelOptions.negative_prompt.trim()
+					: undefined,
 			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 	},
@@ -252,6 +340,13 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "kwaivgi/kling-v2.5-turbo-pro",
 		label: "Kling 2.5 Turbo",
 		provider: "Kwai",
+		execution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+			shotImageToVideo: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+			transitionImageToVideo:
+				"fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+		},
 		description:
 			"Turbo transition model with streamlined controls and quick motion output.",
 		logoText: "K",
@@ -260,7 +355,12 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		accentClassName:
 			"bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_35%,#22d3ee_70%,#e0f2fe_100%)]",
 		schema: klingV25TurboSchema,
-		visibleSettings: ["duration", "negative_prompt"],
+		visibleSettings: [
+			"duration",
+			"aspect_ratio",
+			"negative_prompt",
+			"generate_audio",
+		],
 		buildTransitionInput: ({
 			prompt,
 			modelOptions,
@@ -268,30 +368,52 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			endImageUrl,
 		}) => ({
 			prompt,
-			start_image: startImageUrl,
-			end_image: endImageUrl,
+			image_url: startImageUrl,
+			tail_image_url: endImageUrl,
 			duration: Number(modelOptions.duration) <= 7 ? 5 : 10,
+			aspect_ratio:
+				typeof modelOptions.aspect_ratio === "string"
+					? modelOptions.aspect_ratio
+					: "16:9",
+			cfg_scale:
+				typeof modelOptions.cfg_scale === "number"
+					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
+					: 0.5,
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
 					? modelOptions.negative_prompt.trim()
 					: undefined,
+			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			...(startImageUrl ? { start_image: startImageUrl } : {}),
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
 			duration: Number(modelOptions.duration) <= 7 ? 5 : 10,
+			aspect_ratio:
+				typeof modelOptions.aspect_ratio === "string"
+					? modelOptions.aspect_ratio
+					: "16:9",
+			cfg_scale:
+				typeof modelOptions.cfg_scale === "number"
+					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
+					: 0.5,
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
 					? modelOptions.negative_prompt.trim()
 					: undefined,
+			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 	},
 	{
 		id: "xai/grok-imagine-video",
 		label: "Grok Imagine Video",
 		provider: "xAI",
+		execution: {
+			provider: "replicate",
+			model: "xai/grok-imagine-video",
+		},
 		description:
 			"Image-to-video model with native audio and broad aspect-ratio support.",
 		logoText: "X",
@@ -326,6 +448,10 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "google/veo-3.1",
 		label: "Veo 3.1",
 		provider: "Google",
+		execution: {
+			provider: "replicate",
+			model: "google/veo-3.1",
+		},
 		description:
 			"High-fidelity video model with reference images and ending-frame interpolation.",
 		logoText: "G",
@@ -387,6 +513,10 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "openai/sora-2",
 		label: "Sora 2",
 		provider: "OpenAI",
+		execution: {
+			provider: "replicate",
+			model: "openai/sora-2",
+		},
 		description:
 			"OpenAI flagship video generation with optional image reference as the starting frame.",
 		logoText: "O",
@@ -415,6 +545,10 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "wan-video/wan-2.5-i2v",
 		label: "Wan 2.5 I2V",
 		provider: "Alibaba",
+		execution: {
+			provider: "replicate",
+			model: "wan-video/wan-2.5-i2v",
+		},
 		description:
 			"Image-to-video generation with prompt expansion and optional negative prompt.",
 		logoText: "W",
@@ -531,6 +665,10 @@ function coerceValue(
 
 export function getVideoModelDefinition(modelId: string): VideoModelDefinition {
 	return VIDEO_MODELS.find((model) => model.id === modelId) ?? VIDEO_MODELS[0];
+}
+
+export function getVideoModelExecution(modelId: string) {
+	return getVideoModelDefinition(modelId).execution;
 }
 
 export function isSupportedVideoModel(modelId: string) {

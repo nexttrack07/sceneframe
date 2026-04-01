@@ -14,7 +14,7 @@ import {
 	Trash2,
 	Users,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -33,13 +33,23 @@ import type { Scene, Shot } from "@/db/schema";
 import { useImageStudio } from "../hooks/use-image-studio";
 import { useShotVideoStudio } from "../hooks/use-shot-video-studio";
 import { useVideoStudio } from "../hooks/use-video-studio";
+import { getMotionGraphicPreviewImage } from "../motion-graphics";
+import {
+	createShotMotionGraphic,
+	deleteShotMotionGraphic,
+	importShotMotionGraphicToEditor,
+} from "../motion-graphics-actions";
 import { resetWorkshop } from "../project-mutations";
 import { exportProjectHandoff } from "../project-queries";
 import type {
 	BackgroundMusicAssetSummary,
+	MotionGraphicPreset,
+	MotionGraphicSummary,
 	ProjectSettings,
 	SceneAssetSummary,
 	ScenePlanEntry,
+	ScriptEditDraft,
+	ScriptEditSelection,
 	ShotVideoSummary,
 	TransitionVideoSummary,
 	VoiceoverAssetSummary,
@@ -54,15 +64,18 @@ import {
 	reorderScene,
 	reorderShot,
 } from "../scene-actions";
+import { isPendingVideoStatus } from "../video-status";
 import { CharactersPanel } from "./characters";
 import { ResetDialog } from "./reset-dialog";
 import { SceneHeader } from "./scene-header";
 import { SceneImageStudio } from "./scene-image-studio";
 import { ShotCard } from "./shot-card";
 import { StoryboardCard } from "./storyboard-card";
+import { AudioGrid } from "./studio/audio-grid";
 import { SceneContextSection } from "./studio/scene-context-section";
 import { ShotContextSection } from "./studio/shot-context-section";
 import { type ShotMediaTab, ShotMediaTabs } from "./studio/shot-media-tabs";
+import { ShotMotionGraphicsPanel } from "./studio/shot-motion-graphics-panel";
 import { ShotStudioLeftPanel } from "./studio/shot-studio-left-panel";
 import { StudioGallery } from "./studio/studio-gallery";
 import {
@@ -94,11 +107,20 @@ export function Storyboard({
 	scenePlan,
 	transitionVideos: allTransitionVideos,
 	shotVideoAssets: allShotVideoAssets,
+	motionGraphics: allMotionGraphics,
 	voiceovers: allVoiceovers,
 	backgroundMusic: allBackgroundMusic,
+	initialSceneId,
 	initialShotId,
 	initialFromShotId,
 	initialToShotId,
+	initialMediaTab,
+	editSelection,
+	onEditSelectionChange,
+	stagedEditDraft,
+	committedEditDraft,
+	approvedEditHighlight,
+	pendingEditApply,
 }: {
 	projectId: string;
 	scenes: Scene[];
@@ -108,11 +130,26 @@ export function Storyboard({
 	scenePlan: ScenePlanEntry[];
 	transitionVideos: TransitionVideoSummary[];
 	shotVideoAssets: ShotVideoSummary[];
+	motionGraphics: MotionGraphicSummary[];
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
+	initialSceneId?: string;
 	initialShotId?: string;
 	initialFromShotId?: string;
 	initialToShotId?: string;
+	initialMediaTab?: ShotMediaTab;
+	editSelection?: ScriptEditSelection | null;
+	onEditSelectionChange?: (selection: ScriptEditSelection) => void;
+	stagedEditDraft?: ScriptEditDraft | null;
+	committedEditDraft?: ScriptEditDraft | null;
+	approvedEditHighlight?: {
+		sceneIds: string[];
+		shotIds: string[];
+	} | null;
+	pendingEditApply?: {
+		sceneIds: string[];
+		shotIds: string[];
+	} | null;
 }) {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate({ from: "/projects/$projectId" });
@@ -120,7 +157,9 @@ export function Storyboard({
 	const [isResetting, setIsResetting] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+	const [selectedSceneId, setSelectedSceneId] = useState<string | null>(
+		initialSceneId ?? null,
+	);
 	const [selectedShotId, setSelectedShotIdState] = useState<string | null>(
 		initialShotId ?? null,
 	);
@@ -134,7 +173,9 @@ export function Storyboard({
 	);
 
 	// Tab state for shot media (images vs video)
-	const [shotMediaTab, setShotMediaTab] = useState<ShotMediaTab>("images");
+	const [shotMediaTab, setShotMediaTab] = useState<ShotMediaTab>(
+		initialMediaTab ?? "images",
+	);
 
 	// Drag-to-reorder state for scenes
 	const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
@@ -152,8 +193,63 @@ export function Storyboard({
 	const [newSceneDescription, setNewSceneDescription] = useState("");
 	const [isAddingScene, setIsAddingScene] = useState(false);
 	const [cloneMenuShotId, setCloneMenuShotId] = useState<string | null>(null);
+	const [activeHighlight, setActiveHighlight] = useState<{
+		sceneIds: string[];
+		shotIds: string[];
+	} | null>(null);
 
 	const hasShotsMode = storyShots.length > 0;
+	const showEditSelectionControls = Boolean(onEditSelectionChange);
+	const stagedSceneDescriptionMap = useMemo(
+		() =>
+			new Map(
+				(
+					stagedEditDraft?.sceneUpdates ??
+					committedEditDraft?.sceneUpdates ??
+					[]
+				).map((update) => [update.sceneId, update.description]),
+			),
+		[stagedEditDraft, committedEditDraft],
+	);
+	const stagedShotDescriptionMap = useMemo(
+		() =>
+			new Map(
+				(
+					stagedEditDraft?.shotUpdates ??
+					committedEditDraft?.shotUpdates ??
+					[]
+				).map((update) => [update.shotId, update.description]),
+			),
+		[stagedEditDraft, committedEditDraft],
+	);
+	const previewScenes = useMemo(
+		() =>
+			storyScenes.map((scene) => ({
+				...scene,
+				description:
+					stagedSceneDescriptionMap.get(scene.id) ?? scene.description,
+			})),
+		[storyScenes, stagedSceneDescriptionMap],
+	);
+	const previewShots = useMemo(
+		() =>
+			storyShots.map((shot) => ({
+				...shot,
+				description: stagedShotDescriptionMap.get(shot.id) ?? shot.description,
+			})),
+		[storyShots, stagedShotDescriptionMap],
+	);
+
+	useEffect(() => {
+		if (!approvedEditHighlight) return;
+		setActiveHighlight(approvedEditHighlight);
+		const timeout = window.setTimeout(() => {
+			setActiveHighlight((current) =>
+				current === approvedEditHighlight ? null : current,
+			);
+		}, 3500);
+		return () => window.clearTimeout(timeout);
+	}, [approvedEditHighlight]);
 
 	// Collapse state: scenes with >10 shots start collapsed
 	const [collapseState, setCollapseState] = useState<Map<string, boolean>>(
@@ -161,13 +257,13 @@ export function Storyboard({
 			const initial = new Map<string, boolean>();
 			if (hasShotsMode) {
 				const shotsByScene = new Map<string, number>();
-				for (const shot of storyShots) {
+				for (const shot of previewShots) {
 					shotsByScene.set(
 						shot.sceneId,
 						(shotsByScene.get(shot.sceneId) ?? 0) + 1,
 					);
 				}
-				for (const scene of storyScenes) {
+				for (const scene of previewScenes) {
 					const count = shotsByScene.get(scene.id) ?? 0;
 					if (count > 10) initial.set(scene.id, true);
 				}
@@ -177,10 +273,10 @@ export function Storyboard({
 	);
 
 	const selectedScene =
-		storyScenes.find((s) => s.id === selectedSceneId) ?? null;
+		previewScenes.find((s) => s.id === selectedSceneId) ?? null;
 	const planBySceneId = useMemo(
-		() => new Map(storyScenes.map((scene, i) => [scene.id, scenePlan[i]])),
-		[storyScenes, scenePlan],
+		() => new Map(previewScenes.map((scene, i) => [scene.id, scenePlan[i]])),
+		[previewScenes, scenePlan],
 	);
 	const assetsBySceneId = useMemo(() => {
 		const grouped = new Map<string, SceneAssetSummary[]>();
@@ -194,13 +290,13 @@ export function Storyboard({
 
 	const shotsBySceneId = useMemo(() => {
 		const grouped = new Map<string, Shot[]>();
-		for (const shot of storyShots) {
+		for (const shot of previewShots) {
 			const existing = grouped.get(shot.sceneId) ?? [];
 			existing.push(shot);
 			grouped.set(shot.sceneId, existing);
 		}
 		return grouped;
-	}, [storyShots]);
+	}, [previewShots]);
 
 	const assetsByShotId = useMemo(() => {
 		const grouped = new Map<string, SceneAssetSummary[]>();
@@ -234,13 +330,51 @@ export function Storyboard({
 		return grouped;
 	}, [allBackgroundMusic]);
 
+	const motionGraphicsByShotId = useMemo(() => {
+		const grouped = new Map<string, MotionGraphicSummary[]>();
+		for (const graphic of allMotionGraphics) {
+			const existing = grouped.get(graphic.shotId) ?? [];
+			existing.push(graphic);
+			grouped.set(graphic.shotId, existing);
+		}
+		return grouped;
+	}, [allMotionGraphics]);
+
 	const [voiceoverSceneId, setVoiceoverSceneId] = useState<string | null>(null);
 	const [showCharactersPanel, setShowCharactersPanel] = useState(false);
+	const [isGeneratingMotionGraphicPreset, setIsGeneratingMotionGraphicPreset] =
+		useState<MotionGraphicPreset | null>(null);
+	const [importingMotionGraphicId, setImportingMotionGraphicId] = useState<
+		string | null
+	>(null);
+	const [deletingMotionGraphicId, setDeletingMotionGraphicId] = useState<
+		string | null
+	>(null);
+
+	useEffect(() => {
+		setSelectedSceneId(initialSceneId ?? null);
+	}, [initialSceneId]);
+
+	useEffect(() => {
+		setSelectedShotIdState(initialShotId ?? null);
+	}, [initialShotId]);
+
+	useEffect(() => {
+		setSelectedTransitionPairState(
+			initialFromShotId && initialToShotId
+				? { fromShotId: initialFromShotId, toShotId: initialToShotId }
+				: null,
+		);
+	}, [initialFromShotId, initialToShotId]);
+
+	useEffect(() => {
+		setShotMediaTab(initialMediaTab ?? "images");
+	}, [initialMediaTab]);
 
 	const imageStudio = useImageStudio({
 		projectId,
 		selectedShotId,
-		storyShots,
+		storyShots: previewShots,
 		assetsByShotId,
 		toast,
 		setError,
@@ -249,6 +383,7 @@ export function Storyboard({
 	const videoStudio = useVideoStudio({
 		projectId,
 		selectedTransitionPair,
+		storyShots: previewShots,
 		allTransitionVideos,
 		toast,
 		setError,
@@ -257,7 +392,7 @@ export function Storyboard({
 	const shotVideoStudio = useShotVideoStudio({
 		projectId,
 		selectedShotId,
-		storyShots,
+		storyShots: previewShots,
 		assetsByShotId,
 		allShotVideos: allShotVideoAssets,
 		toast,
@@ -265,28 +400,34 @@ export function Storyboard({
 	});
 
 	function selectShot(id: string | null) {
+		const sceneId = id
+			? (previewShots.find((shot) => shot.id === id)?.sceneId ?? null)
+			: null;
 		setSelectedShotIdState(id);
 		setSelectedTransitionPairState(null);
 		setVoiceoverSceneId(null);
+		setSelectedSceneId(sceneId);
 		setShotMediaTab("images");
 		imageStudio.resetForShot(false);
 		if (id) {
 			void navigate({
-				search: (prev) => ({
-					...prev,
+				search: {
+					scene: sceneId ?? undefined,
 					shot: id,
 					from: undefined,
 					to: undefined,
-				}),
+					mediaTab: "images",
+				},
 			});
 		} else {
 			void navigate({
-				search: (prev) => ({
-					...prev,
+				search: {
+					scene: undefined,
 					shot: undefined,
 					from: undefined,
 					to: undefined,
-				}),
+					mediaTab: undefined,
+				},
 			});
 		}
 	}
@@ -294,59 +435,174 @@ export function Storyboard({
 	function selectTransition(
 		pair: { fromShotId: string; toShotId: string } | null,
 	) {
+		const fromSceneId = pair
+			? (previewShots.find((shot) => shot.id === pair.fromShotId)?.sceneId ??
+				null)
+			: null;
 		setSelectedTransitionPairState(pair);
 		setSelectedShotIdState(null);
+		setSelectedSceneId(fromSceneId);
+		setShotMediaTab("video");
 		if (pair) {
 			void navigate({
-				search: (prev) => ({
-					...prev,
+				search: {
+					scene: fromSceneId ?? undefined,
 					from: pair.fromShotId,
 					to: pair.toShotId,
 					shot: undefined,
-				}),
+					mediaTab: "video",
+				},
 			});
 		} else {
 			void navigate({
-				search: (prev) => ({
-					...prev,
+				search: {
+					scene: undefined,
 					from: undefined,
 					to: undefined,
 					shot: undefined,
-				}),
+					mediaTab: undefined,
+				},
 			});
+		}
+	}
+
+	const handleShotMediaTabChange = useCallback(
+		(tab: ShotMediaTab) => {
+			setShotMediaTab(tab);
+			if (!selectedShotId) return;
+			const sceneId =
+				previewShots.find((shot) => shot.id === selectedShotId)?.sceneId ??
+				null;
+			void navigate({
+				search: {
+					scene: sceneId ?? undefined,
+					shot: selectedShotId,
+					from: undefined,
+					to: undefined,
+					mediaTab: tab,
+				},
+			});
+		},
+		[navigate, previewShots, selectedShotId],
+	);
+
+	const selectScene = useCallback(
+		(sceneId: string | null) => {
+			setSelectedSceneId(sceneId);
+			setSelectedShotIdState(null);
+			setSelectedTransitionPairState(null);
+			setVoiceoverSceneId(null);
+			void navigate({
+				search: {
+					scene: sceneId ?? undefined,
+					shot: undefined,
+					from: undefined,
+					to: undefined,
+					mediaTab: undefined,
+				},
+			});
+		},
+		[navigate],
+	);
+
+	async function handleGenerateMotionGraphic(preset: MotionGraphicPreset) {
+		if (!selectedShotId) return;
+		setIsGeneratingMotionGraphicPreset(preset);
+		try {
+			await createShotMotionGraphic({
+				data: {
+					projectId,
+					shotId: selectedShotId,
+					preset,
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+			toast(
+				`Motion graphic created. ${
+					preset === "lower_third"
+						? "A lower-third overlay pack was created for this shot."
+						: "A callout overlay pack was created for this shot."
+				}`,
+				"success",
+			);
+		} catch (err) {
+			toast(
+				err instanceof Error ? err.message : "Unable to create motion graphic.",
+				"error",
+			);
+		} finally {
+			setIsGeneratingMotionGraphicPreset(null);
+		}
+	}
+
+	async function handleImportMotionGraphic(motionGraphicId: string) {
+		setImportingMotionGraphicId(motionGraphicId);
+		try {
+			const result = await importShotMotionGraphicToEditor({
+				data: {
+					projectId,
+					motionGraphicId,
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+			toast(
+				`Added to editor. Imported ${result.importedCount} text layer${result.importedCount === 1 ? "" : "s"} into the editor timeline.`,
+				"success",
+			);
+		} catch (err) {
+			toast(
+				err instanceof Error ? err.message : "Unable to add graphic to editor.",
+				"error",
+			);
+		} finally {
+			setImportingMotionGraphicId(null);
+		}
+	}
+
+	async function handleDeleteMotionGraphic(motionGraphicId: string) {
+		setDeletingMotionGraphicId(motionGraphicId);
+		try {
+			await deleteShotMotionGraphic({
+				data: {
+					projectId,
+					motionGraphicId,
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+			toast("Motion graphic deleted.", "success");
+		} catch (err) {
+			toast(
+				err instanceof Error ? err.message : "Unable to delete motion graphic.",
+				"error",
+			);
+		} finally {
+			setDeletingMotionGraphicId(null);
 		}
 	}
 
 	const selectShotRef = useRef(selectShot);
 	selectShotRef.current = selectShot;
 
-	const hasGeneratingAssets = sceneAssets.some(
-		(asset) => asset.status === "generating",
-	);
+	const hasPendingProjectMedia =
+		sceneAssets.some((asset) => asset.status === "generating") ||
+		allShotVideoAssets.some((video) => isPendingVideoStatus(video.status)) ||
+		allTransitionVideos.some((video) => isPendingVideoStatus(video.status));
 
-	// Suppress polling while studio is open — studio manages its own invalidation
 	useEffect(() => {
-		if (!hasGeneratingAssets) return;
-		if (
-			selectedSceneId !== null ||
-			selectedShotId !== null ||
-			selectedTransitionPair !== null
-		)
-			return;
+		if (!hasPendingProjectMedia) return;
 		const interval = setInterval(() => {
 			void queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
 		}, 2500);
 		return () => clearInterval(interval);
-	}, [
-		hasGeneratingAssets,
-		selectedSceneId,
-		selectedShotId,
-		selectedTransitionPair,
-		queryClient,
-		projectId,
-	]);
+	}, [hasPendingProjectMedia, queryClient, projectId]);
 
 	// Keyboard shortcut: Escape closes studio
 	useEffect(() => {
@@ -363,12 +619,12 @@ export function Storyboard({
 			if (imageStudio.isLightboxOpen) return;
 			if (e.key === "Escape") {
 				selectShotRef.current(null);
-				setSelectedSceneId(null);
+				selectScene(null);
 			}
 		}
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [imageStudio.isLightboxOpen]);
+	}, [imageStudio.isLightboxOpen, selectScene]);
 
 	// Dismiss clone menu on outside click
 	useEffect(() => {
@@ -380,48 +636,54 @@ export function Storyboard({
 		return () => window.removeEventListener("click", handleClick);
 	}, [cloneMenuShotId]);
 
-	const filteredScenes = storyScenes;
+	const filteredScenes = previewScenes;
 
 	const totalDuration = hasShotsMode
-		? storyShots.reduce((sum, shot) => sum + shot.durationSec, 0)
+		? previewShots.reduce((sum, shot) => sum + shot.durationSec, 0)
 		: scenePlan.reduce((sum, scene) => sum + (scene.durationSec ?? 0), 0);
 
 	// Progress: shot-based or scene-based
 	const { readyCount, totalCount, allReady } = useMemo(() => {
 		if (hasShotsMode) {
-			const count = storyShots.filter((shot) => {
+			const count = previewShots.filter((shot) => {
 				const shotAssets = assetsByShotId.get(shot.id) ?? [];
 				return shotAssets.some((a) => a.isSelected);
 			}).length;
 			return {
 				readyCount: count,
-				totalCount: storyShots.length,
-				allReady: count === storyShots.length && storyShots.length > 0,
+				totalCount: previewShots.length,
+				allReady: count === previewShots.length && previewShots.length > 0,
 			};
 		}
-		const count = storyScenes.filter((scene) => {
+		const count = previewScenes.filter((scene) => {
 			const sceneAssetList = assetsBySceneId.get(scene.id) ?? [];
 			return sceneAssetList.some((a) => a.isSelected);
 		}).length;
 		return {
 			readyCount: count,
-			totalCount: storyScenes.length,
-			allReady: count === storyScenes.length && storyScenes.length > 0,
+			totalCount: previewScenes.length,
+			allReady: count === previewScenes.length && previewScenes.length > 0,
 		};
-	}, [hasShotsMode, storyShots, storyScenes, assetsByShotId, assetsBySceneId]);
+	}, [
+		hasShotsMode,
+		previewShots,
+		previewScenes,
+		assetsByShotId,
+		assetsBySceneId,
+	]);
 
 	// Build global shot index map
 	const globalShotIndex = useMemo(() => {
 		const indexMap = new Map<string, number>();
 		let counter = 1;
-		for (const scene of storyScenes) {
+		for (const scene of previewScenes) {
 			const shots = shotsBySceneId.get(scene.id) ?? [];
 			for (const shot of shots) {
 				indexMap.set(shot.id, counter++);
 			}
 		}
 		return indexMap;
-	}, [storyScenes, shotsBySceneId]);
+	}, [previewScenes, shotsBySceneId]);
 
 	async function handleReset() {
 		setIsResetting(true);
@@ -466,7 +728,7 @@ export function Storyboard({
 		try {
 			await deleteScene({ data: { sceneId } });
 			if (selectedSceneId === sceneId) {
-				setSelectedSceneId(null);
+				selectScene(null);
 				selectShot(null);
 			}
 			await queryClient.invalidateQueries({
@@ -482,13 +744,13 @@ export function Storyboard({
 		try {
 			await deleteShot({ data: { shotId } });
 			if (selectedShotId === shotId) {
-				const idx = storyShots.findIndex((s) => s.id === shotId);
-				const adjacent = storyShots[idx - 1] ?? storyShots[idx + 1] ?? null;
+				const idx = previewShots.findIndex((s) => s.id === shotId);
+				const adjacent = previewShots[idx - 1] ?? previewShots[idx + 1] ?? null;
 				if (adjacent) {
 					selectShot(adjacent.id);
 				} else {
 					selectShot(null);
-					setSelectedSceneId(null);
+					selectScene(null);
 				}
 			}
 			await queryClient.invalidateQueries({
@@ -636,7 +898,7 @@ export function Storyboard({
 		e.dataTransfer.dropEffect = "move";
 		if (draggedShotId) {
 			// Only allow drops within the same scene
-			const draggedShot = storyShots.find((s) => s.id === draggedShotId);
+			const draggedShot = previewShots.find((s) => s.id === draggedShotId);
 			if (draggedShot?.sceneId === sceneId) {
 				setDragOverShotIndex({ sceneId, index });
 			}
@@ -695,6 +957,61 @@ export function Storyboard({
 		});
 	}
 
+	function isSceneEditSelected(sceneId: string) {
+		return (
+			Boolean(editSelection?.project) ||
+			Boolean(editSelection?.sceneIds.includes(sceneId))
+		);
+	}
+
+	function isShotEditSelected(sceneId: string, shotId: string) {
+		return (
+			Boolean(editSelection?.project) ||
+			Boolean(editSelection?.sceneIds.includes(sceneId)) ||
+			Boolean(editSelection?.shotIds.includes(shotId))
+		);
+	}
+
+	function toggleProjectEditSelection(checked: boolean) {
+		if (!onEditSelectionChange) return;
+		onEditSelectionChange({
+			project: checked,
+			sceneIds: checked ? [] : (editSelection?.sceneIds ?? []),
+			shotIds: checked ? [] : (editSelection?.shotIds ?? []),
+		});
+	}
+
+	function toggleSceneEditSelection(sceneId: string, checked: boolean) {
+		if (!onEditSelectionChange) return;
+		const nextSceneIds = new Set(editSelection?.sceneIds ?? []);
+		const nextShotIds = new Set(editSelection?.shotIds ?? []);
+		if (checked) {
+			nextSceneIds.add(sceneId);
+		} else {
+			nextSceneIds.delete(sceneId);
+		}
+		onEditSelectionChange({
+			project: false,
+			sceneIds: [...nextSceneIds],
+			shotIds: [...nextShotIds],
+		});
+	}
+
+	function toggleShotEditSelection(shotId: string, checked: boolean) {
+		if (!onEditSelectionChange) return;
+		const nextShotIds = new Set(editSelection?.shotIds ?? []);
+		if (checked) {
+			nextShotIds.add(shotId);
+		} else {
+			nextShotIds.delete(shotId);
+		}
+		onEditSelectionChange({
+			project: false,
+			sceneIds: editSelection?.sceneIds ?? [],
+			shotIds: [...nextShotIds],
+		});
+	}
+
 	function getSceneTimeRange(sceneId: string): string {
 		const shots = shotsBySceneId.get(sceneId) ?? [];
 		if (shots.length === 0) return "";
@@ -710,20 +1027,21 @@ export function Storyboard({
 			? "video"
 			: "image";
 	const selectedShot = selectedShotId
-		? (storyShots.find((s) => s.id === selectedShotId) ?? null)
+		? (previewShots.find((s) => s.id === selectedShotId) ?? null)
 		: null;
 	const fromShot = selectedTransitionPair
-		? (storyShots.find((s) => s.id === selectedTransitionPair.fromShotId) ??
+		? (previewShots.find((s) => s.id === selectedTransitionPair.fromShotId) ??
 			null)
 		: null;
 	const toShot = selectedTransitionPair
-		? (storyShots.find((s) => s.id === selectedTransitionPair.toShotId) ?? null)
+		? (previewShots.find((s) => s.id === selectedTransitionPair.toShotId) ??
+			null)
 		: null;
 	const shotParentScene = selectedShot
-		? (storyScenes.find((s) => s.id === selectedShot.sceneId) ?? null)
+		? (previewScenes.find((s) => s.id === selectedShot.sceneId) ?? null)
 		: null;
 	const voiceoverScene = voiceoverSceneId
-		? (storyScenes.find((s) => s.id === voiceoverSceneId) ?? null)
+		? (previewScenes.find((s) => s.id === voiceoverSceneId) ?? null)
 		: null;
 
 	// 3-column layout when shot, transition, or voiceover is selected
@@ -733,6 +1051,18 @@ export function Storyboard({
 				{/* Col 1: Storyboard sidebar */}
 				<div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
 					<div className="p-3 space-y-2">
+						{showEditSelectionControls && (
+							<label className="flex items-center gap-2 rounded-md border bg-background px-2 py-2 text-xs text-foreground">
+								<input
+									type="checkbox"
+									checked={Boolean(editSelection?.project)}
+									onChange={(e) => toggleProjectEditSelection(e.target.checked)}
+									className="h-3 w-3 accent-foreground"
+								/>
+								<span>Edit entire project</span>
+							</label>
+						)}
+
 						{/* Scenes + shots */}
 						{filteredScenes.map((scene, sceneIdx) => {
 							const sceneShots = shotsBySceneId.get(scene.id) ?? [];
@@ -743,9 +1073,23 @@ export function Storyboard({
 							return (
 								<div key={scene.id}>
 									<div className="flex items-center justify-between px-1 py-1">
-										<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-											{scene.title || `Scene ${storyScenes.indexOf(scene) + 1}`}
-										</p>
+										<div className="flex items-center gap-2">
+											{showEditSelectionControls && (
+												<input
+													type="checkbox"
+													checked={isSceneEditSelected(scene.id)}
+													onChange={(e) =>
+														toggleSceneEditSelection(scene.id, e.target.checked)
+													}
+													className="h-3 w-3 accent-foreground"
+													aria-label={`Select ${scene.title || `Scene ${previewScenes.indexOf(scene) + 1}`} for editing`}
+												/>
+											)}
+											<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+												{scene.title ||
+													`Scene ${previewScenes.indexOf(scene) + 1}`}
+											</p>
+										</div>
 										<button
 											type="button"
 											onClick={() => {
@@ -787,6 +1131,7 @@ export function Storyboard({
 											)?.url ?? null;
 
 										return (
+											// biome-ignore lint/a11y/noStaticElementInteractions: draggable shot row; native HTML5 DnD on structural container
 											<div
 												key={shot.id}
 												draggable
@@ -820,6 +1165,24 @@ export function Storyboard({
 														}`}
 													>
 														<div className="flex items-start gap-2">
+															{showEditSelectionControls && (
+																<input
+																	type="checkbox"
+																	checked={isShotEditSelected(
+																		scene.id,
+																		shot.id,
+																	)}
+																	onChange={(e) =>
+																		toggleShotEditSelection(
+																			shot.id,
+																			e.target.checked,
+																		)
+																	}
+																	onClick={(e) => e.stopPropagation()}
+																	className="mt-0.5 h-3 w-3 shrink-0 accent-foreground"
+																	aria-label={`Select shot ${globalShotIndex.get(shot.id)} for editing`}
+																/>
+															)}
 															{selectedImageUrl ? (
 																<img
 																	src={selectedImageUrl}
@@ -965,6 +1328,7 @@ export function Storyboard({
 
 									{/* Drop zone at end of shots */}
 									{draggedShotId && (
+										// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone
 										<div
 											className="h-6"
 											onDragOver={(e) =>
@@ -993,6 +1357,7 @@ export function Storyboard({
 							<SceneContextSection
 								scene={shotParentScene}
 								plan={planBySceneId.get(shotParentScene.id)}
+								shotCount={shotsBySceneId.get(shotParentScene.id)?.length ?? 0}
 								onDescriptionSaved={async (newDescription) => {
 									queryClient.setQueryData(
 										projectKeys.project(projectId),
@@ -1038,7 +1403,7 @@ export function Storyboard({
 						<div className="p-3 border-b flex-shrink-0">
 							<ShotMediaTabs
 								activeTab={shotMediaTab}
-								onTabChange={setShotMediaTab}
+								onTabChange={handleShotMediaTabChange}
 							/>
 						</div>
 					)}
@@ -1057,6 +1422,9 @@ export function Storyboard({
 								onGeneratePrompt={imageStudio.handleGeneratePrompt}
 								onEnhancePrompt={imageStudio.handleEnhancePrompt}
 								isEnhancingPrompt={imageStudio.isEnhancingPrompt}
+								detectedPromptAssetType={imageStudio.detectedPromptAssetType}
+								promptTypeSelection={imageStudio.promptTypeSelection}
+								onPromptTypeSelectionChange={imageStudio.setPromptTypeSelection}
 								refImageUrl={imageStudio.prevShotSelectedImageUrl}
 								useRefImage={imageStudio.useRefImage}
 								onUseRefImageChange={imageStudio.setUseRefImage}
@@ -1093,6 +1461,13 @@ export function Storyboard({
 								isGeneratingPrompt={shotVideoStudio.isGeneratingVideoPrompt}
 								onEnhancePrompt={shotVideoStudio.handleEnhanceVideoPrompt}
 								isEnhancingPrompt={shotVideoStudio.isEnhancingVideoPrompt}
+								detectedPromptAssetType={
+									shotVideoStudio.detectedPromptAssetType
+								}
+								promptTypeSelection={shotVideoStudio.promptTypeSelection}
+								onPromptTypeSelectionChange={
+									shotVideoStudio.setPromptTypeSelection
+								}
 								videoSettings={shotVideoStudio.videoSettings}
 								onVideoSettingsChange={shotVideoStudio.setVideoSettings}
 								useProjectContext={shotVideoStudio.useProjectContext}
@@ -1137,6 +1512,25 @@ export function Storyboard({
 								onReferenceImageIdsChange={shotVideoStudio.setReferenceImageIds}
 							/>
 						</div>
+					) : studioMode === "image" &&
+						selectedShot &&
+						shotParentScene &&
+						shotMediaTab === "graphics" ? (
+						<div className="flex-1 min-h-0 overflow-hidden">
+							<ShotMotionGraphicsPanel
+								graphics={motionGraphicsByShotId.get(selectedShot.id) ?? []}
+								previewImageUrl={getMotionGraphicPreviewImage(
+									motionGraphicsByShotId.get(selectedShot.id) ?? [],
+									assetsByShotId.get(selectedShot.id) ?? [],
+								)}
+								onGenerate={handleGenerateMotionGraphic}
+								onImport={handleImportMotionGraphic}
+								onDelete={handleDeleteMotionGraphic}
+								isGeneratingPreset={isGeneratingMotionGraphicPreset}
+								importingGraphicId={importingMotionGraphicId}
+								deletingGraphicId={deletingMotionGraphicId}
+							/>
+						</div>
 					) : studioMode === "voiceover" && voiceoverScene ? (
 						<div className="flex flex-col h-full overflow-y-auto">
 							<div className="p-4 border-b">
@@ -1155,7 +1549,7 @@ export function Storyboard({
 								</div>
 								<p className="text-xs text-muted-foreground mt-1">
 									{voiceoverScene.title ??
-										`Scene ${storyScenes.indexOf(voiceoverScene) + 1}`}
+										`Scene ${previewScenes.indexOf(voiceoverScene) + 1}`}
 								</p>
 							</div>
 							<div className="p-4 flex-1">
@@ -1166,6 +1560,7 @@ export function Storyboard({
 									backgroundMusic={
 										backgroundMusicBySceneId.get(voiceoverScene.id) ?? []
 									}
+									showAssetList={false}
 									sceneVideoDurationSec={allTransitionVideos
 										.filter(
 											(tv) => tv.sceneId === voiceoverScene.id && tv.isSelected,
@@ -1181,7 +1576,26 @@ export function Storyboard({
 					) : studioMode === "video" && fromShot && toShot ? (
 						<VideoControlsPanel
 							contextSection={
-								<TransitionContextSection fromShot={fromShot} toShot={toShot} />
+								<TransitionContextSection
+									fromShot={fromShot}
+									toShot={toShot}
+									fromImageUrl={
+										(assetsByShotId.get(fromShot.id) ?? []).find(
+											(asset) =>
+												asset.isSelected &&
+												asset.status === "done" &&
+												asset.url,
+										)?.url ?? null
+									}
+									toImageUrl={
+										(assetsByShotId.get(toShot.id) ?? []).find(
+											(asset) =>
+												asset.isSelected &&
+												asset.status === "done" &&
+												asset.url,
+										)?.url ?? null
+									}
+								/>
 							}
 							videoPrompt={videoStudio.videoPrompt}
 							onVideoPromptChange={videoStudio.setVideoPrompt}
@@ -1189,6 +1603,9 @@ export function Storyboard({
 							isGeneratingPrompt={videoStudio.isGeneratingVideoPrompt}
 							onEnhancePrompt={videoStudio.handleEnhanceVideoPrompt}
 							isEnhancingPrompt={videoStudio.isEnhancingVideoPrompt}
+							detectedPromptAssetType={videoStudio.detectedPromptAssetType}
+							promptTypeSelection={videoStudio.promptTypeSelection}
+							onPromptTypeSelectionChange={videoStudio.setPromptTypeSelection}
 							videoSettings={videoStudio.videoSettings}
 							onVideoSettingsChange={videoStudio.setVideoSettings}
 							useProjectContext={videoStudio.useProjectContext}
@@ -1196,7 +1613,7 @@ export function Storyboard({
 							usePrevShotContext={videoStudio.usePrevShotContext}
 							onUsePrevShotContextChange={videoStudio.setUsePrevShotContext}
 							isGenerating={videoStudio.isGeneratingVideo}
-							isQueueing={videoStudio.isGeneratingVideo}
+							isQueueing={videoStudio.isQueueingVideo}
 							onGenerate={videoStudio.handleGenerateVideo}
 						/>
 					) : null}
@@ -1267,6 +1684,14 @@ export function Storyboard({
 							runStatusesByVideoId={videoStudio.runStatusesByVideoId}
 							emptyMessage="No transition videos yet"
 						/>
+					) : studioMode === "voiceover" && voiceoverScene ? (
+						<AudioGrid
+							projectId={projectId}
+							voiceovers={voiceoversBySceneId.get(voiceoverScene.id) ?? []}
+							backgroundMusic={
+								backgroundMusicBySceneId.get(voiceoverScene.id) ?? []
+							}
+						/>
 					) : null}
 				</div>
 			</div>
@@ -1274,7 +1699,7 @@ export function Storyboard({
 	}
 
 	return (
-		<div className="flex-1 flex min-h-0">
+		<div className="h-full min-h-0 flex">
 			{/* Scene list */}
 			<div className="flex-1 overflow-y-auto p-6">
 				<div className="flex items-center justify-between mb-4">
@@ -1363,6 +1788,36 @@ export function Storyboard({
 					</div>
 				</div>
 
+				{showEditSelectionControls && (
+					<div className="mb-4 rounded-xl border bg-card px-4 py-3">
+						<div className="flex items-center justify-between gap-4">
+							<div>
+								<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Chat Edit Scope
+								</p>
+								<p className="text-sm text-muted-foreground">
+									Select the project, a scene, or a shot before editing from the
+									chat rail.
+								</p>
+							</div>
+							<label className="flex items-center gap-2 text-sm text-foreground">
+								<input
+									type="checkbox"
+									checked={Boolean(editSelection?.project)}
+									onChange={(e) => toggleProjectEditSelection(e.target.checked)}
+									className="h-4 w-4 accent-foreground"
+								/>
+								<span>Edit entire project</span>
+							</label>
+						</div>
+						{stagedEditDraft && (
+							<p className="mt-2 text-xs text-muted-foreground">
+								Draft preview active: {stagedEditDraft.summary}
+							</p>
+						)}
+					</div>
+				)}
+
 				{error && (
 					<div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
 						<AlertCircle size={14} className="shrink-0" />
@@ -1392,7 +1847,7 @@ export function Storyboard({
 				)}
 
 				{/* Legacy banner when no shots exist */}
-				{!hasShotsMode && storyScenes.length > 0 && (
+				{!hasShotsMode && previewScenes.length > 0 && (
 					<div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
 						<Info size={14} className="shrink-0" />
 						<span>
@@ -1422,7 +1877,23 @@ export function Storyboard({
 										shotCount={sceneShots.length}
 										timeRange={getSceneTimeRange(scene.id)}
 										isCollapsed={isCollapsed}
+										isEditSelected={isSceneEditSelected(scene.id)}
+										isRecentlyEdited={Boolean(
+											activeHighlight?.sceneIds.includes(scene.id),
+										)}
+										isApplyingEdit={Boolean(
+											pendingEditApply?.sceneIds.includes(scene.id),
+										)}
 										onToggleCollapse={() => toggleCollapse(scene.id)}
+										onSelectForEdit={
+											showEditSelectionControls
+												? () =>
+														toggleSceneEditSelection(
+															scene.id,
+															!isSceneEditSelected(scene.id),
+														)
+												: undefined
+										}
 										onDelete={() => handleDeleteScene(scene.id)}
 										onDragStart={(e) => handleDragStart(e, scene.id)}
 										onDragOver={(e) => handleDragOver(e, i)}
@@ -1434,6 +1905,7 @@ export function Storyboard({
 										<div className="ml-6 mt-2 space-y-2">
 											{sceneShots.map((shot, shotIdx) => {
 												return (
+													// biome-ignore lint/a11y/noStaticElementInteractions: draggable shot row; native HTML5 DnD on structural container
 													<div
 														key={shot.id}
 														draggable
@@ -1458,10 +1930,28 @@ export function Storyboard({
 															globalIndex={globalShotIndex.get(shot.id) ?? 0}
 															assets={assetsByShotId.get(shot.id) ?? []}
 															isSelected={selectedShotId === shot.id}
+															isEditSelected={isShotEditSelected(
+																scene.id,
+																shot.id,
+															)}
+															isRecentlyEdited={Boolean(
+																activeHighlight?.shotIds.includes(shot.id),
+															)}
+															isApplyingEdit={Boolean(
+																pendingEditApply?.shotIds.includes(shot.id),
+															)}
 															onSelect={() => {
 																selectShot(shot.id);
-																setSelectedSceneId(null);
 															}}
+															onSelectForEdit={
+																showEditSelectionControls
+																	? () =>
+																			toggleShotEditSelection(
+																				shot.id,
+																				!isShotEditSelected(scene.id, shot.id),
+																			)
+																	: undefined
+															}
 															onDelete={() => handleDeleteShot(shot.id)}
 														/>
 													</div>
@@ -1537,9 +2027,7 @@ export function Storyboard({
 									isSelected={scene.id === selectedSceneId}
 									isDragging={draggedSceneId === scene.id}
 									onSelect={() =>
-										setSelectedSceneId(
-											scene.id === selectedSceneId ? null : scene.id,
-										)
+										selectScene(scene.id === selectedSceneId ? null : scene.id)
 									}
 									onDelete={() => handleDeleteScene(scene.id)}
 									onDragStart={(e) => handleDragStart(e, scene.id)}
@@ -1622,14 +2110,14 @@ export function Storyboard({
 				<SceneImageStudio
 					key={selectedScene.id}
 					scene={selectedScene}
-					sceneIndex={storyScenes.indexOf(selectedScene)}
-					allScenes={storyScenes}
+					sceneIndex={previewScenes.indexOf(selectedScene)}
+					allScenes={previewScenes}
 					allAssets={sceneAssets}
 					scenePlan={planBySceneId}
 					sceneAssets={assetsBySceneId.get(selectedScene.id) ?? []}
-					onSceneChange={setSelectedSceneId}
+					onSceneChange={selectScene}
 					onClose={() => {
-						setSelectedSceneId(null);
+						selectScene(null);
 						selectShot(null);
 					}}
 				/>

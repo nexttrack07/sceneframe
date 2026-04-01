@@ -1,7 +1,12 @@
 import { Check, Loader2, Pencil, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Scene, Shot } from "@/db/schema";
-import type { ImageDefaults, ScenePlanEntry } from "../../project-types";
+import type {
+	ImageDefaults,
+	PromptAssetType,
+	PromptAssetTypeSelection,
+	ScenePlanEntry,
+} from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
 import { PromptEditor } from "./prompt-editor";
 import { SceneContextSection } from "./scene-context-section";
@@ -63,6 +68,9 @@ export function ShotStudioLeftPanel({
 	isGeneratingPrompt,
 	onEnhancePrompt,
 	isEnhancingPrompt,
+	detectedPromptAssetType,
+	promptTypeSelection,
+	onPromptTypeSelectionChange,
 	settingsOverrides,
 	onSettingsChange,
 	isQueueing,
@@ -93,6 +101,9 @@ export function ShotStudioLeftPanel({
 	isGeneratingPrompt: boolean;
 	onEnhancePrompt?: () => void;
 	isEnhancingPrompt?: boolean;
+	detectedPromptAssetType?: PromptAssetType | null;
+	promptTypeSelection?: PromptAssetTypeSelection;
+	onPromptTypeSelectionChange?: (value: PromptAssetTypeSelection) => void;
 	settingsOverrides: ImageDefaults;
 	onSettingsChange: (settings: ImageDefaults) => void;
 	isQueueing: boolean;
@@ -216,6 +227,9 @@ export function ShotStudioLeftPanel({
 						isGeneratingPrompt={isGeneratingPrompt}
 						onEnhancePrompt={onEnhancePrompt}
 						isEnhancingPrompt={isEnhancingPrompt}
+						detectedAssetType={detectedPromptAssetType}
+						promptTypeSelection={promptTypeSelection}
+						onPromptTypeSelectionChange={onPromptTypeSelectionChange}
 					/>
 
 					<InlineSettingsRow

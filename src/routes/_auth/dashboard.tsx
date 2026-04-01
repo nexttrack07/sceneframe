@@ -1,12 +1,30 @@
 import { auth } from "@clerk/tanstack-react-start/server";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	Link,
+	redirect,
+	useRouter,
+} from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { Clock, Film, Plus } from "lucide-react";
+import { Clock, Film, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { db } from "@/db/index";
 import type { Project } from "@/db/schema";
 import { users } from "@/db/schema";
+import { deleteProject } from "@/features/projects/project-mutations";
 
 const loadDashboard = createServerFn().handler(async () => {
 	const { userId } = await auth();
@@ -35,6 +53,7 @@ export const Route = createFileRoute("/_auth/dashboard")({
 
 function DashboardPage() {
 	const { projects: userProjects } = Route.useLoaderData();
+	const router = useRouter();
 
 	return (
 		<div className="max-w-5xl mx-auto px-6 py-8">
@@ -57,8 +76,15 @@ function DashboardPage() {
 				<EmptyState />
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-					{userProjects.map((project) => (
-						<ProjectCard key={project.id} project={project} />
+					{userProjects.map((project: Project) => (
+						<ProjectCard
+							key={project.id}
+							project={project}
+							onDelete={async () => {
+								await deleteProject({ data: { projectId: project.id } });
+								await router.invalidate();
+							}}
+						/>
 					))}
 				</div>
 			)}
@@ -89,7 +115,15 @@ function EmptyState() {
 	);
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({
+	project,
+	onDelete,
+}: {
+	project: Project;
+	onDelete: () => Promise<void>;
+}) {
+	const [isDeleting, setIsDeleting] = useState(false);
+
 	const created = new Date(project.createdAt).toLocaleDateString("en-US", {
 		month: "short",
 		day: "numeric",
@@ -111,29 +145,93 @@ function ProjectCard({ project }: { project: Project }) {
 	};
 
 	return (
-		<Link
-			to="/projects/$projectId"
-			params={{ projectId: project.id }}
-			search={{ shot: undefined, from: undefined, to: undefined }}
-			className="group block bg-card rounded-xl border p-5 hover:border-primary/40 hover:shadow-sm transition-all"
-		>
+		<div className="group bg-card rounded-xl border p-5 hover:border-primary/40 hover:shadow-sm transition-all">
 			<div className="flex items-start justify-between gap-2 mb-3">
-				<h3 className="font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-1">
-					{project.name}
-				</h3>
-				<span
-					className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${statusColor[project.scriptStatus] ?? statusColor.idle}`}
-				>
-					{statusLabel[project.scriptStatus] ?? "Draft"}
-				</span>
+				<div className="min-w-0 flex-1">
+					<Link
+						to="/projects/$projectId"
+						params={{ projectId: project.id }}
+						search={{
+							scene: undefined,
+							shot: undefined,
+							from: undefined,
+							to: undefined,
+							mediaTab: undefined,
+						}}
+						className="block"
+					>
+						<h3 className="font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-1">
+							{project.name}
+						</h3>
+					</Link>
+				</div>
+				<div className="flex items-center gap-2 shrink-0">
+					<span
+						className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${statusColor[project.scriptStatus] ?? statusColor.idle}`}
+					>
+						{statusLabel[project.scriptStatus] ?? "Draft"}
+					</span>
+					<AlertDialog>
+						<AlertDialogTrigger asChild>
+							<button
+								type="button"
+								aria-label={`Delete ${project.name}`}
+								className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/5 transition-colors"
+							>
+								<Trash2 size={14} />
+							</button>
+						</AlertDialogTrigger>
+						<AlertDialogContent size="sm">
+							<AlertDialogHeader>
+								<AlertDialogTitle>Delete project?</AlertDialogTitle>
+								<AlertDialogDescription>
+									This will permanently remove <strong>{project.name}</strong>{" "}
+									and its scenes, shots, assets, and editor state.
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel disabled={isDeleting}>
+									Cancel
+								</AlertDialogCancel>
+								<AlertDialogAction
+									variant="destructive"
+									disabled={isDeleting}
+									onClick={async () => {
+										setIsDeleting(true);
+										try {
+											await onDelete();
+										} finally {
+											setIsDeleting(false);
+										}
+									}}
+								>
+									{isDeleting ? "Deleting…" : "Delete"}
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
+				</div>
 			</div>
-			<p className="text-sm text-muted-foreground line-clamp-2 mb-4">
-				{project.directorPrompt}
-			</p>
-			<div className="flex items-center gap-1 text-xs text-muted-foreground/70">
-				<Clock size={12} />
-				<span>{created}</span>
-			</div>
-		</Link>
+			<Link
+				to="/projects/$projectId"
+				params={{ projectId: project.id }}
+				search={{
+					scene: undefined,
+					shot: undefined,
+					from: undefined,
+					to: undefined,
+					mediaTab: undefined,
+				}}
+				className="block"
+			>
+				<p className="text-sm text-muted-foreground line-clamp-2 mb-4">
+					{project.directorPrompt}
+				</p>
+				<div className="flex items-center gap-1 text-xs text-muted-foreground/70">
+					<Clock size={12} />
+					<span>{created}</span>
+				</div>
+			</Link>
+		</div>
 	);
 }

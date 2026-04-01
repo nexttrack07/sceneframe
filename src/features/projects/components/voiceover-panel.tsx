@@ -32,6 +32,7 @@ import {
 	pollAudioAssets,
 	selectVoiceover,
 } from "../scene-actions";
+import { CopyPromptButton } from "./studio/copy-prompt-button";
 import { GeneratingTimer } from "./studio/generating-timer";
 
 interface Voice {
@@ -53,12 +54,14 @@ export function VoiceoverPanel({
 	voiceovers,
 	backgroundMusic,
 	sceneVideoDurationSec,
+	showAssetList = true,
 }: {
 	scene: Scene;
 	projectId: string;
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
 	sceneVideoDurationSec: number;
+	showAssetList?: boolean;
 }) {
 	const queryClient = useQueryClient();
 	const { toast } = useToast();
@@ -169,6 +172,7 @@ export function VoiceoverPanel({
 				<VoiceoverTab
 					scene={scene}
 					voiceovers={voiceovers}
+					showAssetList={showAssetList}
 					sceneVideoDurationSec={sceneVideoDurationSec}
 					playingId={playingId}
 					isDeletingId={isDeletingId}
@@ -181,6 +185,7 @@ export function VoiceoverPanel({
 				<SoundEffectsTab
 					scene={scene}
 					backgroundMusic={backgroundMusic}
+					showAssetList={showAssetList}
 					playingId={playingId}
 					isDeletingId={isDeletingId}
 					onPlayPause={handlePlayPause}
@@ -200,6 +205,7 @@ export function VoiceoverPanel({
 function VoiceoverTab({
 	scene,
 	voiceovers,
+	showAssetList,
 	sceneVideoDurationSec,
 	playingId,
 	isDeletingId,
@@ -210,6 +216,7 @@ function VoiceoverTab({
 }: {
 	scene: Scene;
 	voiceovers: VoiceoverAssetSummary[];
+	showAssetList: boolean;
 	sceneVideoDurationSec: number;
 	playingId: string | null;
 	isDeletingId: string | null;
@@ -587,20 +594,23 @@ function VoiceoverTab({
 					<p className="text-xs font-medium text-muted-foreground">
 						Narration Script
 					</p>
-					<Button
-						size="sm"
-						variant="ghost"
-						className="h-6 text-xs gap-1"
-						disabled={isGeneratingScript}
-						onClick={handleGenerateScript}
-					>
-						{isGeneratingScript ? (
-							<Loader2 size={10} className="animate-spin" />
-						) : (
-							<RotateCcw size={10} />
-						)}
-						{script ? "Regenerate" : "Auto-generate"}
-					</Button>
+					<div className="flex items-center gap-1">
+						<CopyPromptButton value={script} label="Copy narration script" />
+						<Button
+							size="sm"
+							variant="ghost"
+							className="h-6 text-xs gap-1"
+							disabled={isGeneratingScript}
+							onClick={handleGenerateScript}
+						>
+							{isGeneratingScript ? (
+								<Loader2 size={10} className="animate-spin" />
+							) : (
+								<RotateCcw size={10} />
+							)}
+							{script ? "Regenerate" : "Auto-generate"}
+						</Button>
+					</div>
 				</div>
 				<textarea
 					value={script}
@@ -637,16 +647,18 @@ function VoiceoverTab({
 			</Button>
 
 			{/* Existing voiceovers */}
-			<AudioAssetList
-				assets={voiceovers}
-				label="Generated Voiceovers"
-				runStatusesByAssetId={runStatusesByAssetId}
-				playingId={playingId}
-				isDeletingId={isDeletingId}
-				onPlayPause={onPlayPause}
-				onDelete={onDelete}
-				onSelect={onSelect}
-			/>
+			{showAssetList && (
+				<AudioAssetList
+					assets={voiceovers}
+					label="Generated Voiceovers"
+					runStatusesByAssetId={runStatusesByAssetId}
+					playingId={playingId}
+					isDeletingId={isDeletingId}
+					onPlayPause={onPlayPause}
+					onDelete={onDelete}
+					onSelect={onSelect}
+				/>
+			)}
 		</>
 	);
 }
@@ -658,6 +670,7 @@ function VoiceoverTab({
 function SoundEffectsTab({
 	scene,
 	backgroundMusic,
+	showAssetList,
 	playingId,
 	isDeletingId,
 	onPlayPause,
@@ -667,6 +680,7 @@ function SoundEffectsTab({
 }: {
 	scene: Scene;
 	backgroundMusic: BackgroundMusicAssetSummary[];
+	showAssetList: boolean;
 	playingId: string | null;
 	isDeletingId: string | null;
 	onPlayPause: (asset: { id: string; url: string | null }) => void;
@@ -848,7 +862,12 @@ function SoundEffectsTab({
 
 			{/* Prompt */}
 			<div className="space-y-2">
-				<p className="text-xs font-medium text-muted-foreground">Description</p>
+				<div className="flex items-center justify-between">
+					<p className="text-xs font-medium text-muted-foreground">
+						Description
+					</p>
+					<CopyPromptButton value={prompt} label="Copy audio prompt" />
+				</div>
 				<textarea
 					value={prompt}
 					onChange={(e) => setPrompt(e.target.value)}
@@ -903,16 +922,18 @@ function SoundEffectsTab({
 			</Button>
 
 			{/* Existing background music */}
-			<AudioAssetList
-				assets={backgroundMusic}
-				label="Generated Audio"
-				runStatusesByAssetId={runStatusesByAssetId}
-				playingId={playingId}
-				isDeletingId={isDeletingId}
-				onPlayPause={onPlayPause}
-				onDelete={onDelete}
-				onSelect={onSelect}
-			/>
+			{showAssetList && (
+				<AudioAssetList
+					assets={backgroundMusic}
+					label="Generated Audio"
+					runStatusesByAssetId={runStatusesByAssetId}
+					playingId={playingId}
+					isDeletingId={isDeletingId}
+					onPlayPause={onPlayPause}
+					onDelete={onDelete}
+					onSelect={onSelect}
+				/>
+			)}
 		</>
 	);
 }

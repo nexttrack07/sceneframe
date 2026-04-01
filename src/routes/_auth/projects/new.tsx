@@ -53,7 +53,13 @@ function NewProjectPage() {
 			navigate({
 				to: "/projects/$projectId",
 				params: { projectId },
-				search: { shot: undefined, from: undefined, to: undefined },
+				search: {
+					scene: undefined,
+					shot: undefined,
+					from: undefined,
+					to: undefined,
+					mediaTab: undefined,
+				},
 			});
 		} catch (err: unknown) {
 			if (err instanceof Error) setError(err.message);

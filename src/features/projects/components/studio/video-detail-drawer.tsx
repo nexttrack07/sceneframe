@@ -1,6 +1,11 @@
-import { Check, Clock, Trash2, X } from "lucide-react";
+import { Check, Clock, Download, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { downloadRemoteAsset } from "../../download-client";
 import type { BaseVideoSummary } from "../../project-types";
+import {
+	getVideoStatusBadgeClass,
+	getVideoStatusLabel,
+} from "../../video-status";
 
 function formatSettingLabel(key: string) {
 	return key
@@ -76,6 +81,23 @@ export function VideoDetailDrawer({
 								<Check size={12} /> Select
 							</Button>
 						)}
+						{video.status === "done" && video.url && (
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => {
+									if (!video.url) return;
+									void downloadRemoteAsset({
+										url: video.url,
+										filenameBase: `video-${video.id}`,
+										fallbackExtension: "mp4",
+									});
+								}}
+								className="gap-1.5 flex-1"
+							>
+								<Download size={12} /> Download
+							</Button>
+						)}
 						<Button
 							size="sm"
 							variant="outline"
@@ -100,6 +122,20 @@ export function VideoDetailDrawer({
 								value={video.model.split("/").pop() ?? video.model}
 							/>
 						)}
+						<MetaRow
+							label="Status"
+							value={
+								<span
+									className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${getVideoStatusBadgeClass(
+										{
+											videoStatus: video.status,
+										},
+									)}`}
+								>
+									{getVideoStatusLabel({ videoStatus: video.status })}
+								</span>
+							}
+						/>
 						{videoSettings.map(([key, value]) => (
 							<MetaRow
 								key={key}
@@ -117,7 +153,7 @@ export function VideoDetailDrawer({
 								</p>
 							</div>
 						)}
-						{video.isSelected && <MetaRow label="Status" value="Selected" />}
+						{video.isSelected && <MetaRow label="Selected" value="Yes" />}
 						{hasStaleProperty(video) && video.stale && (
 							<MetaRow label="Warning" value="Stale — source images changed" />
 						)}
@@ -135,7 +171,7 @@ function MetaRow({
 }: {
 	icon?: React.ReactNode;
 	label: string;
-	value: string;
+	value: React.ReactNode;
 }) {
 	return (
 		<div className="flex items-start justify-between gap-2">

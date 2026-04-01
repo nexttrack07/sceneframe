@@ -3,6 +3,10 @@ import {
 	getImageModelControlDefinitions,
 	IMAGE_MODELS,
 } from "../../image-models";
+import {
+	applyCanonicalAspectRatioToImageDefaults,
+	getPreferredAspectRatioFromImageDefaults,
+} from "../../project-aspect-ratio";
 import type { ImageDefaults, ImageSettingValue } from "../../project-types";
 import { ModelPickerModal } from "../model-picker-modal";
 
@@ -49,13 +53,23 @@ export function InlineSettingsRow({
 						previewImageUrl: model.previewImageUrl,
 						accentClassName: model.accentClassName,
 					}))}
-					onSelect={(modelId) =>
-						onSettingsChange({
+					onSelect={(modelId) => {
+						const nextSettings = {
 							...settings,
 							model: modelId,
 							modelOptions: getDefaultModelOptions(modelId),
-						})
-					}
+						};
+						const preferredAspectRatio =
+							getPreferredAspectRatioFromImageDefaults(settings);
+						onSettingsChange(
+							preferredAspectRatio
+								? applyCanonicalAspectRatioToImageDefaults(
+										nextSettings,
+										preferredAspectRatio,
+									)
+								: nextSettings,
+						);
+					}}
 				/>
 			</div>
 

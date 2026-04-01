@@ -1,7 +1,12 @@
 import { Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Scene } from "@/db/schema";
-import type { ImageDefaults, ScenePlanEntry } from "../../project-types";
+import type {
+	ImageDefaults,
+	PromptAssetType,
+	PromptAssetTypeSelection,
+	ScenePlanEntry,
+} from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
 import { PromptEditor } from "./prompt-editor";
 import { SceneContextSection } from "./scene-context-section";
@@ -14,6 +19,9 @@ export function StudioLeftPanel({
 	onPromptBlur,
 	onGeneratePrompt,
 	isGeneratingPrompt,
+	detectedPromptAssetType,
+	promptTypeSelection,
+	onPromptTypeSelectionChange,
 	settingsOverrides,
 	onSettingsChange,
 	isGenerating,
@@ -29,6 +37,9 @@ export function StudioLeftPanel({
 	onPromptBlur?: () => void;
 	onGeneratePrompt: () => void;
 	isGeneratingPrompt: boolean;
+	detectedPromptAssetType?: PromptAssetType | null;
+	promptTypeSelection?: PromptAssetTypeSelection;
+	onPromptTypeSelectionChange?: (value: PromptAssetTypeSelection) => void;
 	settingsOverrides: ImageDefaults;
 	onSettingsChange: (settings: ImageDefaults) => void;
 	isGenerating: boolean;
@@ -52,6 +63,9 @@ export function StudioLeftPanel({
 						onPromptBlur={onPromptBlur}
 						onGeneratePrompt={onGeneratePrompt}
 						isGeneratingPrompt={isGeneratingPrompt}
+						detectedAssetType={detectedPromptAssetType}
+						promptTypeSelection={promptTypeSelection}
+						onPromptTypeSelectionChange={onPromptTypeSelectionChange}
 					/>
 
 					<InlineSettingsRow

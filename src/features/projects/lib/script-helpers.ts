@@ -1,4 +1,8 @@
-import type { IntakeAnswers, ScenePlanEntry } from "../project-types";
+import type {
+	IntakeAnswers,
+	OpeningHookDraft,
+	ScenePlanEntry,
+} from "../project-types";
 
 export function parseSceneProposal(content: string): ScenePlanEntry[] | null {
 	const match = content.match(/```scenes\s*([\s\S]*?)```/);
@@ -9,12 +13,22 @@ export function parseSceneProposal(content: string): ScenePlanEntry[] | null {
 		return parsed
 			.map(
 				(s: {
+					sceneNumber?: number;
+					sceneIndex?: number;
+					order?: number;
 					title?: string;
 					description?: string;
 					durationSec?: number;
 					beat?: string;
 					hookRole?: "hook" | "body" | "cta";
 				}) => ({
+					sceneNumber: Number.isFinite(s.sceneNumber)
+						? Number(s.sceneNumber)
+						: Number.isFinite(s.order)
+							? Number(s.order)
+							: Number.isFinite(s.sceneIndex)
+								? Number(s.sceneIndex) + 1
+								: undefined,
 					title: String(s.title ?? "").trim(),
 					description: String(s.description ?? "").trim(),
 					durationSec: Number.isFinite(s.durationSec)
@@ -25,6 +39,22 @@ export function parseSceneProposal(content: string): ScenePlanEntry[] | null {
 				}),
 			)
 			.filter((s: { description: string }) => s.description.length > 0);
+	} catch {
+		return null;
+	}
+}
+
+export function parseOpeningHook(content: string): OpeningHookDraft | null {
+	const match = content.match(/```opening_hook\s*([\s\S]*?)```/);
+	if (!match) return null;
+	try {
+		const parsed = JSON.parse(match[1]);
+		if (!parsed || typeof parsed !== "object") return null;
+		const headline = String(parsed.headline ?? "").trim();
+		const narration = String(parsed.narration ?? "").trim();
+		const visualDirection = String(parsed.visualDirection ?? "").trim();
+		if (!headline || !narration || !visualDirection) return null;
+		return { headline, narration, visualDirection };
 	} catch {
 		return null;
 	}

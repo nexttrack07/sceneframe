@@ -1,7 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/db/index";
-import { assets, messages, scenes, shots, transitionVideos } from "@/db/schema";
+import {
+	assets,
+	messages,
+	motionGraphics,
+	scenes,
+	shots,
+	transitionVideos,
+} from "@/db/schema";
 import { assertProjectOwner } from "@/lib/assert-project-owner.server";
 import { normalizeProjectSettings } from "./project-normalize";
 import type { ScenePlanEntry } from "./project-types";
@@ -111,6 +118,17 @@ export const loadProject = createServerFn({ method: "GET" })
 							isNull(assets.deletedAt),
 						),
 						orderBy: asc(assets.createdAt),
+					});
+
+		const projectMotionGraphics =
+			shotIds.length === 0
+				? []
+				: await db.query.motionGraphics.findMany({
+						where: and(
+							inArray(motionGraphics.shotId, shotIds),
+							isNull(motionGraphics.deletedAt),
+						),
+						orderBy: asc(motionGraphics.createdAt),
 					});
 
 		return {
@@ -224,15 +242,23 @@ export const loadProject = createServerFn({ method: "GET" })
 			})),
 			shotVideoAssets: shotVideoAssets
 				.filter(
-					(a): a is typeof a & { status: "generating" | "done" | "error" } =>
-						a.status === "generating" ||
-						a.status === "done" ||
-						a.status === "error",
+					(
+						a,
+					): a is typeof a & {
+						shotId: string;
+						status: "queued" | "generating" | "finalizing" | "done" | "error";
+					} =>
+						a.shotId !== null &&
+						(a.status === "queued" ||
+							a.status === "generating" ||
+							a.status === "finalizing" ||
+							a.status === "done" ||
+							a.status === "error"),
 				)
 				.map((a) => ({
 					id: a.id,
 					sceneId: a.sceneId,
-					shotId: a.shotId!,
+					shotId: a.shotId,
 					status: a.status,
 					url: a.url,
 					errorMessage: a.errorMessage,
@@ -248,6 +274,16 @@ export const loadProject = createServerFn({ method: "GET" })
 					durationMs: a.durationMs,
 					generationDurationMs: a.generationDurationMs,
 				})),
+			motionGraphics: projectMotionGraphics.map((graphic) => ({
+				id: graphic.id,
+				sceneId: graphic.sceneId,
+				shotId: graphic.shotId,
+				preset: graphic.preset,
+				title: graphic.title,
+				sourceText: graphic.sourceText,
+				spec: graphic.spec,
+				createdAt: graphic.createdAt.toISOString(),
+			})),
 		};
 	});
 
