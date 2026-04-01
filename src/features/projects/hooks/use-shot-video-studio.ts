@@ -1,8 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
+import { buildShotLabelMap, formatShotLocation } from "../generation-labels";
+import {
+	beginGenerationToast,
+	resolveGenerationToast,
+	updateGenerationToast,
+} from "../generation-toast";
+import {
+	applyProjectAspectRatioToVideoDefaults,
+	getPreferredAspectRatioFromVideoDefaults,
+	persistProjectAspectRatio,
+} from "../project-aspect-ratio";
 import { normalizeVideoDefaults } from "../project-normalize";
 import type {
+	PromptAssetType,
+	PromptAssetTypeSelection,
 	SceneAssetSummary,
 	ShotVideoSummary,
 	TriggerRunSummary,
@@ -18,6 +31,7 @@ import {
 	pollShotVideos,
 	selectShotVideo,
 } from "../scene-actions";
+import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
 
@@ -95,7 +109,7 @@ export function useShotVideoStudio({
 	const queryClient = useQueryClient();
 	const logPrefix = "[ShotVideo]";
 	const [videoPrompt, setVideoPrompt] = useState("");
-	const [videoSettings, setVideoSettings] = useState<VideoDefaults>(
+	const [videoSettings, setVideoSettingsState] = useState<VideoDefaults>(
 		normalizeVideoDefaults(null),
 	);
 	const [isQueueingVideo, setIsQueueingVideo] = useState(false);
@@ -108,7 +122,14 @@ export function useShotVideoStudio({
 	const [usePrevShotImage, setUsePrevShotImage] = useState(true);
 	// Reference images for video generation selected manually in the slider.
 	const [referenceImageIds, setReferenceImageIds] = useState<string[]>([]);
+	const [detectedPromptAssetType, setDetectedPromptAssetType] =
+		useState<PromptAssetType | null>(null);
+	const [promptTypeSelection, setPromptTypeSelection] =
+		useState<PromptAssetTypeSelection>("auto");
 	const allShotVideosRef = useRef(allShotVideos);
+	const trackedToastMetaRef = useRef(
+		new Map<string, { title: string; location: string }>(),
+	);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
 	const completedRunIdsRef = useRef<Set<string>>(new Set());
@@ -119,6 +140,19 @@ export function useShotVideoStudio({
 	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
+	const setVideoSettings = useCallback(
+		(next: VideoDefaults) => {
+			const explicitAspectRatio =
+				getPreferredAspectRatioFromVideoDefaults(next);
+			if (explicitAspectRatio) {
+				persistProjectAspectRatio(projectId, explicitAspectRatio);
+			}
+			setVideoSettingsState(
+				applyProjectAspectRatioToVideoDefaults(projectId, next),
+			);
+		},
+		[projectId],
+	);
 
 	const stopPolling = useCallback(() => {
 		cancelPollingRef.current = true;
@@ -157,12 +191,14 @@ export function useShotVideoStudio({
 			});
 
 		// Check if there are any generating videos for this shot
-		const hasGeneratingVideos = shotVideos.some(
-			(v) => v.status === "generating",
+		const hasGeneratingVideos = shotVideos.some((v) =>
+			isPendingVideoStatus(v.status),
 		);
 
 		setVideoPrompt(initialPrompt);
-		setVideoSettings(initialSettings);
+		setVideoSettingsState(
+			applyProjectAspectRatioToVideoDefaults(projectId, initialSettings),
+		);
 		setIsQueueingVideo(false);
 		setIsGeneratingVideo(hasGeneratingVideos);
 		setIsGeneratingVideoPrompt(false);
@@ -172,11 +208,13 @@ export function useShotVideoStudio({
 		setUsePrevShotContext(true);
 		setUsePrevShotImage(false);
 		setReferenceImageIds([]);
+		setDetectedPromptAssetType(null);
+		setPromptTypeSelection("auto");
 		setRunStatusesByVideoId({});
 		completedRunIdsRef.current.clear();
 		stopPolling();
 		cancelPollingRef.current = false;
-	}, [selectedShotId, stopPolling]);
+	}, [selectedShotId, stopPolling, projectId]);
 
 	// Persist draft prompt
 	useEffect(() => {
@@ -200,7 +238,7 @@ export function useShotVideoStudio({
 
 		const hasGeneratingVideos = allShotVideos.some(
 			(video) =>
-				video.shotId === selectedShotId && video.status === "generating",
+				video.shotId === selectedShotId && isPendingVideoStatus(video.status),
 		);
 
 		if (!hasGeneratingVideos) {
@@ -223,6 +261,7 @@ export function useShotVideoStudio({
 	const selectedShot = selectedShotId
 		? (storyShots.find((shot) => shot.id === selectedShotId) ?? null)
 		: null;
+	const shotLabelMap = buildShotLabelMap(storyShots);
 	const prevShot = selectedShot
 		? (() => {
 				const idx = storyShots.findIndex((shot) => shot.id === selectedShot.id);
@@ -313,7 +352,12 @@ export function useShotVideoStudio({
 						data: { shotId },
 					});
 
-					if (!result.isGenerating) {
+					if (result.isGenerating) {
+						await queryClient.refetchQueries({
+							queryKey: projectKeys.project(projectId),
+							type: "active",
+						});
+					} else {
 						console.info(`${logPrefix} poll:complete`, {
 							shotId,
 							latestDoneId: result.latestDoneId,
@@ -339,18 +383,6 @@ export function useShotVideoStudio({
 							queryKey: projectKeys.project(projectId),
 							type: "active",
 						});
-
-						if (result.doneCount > 0) {
-							toast(
-								`${result.doneCount} video${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
-								result.erroredCount > 0 ? "error" : "success",
-							);
-						} else if (result.erroredCount > 0) {
-							toast(
-								result.latestErrorMessage ?? "Video generation failed",
-								"error",
-							);
-						}
 					}
 				} catch (err) {
 					// Transient error, keep polling.
@@ -361,15 +393,53 @@ export function useShotVideoStudio({
 				}
 			}, 3000);
 		},
-		[projectId, queryClient, stopPolling, toast],
+		[projectId, queryClient, stopPolling],
 	);
+
+	useEffect(() => {
+		for (const [videoId, meta] of trackedToastMetaRef.current.entries()) {
+			const video = allShotVideos.find((entry) => entry.id === videoId);
+			if (!video) continue;
+
+			if (isPendingVideoStatus(video.status)) {
+				updateGenerationToast(videoId, {
+					status:
+						video.status === "queued"
+							? "Queued"
+							: video.status === "finalizing"
+								? "Finalizing"
+								: "Generating",
+					message: meta.location,
+				});
+				continue;
+			}
+
+			if (video.status === "done") {
+				resolveGenerationToast(videoId, {
+					status: "Ready",
+					message: meta.location,
+				});
+				trackedToastMetaRef.current.delete(videoId);
+				continue;
+			}
+
+			if (video.status === "error") {
+				resolveGenerationToast(videoId, {
+					status: "Failed",
+					message: video.errorMessage ?? meta.location,
+					error: true,
+				});
+				trackedToastMetaRef.current.delete(videoId);
+			}
+		}
+	}, [allShotVideos]);
 
 	// Auto-start polling if there are generating videos on mount
 	useEffect(() => {
 		const shotId = selectedShotId;
 		if (!shotId) return;
 		const generatingVideo = allShotVideos.find(
-			(v) => v.shotId === shotId && v.status === "generating",
+			(v) => v.shotId === shotId && isPendingVideoStatus(v.status),
 		);
 		if (!generatingVideo || isPollingRef.current) return;
 		startPolling(shotId);
@@ -377,13 +447,24 @@ export function useShotVideoStudio({
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedShotId) return;
+		const effectiveReferenceImageIds = [
+			...(usePrevShotImage && prevShotSelectedImage
+				? [prevShotSelectedImage.id]
+				: []),
+			...referenceImageIds,
+		];
 		setIsGeneratingVideoPrompt(true);
 		setError(null);
 		try {
 			const result = await generateShotVideoPrompt({
-				data: { shotId: selectedShotId },
+				data: {
+					shotId: selectedShotId,
+					referenceImageIds: effectiveReferenceImageIds,
+					assetTypeOverride: promptTypeSelection,
+				},
 			});
 			setVideoPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			toast("Prompt generated", "success");
 		} catch (err) {
 			const msg =
@@ -397,6 +478,12 @@ export function useShotVideoStudio({
 
 	async function handleEnhanceVideoPrompt() {
 		if (!selectedShotId || !videoPrompt.trim()) return;
+		const effectiveReferenceImageIds = [
+			...(usePrevShotImage && prevShotSelectedImage
+				? [prevShotSelectedImage.id]
+				: []),
+			...referenceImageIds,
+		];
 		setIsEnhancingVideoPrompt(true);
 		setError(null);
 		try {
@@ -406,9 +493,12 @@ export function useShotVideoStudio({
 					userPrompt: videoPrompt,
 					useProjectContext,
 					usePrevShotContext,
+					referenceImageIds: effectiveReferenceImageIds,
+					assetTypeOverride: promptTypeSelection,
 				},
 			});
 			setVideoPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			toast("Video prompt enhanced", "success");
 		} catch (err) {
 			const msg =
@@ -438,7 +528,7 @@ export function useShotVideoStudio({
 		cancelPollingRef.current = false;
 		setError(null);
 		try {
-			await generateShotVideo({
+			const result = await generateShotVideo({
 				data: {
 					shotId,
 					prompt: videoPrompt.trim(),
@@ -453,9 +543,27 @@ export function useShotVideoStudio({
 				queryKey: projectKeys.project(projectId),
 				type: "active",
 			});
+			const label = shotLabelMap.get(shotId);
+			const location = label ? formatShotLocation(label) : "Selected shot";
+			const sceneId =
+				storyShots.find((shot) => shot.id === shotId)?.sceneId ?? null;
+			const href = sceneId
+				? `/projects/${projectId}?scene=${sceneId}&shot=${shotId}&mediaTab=video`
+				: `/projects/${projectId}?shot=${shotId}&mediaTab=video`;
+			trackedToastMetaRef.current.set(result.assetId, {
+				title: "Generating video",
+				location,
+			});
+			beginGenerationToast({
+				id: result.assetId,
+				title: "Generating video",
+				location,
+				medium: "video",
+				status: "Queued",
+				href,
+			});
 			startPolling(shotId);
 			console.info(`${logPrefix} queue:done`, { shotId });
-			toast("Queued video generation", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
@@ -519,6 +627,9 @@ export function useShotVideoStudio({
 		prevShotSelectedImage,
 		referenceImageIds,
 		setReferenceImageIds,
+		detectedPromptAssetType,
+		promptTypeSelection,
+		setPromptTypeSelection,
 		runStatusesByVideoId,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,

@@ -1,9 +1,9 @@
-import {generateRandomId} from '../../utils/generate-random-id';
-import {loadFontFromTextItem} from '../../utils/text/load-font-from-text-item';
-import {getTextDimensions} from '../../utils/text/measure-text';
-import {stringSeemsRightToLeft} from '../../utils/text/right-to-left';
-import {EditorStarterItem} from '../item-type';
-import {FontStyle} from './text-item-type';
+import { generateRandomId } from "../../utils/generate-random-id";
+import { loadFontFromTextItem } from "../../utils/text/load-font-from-text-item";
+import { getTextDimensions } from "../../utils/text/measure-text";
+import { stringSeemsRightToLeft } from "../../utils/text/right-to-left";
+import type { EditorStarterItem } from "../item-type";
+import type { FontStyle } from "./text-item-type";
 
 const TEXT_DURATION_IN_FRAMES = 100;
 export const DEFAULT_FONT_SIZE = 80;
@@ -19,14 +19,14 @@ export const createTextItem = async ({
 	yOnCanvas: number;
 	from: number;
 	text: string;
-	align: 'left' | 'center';
+	align: "left" | "center";
 }): Promise<EditorStarterItem> => {
 	const id = generateRandomId();
-	const defaultFontFamily = 'Roboto';
+	const defaultFontFamily = "Roboto";
 	await loadFontFromTextItem({
 		fontFamily: defaultFontFamily,
-		fontVariant: 'normal',
-		fontWeight: '400',
+		fontVariant: "normal",
+		fontWeight: "400",
 		fontInfosDuringRendering: null,
 	});
 
@@ -34,8 +34,8 @@ export const createTextItem = async ({
 	const defaultLetterSpacing = 0;
 
 	const fontStyle: FontStyle = {
-		variant: 'normal',
-		weight: '400',
+		variant: "normal",
+		weight: "400",
 	};
 
 	const textDimensions = getTextDimensions({
@@ -49,7 +49,7 @@ export const createTextItem = async ({
 
 	const top = Math.round(yOnCanvas - textDimensions.height / 2);
 	const left =
-		align === 'center'
+		align === "center"
 			? Math.round(xOnCanvas - textDimensions.width / 2)
 			: Math.round(xOnCanvas);
 
@@ -57,9 +57,9 @@ export const createTextItem = async ({
 		id,
 		durationInFrames: TEXT_DURATION_IN_FRAMES,
 		from,
-		type: 'text',
+		type: "text",
 		text,
-		color: '#ffffff',
+		color: "#ffffff",
 		top,
 		left,
 		width: textDimensions.width,
@@ -72,11 +72,15 @@ export const createTextItem = async ({
 		lineHeight: defaultLineHeight,
 		letterSpacing: defaultLetterSpacing,
 		resizeOnEdit: true,
-		direction: stringSeemsRightToLeft(text) ? 'rtl' : 'ltr',
+		direction: stringSeemsRightToLeft(text) ? "rtl" : "ltr",
 		fontStyle,
 		isDraggingInTimeline: false,
 		strokeWidth: 0,
-		strokeColor: '#000000',
+		strokeColor: "#000000",
+		enterAnimation: "fade",
+		enterAnimationDurationInSeconds: 0.4,
+		exitAnimation: "fade",
+		exitAnimationDurationInSeconds: 0.4,
 		fadeInDurationInSeconds: 0,
 		fadeOutDurationInSeconds: 0,
 		background: null,

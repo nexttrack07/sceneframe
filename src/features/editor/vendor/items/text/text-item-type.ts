@@ -1,7 +1,8 @@
-import {BaseItem, CanHaveRotation} from '../shared';
+import type { BaseItem, CanHaveRotation } from "../shared";
 
-export type TextAlign = 'left' | 'center' | 'right';
-export type TextDirection = 'ltr' | 'rtl';
+export type TextAlign = "left" | "center" | "right";
+export type TextDirection = "ltr" | "rtl";
+export type TextAnimationPreset = "fade" | "slide-up" | "slide-left" | "pop";
 
 export type FontStyle = {
 	variant: string;
@@ -16,7 +17,7 @@ export type TextItemBackground = {
 
 export type TextItem = BaseItem &
 	CanHaveRotation & {
-		type: 'text';
+		type: "text";
 		text: string;
 		color: string;
 		align: TextAlign;
@@ -29,6 +30,10 @@ export type TextItem = BaseItem &
 		direction: TextDirection;
 		strokeWidth: number;
 		strokeColor: string;
+		enterAnimation?: TextAnimationPreset;
+		enterAnimationDurationInSeconds?: number;
+		exitAnimation?: TextAnimationPreset;
+		exitAnimationDurationInSeconds?: number;
 		fadeInDurationInSeconds: number;
 		fadeOutDurationInSeconds: number;
 		background: TextItemBackground | null;

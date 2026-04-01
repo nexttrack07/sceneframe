@@ -10,16 +10,27 @@ import {
 	Wand2,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { Shot } from "@/db/schema";
-import type { VideoDefaults, VideoSettingValue } from "../../project-types";
+import {
+	applyCanonicalAspectRatioToVideoDefaults,
+	getPreferredAspectRatioFromVideoDefaults,
+} from "../../project-aspect-ratio";
+import type {
+	PromptAssetType,
+	PromptAssetTypeSelection,
+	VideoDefaults,
+	VideoSettingValue,
+} from "../../project-types";
+import { getPromptAssetTypeLabel } from "../../prompt-strategy";
 import {
 	getDefaultVideoModelOptions,
 	getVideoModelControlDefinitions,
 	VIDEO_MODELS,
 } from "../../video-models";
 import { ModelPickerModal } from "../model-picker-modal";
+import { CopyPromptButton } from "./copy-prompt-button";
 
 function updateVideoOption(
 	settings: VideoDefaults,
@@ -35,13 +46,33 @@ function updateVideoOption(
 	};
 }
 
+function nearestSupportedAspectRatio(width: number, height: number) {
+	if (!width || !height) return null;
+	const actual = width / height;
+	const supported = [
+		{ label: "16:9", value: 16 / 9 },
+		{ label: "9:16", value: 9 / 16 },
+		{ label: "1:1", value: 1 },
+	];
+
+	return supported.reduce((best, candidate) => {
+		const bestDelta = Math.abs(best.value - actual);
+		const candidateDelta = Math.abs(candidate.value - actual);
+		return candidateDelta < bestDelta ? candidate : best;
+	}).label;
+}
+
 // Reusable context section for transition videos
 export function TransitionContextSection({
 	fromShot,
 	toShot,
+	fromImageUrl,
+	toImageUrl,
 }: {
 	fromShot: Shot;
 	toShot: Shot;
+	fromImageUrl?: string | null;
+	toImageUrl?: string | null;
 }) {
 	const [showDescriptions, setShowDescriptions] = useState(true);
 
@@ -59,6 +90,46 @@ export function TransitionContextSection({
 			</button>
 			{showDescriptions && (
 				<div className="space-y-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
+					{(fromImageUrl || toImageUrl) && (
+						<div className="grid grid-cols-2 gap-2">
+							<div className="space-y-1">
+								<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+									Start frame
+								</p>
+								<div className="overflow-hidden rounded-md border border-border bg-background/60 aspect-video">
+									{fromImageUrl ? (
+										<img
+											src={fromImageUrl}
+											alt="Start frame"
+											className="w-full h-full object-cover"
+										/>
+									) : (
+										<div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground/70">
+											No image
+										</div>
+									)}
+								</div>
+							</div>
+							<div className="space-y-1">
+								<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+									End frame
+								</p>
+								<div className="overflow-hidden rounded-md border border-border bg-background/60 aspect-video">
+									{toImageUrl ? (
+										<img
+											src={toImageUrl}
+											alt="End frame"
+											className="w-full h-full object-cover"
+										/>
+									) : (
+										<div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground/70">
+											No image
+										</div>
+									)}
+								</div>
+							</div>
+						</div>
+					)}
 					<div>
 						<span className="font-medium text-foreground">From:</span>{" "}
 						{fromShot.description}
@@ -228,6 +299,9 @@ export function VideoControlsPanel({
 	isGeneratingPrompt,
 	onEnhancePrompt,
 	isEnhancingPrompt,
+	detectedPromptAssetType,
+	promptTypeSelection,
+	onPromptTypeSelectionChange,
 	videoSettings,
 	onVideoSettingsChange,
 	useProjectContext,
@@ -254,6 +328,9 @@ export function VideoControlsPanel({
 	isGeneratingPrompt: boolean;
 	onEnhancePrompt?: () => void;
 	isEnhancingPrompt?: boolean;
+	detectedPromptAssetType?: PromptAssetType | null;
+	promptTypeSelection?: PromptAssetTypeSelection;
+	onPromptTypeSelectionChange?: (value: PromptAssetTypeSelection) => void;
 	videoSettings: VideoDefaults;
 	onVideoSettingsChange: (settings: VideoDefaults) => void;
 	useProjectContext: boolean;
@@ -275,8 +352,85 @@ export function VideoControlsPanel({
 }) {
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const motionPromptId = useId();
-	const negativePromptId = useId();
-	const controls = getVideoModelControlDefinitions(videoSettings.model);
+	const controls = getVideoModelControlDefinitions(videoSettings.model).filter(
+		(control) => control.key !== "negative_prompt",
+	);
+	const effectiveReferenceImageUrl = useMemo(() => {
+		if (
+			usePrevShotReferenceImage &&
+			prevShotReferenceImage &&
+			(!referenceImageIds || referenceImageIds.length === 0)
+		) {
+			return prevShotReferenceImage.url;
+		}
+
+		if (
+			!availableImages ||
+			!referenceImageIds ||
+			referenceImageIds.length === 0
+		) {
+			return usePrevShotReferenceImage && prevShotReferenceImage
+				? prevShotReferenceImage.url
+				: null;
+		}
+
+		const firstSelected = availableImages.find((image) =>
+			referenceImageIds.includes(image.id),
+		);
+		return firstSelected?.url ?? null;
+	}, [
+		availableImages,
+		prevShotReferenceImage,
+		referenceImageIds,
+		usePrevShotReferenceImage,
+	]);
+	const [lockedAspectRatio, setLockedAspectRatio] = useState<string | null>(
+		null,
+	);
+	const shouldLockAspectRatio =
+		videoSettings.model === "kwaivgi/kling-v2.5-turbo-pro" &&
+		Boolean(effectiveReferenceImageUrl);
+
+	useEffect(() => {
+		if (!shouldLockAspectRatio || !effectiveReferenceImageUrl) {
+			setLockedAspectRatio(null);
+			return;
+		}
+
+		let cancelled = false;
+		const img = new window.Image();
+		img.onload = () => {
+			if (cancelled) return;
+			setLockedAspectRatio(
+				nearestSupportedAspectRatio(img.naturalWidth, img.naturalHeight),
+			);
+		};
+		img.onerror = () => {
+			if (cancelled) return;
+			setLockedAspectRatio(null);
+		};
+		img.src = effectiveReferenceImageUrl;
+
+		return () => {
+			cancelled = true;
+		};
+	}, [effectiveReferenceImageUrl, shouldLockAspectRatio]);
+
+	useEffect(() => {
+		if (
+			lockedAspectRatio &&
+			videoSettings.modelOptions.aspect_ratio !== lockedAspectRatio
+		) {
+			onVideoSettingsChange(
+				updateVideoOption(videoSettings, "aspect_ratio", lockedAspectRatio),
+			);
+		}
+	}, [
+		lockedAspectRatio,
+		onVideoSettingsChange,
+		videoSettings,
+		videoSettings.modelOptions.aspect_ratio,
+	]);
 
 	return (
 		<div className="flex flex-col h-full">
@@ -403,54 +557,61 @@ export function VideoControlsPanel({
 							accentClassName: model.accentClassName,
 						}))}
 						gridClassName="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
-						onSelect={(modelId) =>
-							onVideoSettingsChange({
+						onSelect={(modelId) => {
+							const nextSettings = {
 								model: modelId,
 								modelOptions: getDefaultVideoModelOptions(modelId),
-							})
-						}
+							};
+							const preferredAspectRatio =
+								getPreferredAspectRatioFromVideoDefaults(videoSettings);
+							onVideoSettingsChange(
+								preferredAspectRatio
+									? applyCanonicalAspectRatioToVideoDefaults(
+											nextSettings,
+											preferredAspectRatio,
+										)
+									: nextSettings,
+							);
+						}}
 					/>
 
-					<div className="grid grid-cols-2 gap-3">
+					<div className="grid grid-cols-3 gap-x-2 gap-y-2">
 						{controls.map((control) => {
 							const value = videoSettings.modelOptions[control.key];
 
 							if (control.type === "boolean") {
 								return (
-									<label
-										key={control.key}
-										className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground"
-									>
-										<input
-											type="checkbox"
-											checked={Boolean(value)}
-											onChange={(e) =>
-												onVideoSettingsChange(
-													updateVideoOption(
-														videoSettings,
-														control.key,
-														e.target.checked,
-													),
-												)
-											}
-											className="h-3.5 w-3.5 rounded accent-primary"
-										/>
-										<span>{control.label}</span>
-									</label>
+									<div key={control.key} className="space-y-1.5">
+										<span className="text-xs font-medium text-muted-foreground">
+											{control.label}
+										</span>
+										<label className="flex h-9 items-center justify-center rounded-md border border-border bg-background">
+											<input
+												type="checkbox"
+												checked={Boolean(value)}
+												onChange={(e) =>
+													onVideoSettingsChange(
+														updateVideoOption(
+															videoSettings,
+															control.key,
+															e.target.checked,
+														),
+													)
+												}
+												className="h-4 w-4 rounded-sm accent-primary"
+											/>
+										</label>
+									</div>
 								);
 							}
 
 							if (control.type === "textarea") {
 								return (
-									<div key={control.key} className="col-span-2 space-y-1.5">
-										<label
-											htmlFor={negativePromptId}
-											className="text-xs font-medium text-muted-foreground"
-										>
+									<div key={control.key} className="col-span-3 space-y-1.5">
+										<div className="text-xs font-medium text-muted-foreground">
 											{control.label}
-										</label>
+										</div>
 										<textarea
-											id={negativePromptId}
 											rows={3}
 											value={typeof value === "string" ? value : ""}
 											onChange={(e) =>
@@ -469,13 +630,49 @@ export function VideoControlsPanel({
 								);
 							}
 
+							if (control.type === "number") {
+								return (
+									<label key={control.key} className="space-y-1.5">
+										<span className="text-xs font-medium text-muted-foreground">
+											{control.label}
+										</span>
+										<input
+											type="number"
+											min={control.min}
+											max={control.max}
+											step="any"
+											value={typeof value === "number" ? value : ""}
+											onChange={(e) =>
+												onVideoSettingsChange(
+													updateVideoOption(
+														videoSettings,
+														control.key,
+														Number(e.target.value),
+													),
+												)
+											}
+											className="w-full h-9 px-3 text-sm rounded-md border border-border bg-background"
+										/>
+									</label>
+								);
+							}
+
 							return (
 								<label key={control.key} className="space-y-1.5">
 									<span className="text-xs font-medium text-muted-foreground">
 										{control.label}
 									</span>
 									<select
-										value={String(value ?? "")}
+										value={String(
+											control.key === "aspect_ratio" && lockedAspectRatio
+												? lockedAspectRatio
+												: (value ?? ""),
+										)}
+										disabled={
+											control.key === "aspect_ratio" &&
+											shouldLockAspectRatio &&
+											Boolean(lockedAspectRatio)
+										}
 										onChange={(e) =>
 											onVideoSettingsChange(
 												updateVideoOption(
@@ -487,7 +684,7 @@ export function VideoControlsPanel({
 												),
 											)
 										}
-										className="w-full px-2.5 py-1 text-xs font-medium rounded-md border border-border bg-background"
+										className="w-full h-9 px-3 text-sm rounded-md border border-border bg-background disabled:opacity-100 disabled:text-foreground disabled:bg-muted/30"
 									>
 										{control.options?.map((option) => (
 											<option key={option.value} value={option.value}>
@@ -495,6 +692,14 @@ export function VideoControlsPanel({
 											</option>
 										))}
 									</select>
+									{control.key === "aspect_ratio" &&
+										shouldLockAspectRatio &&
+										lockedAspectRatio && (
+											<p className="text-[10px] text-muted-foreground">
+												Locked to the selected reference image ratio for Kling
+												Turbo image-to-video.
+											</p>
+										)}
 								</label>
 							);
 						})}
@@ -509,6 +714,7 @@ export function VideoControlsPanel({
 								Motion prompt
 							</label>
 							<div className="flex items-center gap-1">
+								<CopyPromptButton value={videoPrompt} />
 								{onEnhancePrompt && (
 									<button
 										type="button"
@@ -538,6 +744,37 @@ export function VideoControlsPanel({
 									)}
 								</button>
 							</div>
+						</div>
+						<div className="flex items-center justify-between gap-2">
+							<div className="flex items-center gap-2">
+								<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+									Prompt type
+								</span>
+								{detectedPromptAssetType && (
+									<span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">
+										Detected: {getPromptAssetTypeLabel(detectedPromptAssetType)}
+									</span>
+								)}
+							</div>
+							{onPromptTypeSelectionChange && (
+								<select
+									value={promptTypeSelection ?? "auto"}
+									onChange={(e) =>
+										onPromptTypeSelectionChange(
+											e.target.value as PromptAssetTypeSelection,
+										)
+									}
+									className="h-7 rounded-md border border-border bg-background px-2 text-[10px] font-medium text-foreground"
+								>
+									<option value="auto">Auto detect</option>
+									<option value="cinematic">Cinematic</option>
+									<option value="documentary">Documentary</option>
+									<option value="infographic">Infographic</option>
+									<option value="text_graphic">Text Graphic</option>
+									<option value="talking_head">Talking Head</option>
+									<option value="transition">Transition</option>
+								</select>
+							)}
 						</div>
 						<textarea
 							id={motionPromptId}

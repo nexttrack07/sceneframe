@@ -1,4 +1,10 @@
-import { ChevronDown, ChevronRight, GripVertical, Trash2 } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	GripVertical,
+	Loader2,
+	Trash2,
+} from "lucide-react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -19,7 +25,11 @@ export function SceneHeader({
 	shotCount,
 	timeRange,
 	isCollapsed,
+	isEditSelected = false,
+	isRecentlyEdited = false,
+	isApplyingEdit = false,
 	onToggleCollapse,
+	onSelectForEdit,
 	onDelete,
 	onDragStart,
 	onDragOver,
@@ -31,7 +41,11 @@ export function SceneHeader({
 	shotCount: number;
 	timeRange: string;
 	isCollapsed: boolean;
+	isEditSelected?: boolean;
+	isRecentlyEdited?: boolean;
+	isApplyingEdit?: boolean;
 	onToggleCollapse: () => void;
+	onSelectForEdit?: () => void;
 	onDelete: () => void;
 	onDragStart: (e: React.DragEvent) => void;
 	onDragOver: (e: React.DragEvent) => void;
@@ -46,7 +60,11 @@ export function SceneHeader({
 			onDragOver={onDragOver}
 			onDrop={onDrop}
 			onDragEnd={onDragEnd}
-			className="group flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg border border-border/50"
+			className={`group flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+				isRecentlyEdited
+					? "bg-amber-50 border-amber-300 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]"
+					: "bg-muted/50 border-border/50"
+			}`}
 		>
 			{/* Drag handle */}
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown stops propagation only; GripVertical is a visual affordance, not an interactive control */}
@@ -56,6 +74,17 @@ export function SceneHeader({
 			>
 				<GripVertical size={14} />
 			</div>
+
+			{onSelectForEdit && (
+				<input
+					type="checkbox"
+					checked={isEditSelected}
+					onChange={() => onSelectForEdit()}
+					onClick={(e) => e.stopPropagation()}
+					className="h-3.5 w-3.5 shrink-0 accent-foreground"
+					aria-label={`Select ${scene.title || `Scene ${sceneIndex + 1}`} for editing`}
+				/>
+			)}
 
 			{/* Collapse toggle */}
 			<button
@@ -75,6 +104,17 @@ export function SceneHeader({
 				<span className="text-sm font-semibold text-foreground truncate">
 					{scene.title || `Scene ${sceneIndex + 1}`}
 				</span>
+				{isApplyingEdit && (
+					<Badge className="text-[10px] px-1.5 py-0 shrink-0 bg-primary text-primary-foreground hover:bg-primary">
+						<Loader2 size={10} className="mr-1 animate-spin" />
+						Saving
+					</Badge>
+				)}
+				{isRecentlyEdited && (
+					<Badge className="text-[10px] px-1.5 py-0 shrink-0 bg-amber-500 text-white hover:bg-amber-500">
+						Updated
+					</Badge>
+				)}
 				<Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
 					{shotCount} shot{shotCount !== 1 ? "s" : ""}
 				</Badge>

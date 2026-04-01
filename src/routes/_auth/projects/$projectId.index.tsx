@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, Film, Loader2, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogContent,
@@ -16,9 +16,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScriptWorkshop } from "@/features/projects/components/script-workshop";
 import { Storyboard } from "@/features/projects/components/storyboard";
+import type { ShotMediaTab } from "@/features/projects/components/studio/shot-media-tabs";
 import { deleteProject } from "@/features/projects/project-mutations";
 import { loadProject } from "@/features/projects/project-queries";
-import type { ScenePlanEntry } from "@/features/projects/project-types";
+import type {
+	ScenePlanEntry,
+	ScriptEditDraft,
+	ScriptEditSelection,
+} from "@/features/projects/project-types";
 import { projectKeys } from "@/features/projects/query-keys";
 
 // ---------------------------------------------------------------------------
@@ -26,11 +31,28 @@ import { projectKeys } from "@/features/projects/query-keys";
 // ---------------------------------------------------------------------------
 
 export const Route = createFileRoute("/_auth/projects/$projectId/")({
-	validateSearch: (search: Record<string, unknown>) => ({
-		shot: typeof search.shot === "string" ? search.shot : undefined,
-		from: typeof search.from === "string" ? search.from : undefined,
-		to: typeof search.to === "string" ? search.to : undefined,
-	}),
+	validateSearch: (search: Record<string, unknown>) => {
+		const mediaTab =
+			search.mediaTab === "images" ||
+			search.mediaTab === "video" ||
+			search.mediaTab === "graphics"
+				? (search.mediaTab as ShotMediaTab)
+				: undefined;
+
+		return {
+			scene: typeof search.scene === "string" ? search.scene : undefined,
+			shot: typeof search.shot === "string" ? search.shot : undefined,
+			from: typeof search.from === "string" ? search.from : undefined,
+			to: typeof search.to === "string" ? search.to : undefined,
+			mediaTab,
+		};
+	},
+	loader: async ({ params, context: { queryClient } }) => {
+		return queryClient.ensureQueryData({
+			queryKey: projectKeys.project(params.projectId),
+			queryFn: () => loadProject({ data: params.projectId }),
+		});
+	},
 	component: ProjectPage,
 	pendingComponent: ProjectPending,
 	errorComponent: ProjectError,
@@ -57,10 +79,11 @@ function ProjectPage() {
 		assets: projectAssets,
 		transitionVideos: projectTransitionVideos,
 		shotVideoAssets: projectShotVideoAssets,
+		motionGraphics: projectMotionGraphics,
 		voiceovers: projectVoiceovers,
 		backgroundMusic: projectBackgroundMusic,
 	} = data_;
-	const { shot, from, to } = Route.useSearch();
+	const { scene, shot, from, to, mediaTab } = Route.useSearch();
 	const scenePlan: ScenePlanEntry[] = (() => {
 		if (!project.scriptRaw) return [];
 		try {
@@ -70,12 +93,52 @@ function ProjectPage() {
 		}
 	})();
 
-	const isWorkshopPhase = project.scriptStatus !== "done";
+	const hasPersistedProposal = scenePlan.length > 0;
+	const hasActiveScenes = projectScenes.length > 0;
+	const isWorkshopPhase =
+		project.scriptStatus !== "done" ||
+		(hasPersistedProposal && !hasActiveScenes);
 	const navigate = useNavigate();
 	const isDetailView = Boolean(shot || (from && to));
+	const [editSelection, setEditSelection] = useState<ScriptEditSelection>({
+		project: false,
+		sceneIds: [],
+		shotIds: [],
+	});
+	const [editDraft, setEditDraft] = useState<ScriptEditDraft | null>(null);
+	const [approvedEditHighlight, setApprovedEditHighlight] = useState<{
+		sceneIds: string[];
+		shotIds: string[];
+	} | null>(null);
+	const [pendingEditApply, setPendingEditApply] = useState<{
+		sceneIds: string[];
+		shotIds: string[];
+	} | null>(null);
+	const [committedEditDraft, setCommittedEditDraft] =
+		useState<ScriptEditDraft | null>(null);
+
+	function handleEditSelectionChange(nextSelection: ScriptEditSelection) {
+		setEditSelection(nextSelection);
+		setEditDraft(null);
+	}
+
+	useEffect(() => {
+		if (!committedEditDraft) return;
+		const scenesApplied = committedEditDraft.sceneUpdates.every((update) => {
+			const scene = projectScenes.find((entry) => entry.id === update.sceneId);
+			return scene?.description === update.description;
+		});
+		const shotsApplied = committedEditDraft.shotUpdates.every((update) => {
+			const shot = projectShots.find((entry) => entry.id === update.shotId);
+			return shot?.description === update.description;
+		});
+		if (scenesApplied && shotsApplied) {
+			setCommittedEditDraft(null);
+		}
+	}, [committedEditDraft, projectScenes, projectShots]);
 
 	return (
-		<div className="flex flex-col h-[calc(100vh-3.5rem)]">
+		<div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
 			<ProjectHeader
 				projectId={project.id}
 				isDetailView={isDetailView}
@@ -84,7 +147,13 @@ function ProjectPage() {
 					navigate({
 						to: "/projects/$projectId",
 						params: { projectId: project.id },
-						search: { shot: undefined, from: undefined, to: undefined },
+						search: {
+							scene: undefined,
+							shot: undefined,
+							from: undefined,
+							to: undefined,
+							mediaTab: undefined,
+						},
 					});
 				}}
 			>
@@ -132,15 +201,17 @@ function ProjectPage() {
 				</div>
 			</ProjectHeader>
 
-			{/* Content — key on ScriptWorkshop ensures fresh state if loader re-runs */}
+			{/* Content */}
 			{isWorkshopPhase ? (
 				<ScriptWorkshop
-					key={project.id}
+					key={`${project.id}-workshop`}
 					projectId={project.id}
 					existingMessages={projectMessages}
 					projectSettings={project.settings}
+					fallbackProposal={hasPersistedProposal ? scenePlan : null}
+					mode="hook"
 				/>
-			) : (
+			) : isDetailView ? (
 				<Storyboard
 					projectId={project.id}
 					scenes={projectScenes}
@@ -150,11 +221,67 @@ function ProjectPage() {
 					scenePlan={scenePlan}
 					transitionVideos={projectTransitionVideos}
 					shotVideoAssets={projectShotVideoAssets}
+					motionGraphics={projectMotionGraphics}
 					voiceovers={projectVoiceovers}
 					backgroundMusic={projectBackgroundMusic}
+					initialSceneId={scene}
 					initialShotId={shot}
 					initialFromShotId={from}
 					initialToShotId={to}
+					initialMediaTab={mediaTab}
+				/>
+			) : (
+				<ScriptWorkshop
+					key={`${project.id}-storyboard`}
+					projectId={project.id}
+					existingMessages={projectMessages}
+					projectSettings={project.settings}
+					fallbackProposal={hasPersistedProposal ? scenePlan : null}
+					mode="copilot"
+					editSelection={editSelection}
+					draft={editDraft}
+					onDraftChange={setEditDraft}
+					onDraftApproved={({ sceneIds, shotIds, draft }) => {
+						setApprovedEditHighlight({ sceneIds, shotIds });
+						setCommittedEditDraft(draft);
+					}}
+					onDraftApplyStateChange={setPendingEditApply}
+					scenes={projectScenes.map((scene) => ({
+						id: scene.id,
+						title: scene.title,
+						order: scene.order,
+					}))}
+					shots={projectShots.map((shot) => ({
+						id: shot.id,
+						sceneId: shot.sceneId,
+						order: shot.order,
+					}))}
+					rightPanel={
+						<Storyboard
+							projectId={project.id}
+							scenes={projectScenes}
+							shots={projectShots}
+							assets={projectAssets}
+							projectSettings={project.settings}
+							scenePlan={scenePlan}
+							transitionVideos={projectTransitionVideos}
+							shotVideoAssets={projectShotVideoAssets}
+							motionGraphics={projectMotionGraphics}
+							voiceovers={projectVoiceovers}
+							backgroundMusic={projectBackgroundMusic}
+							initialSceneId={scene}
+							initialShotId={shot}
+							initialFromShotId={from}
+							initialToShotId={to}
+							initialMediaTab={mediaTab}
+							editSelection={editSelection}
+							onEditSelectionChange={handleEditSelectionChange}
+							stagedEditDraft={editDraft}
+							committedEditDraft={committedEditDraft}
+							approvedEditHighlight={approvedEditHighlight}
+							pendingEditApply={pendingEditApply}
+						/>
+					}
 				/>
 			)}
 		</div>
@@ -291,11 +418,7 @@ function DeleteProjectDialog({
 			}}
 		>
 			<AlertDialogTrigger asChild>
-				<Button
-					variant="destructive"
-					size="sm"
-					className="gap-1.5"
-				>
+				<Button variant="destructive" size="sm" className="gap-1.5">
 					<Trash2 size={14} />
 					Delete project
 				</Button>

@@ -1,4 +1,4 @@
-import { Image as ImageIcon, Trash2 } from "lucide-react";
+import { Image as ImageIcon, Loader2, Trash2 } from "lucide-react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -26,14 +26,22 @@ export function ShotCard({
 	globalIndex,
 	assets,
 	isSelected,
+	isEditSelected = false,
+	isRecentlyEdited = false,
+	isApplyingEdit = false,
 	onSelect,
+	onSelectForEdit,
 	onDelete,
 }: {
 	shot: Shot;
 	globalIndex: number;
 	assets: SceneAssetSummary[];
 	isSelected: boolean;
+	isEditSelected?: boolean;
+	isRecentlyEdited?: boolean;
+	isApplyingEdit?: boolean;
 	onSelect: () => void;
+	onSelectForEdit?: () => void;
 	onDelete: () => void;
 }) {
 	const selectedAsset = assets.find(
@@ -53,10 +61,22 @@ export function ShotCard({
 				className={`w-full text-left bg-card rounded-lg border p-3 transition-all hover:shadow-md ${
 					isSelected
 						? "border-primary shadow-md"
-						: "border-border hover:border-border/80"
+						: isRecentlyEdited
+							? "border-amber-300 bg-amber-50 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]"
+							: "border-border hover:border-border/80"
 				}`}
 			>
 				<div className="flex items-start gap-3">
+					{onSelectForEdit && (
+						<input
+							type="checkbox"
+							checked={isEditSelected}
+							onChange={() => onSelectForEdit()}
+							onClick={(e) => e.stopPropagation()}
+							className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-foreground"
+							aria-label={`Select shot ${globalIndex} for editing`}
+						/>
+					)}
 					{/* Thumbnail */}
 					<div className="w-16 h-12 rounded bg-muted flex items-center justify-center shrink-0 overflow-hidden">
 						{selectedAsset?.url ? (
@@ -76,6 +96,17 @@ export function ShotCard({
 							<span className="text-xs font-bold text-muted-foreground">
 								Shot {globalIndex}
 							</span>
+							{isApplyingEdit && (
+								<Badge className="text-[10px] px-1.5 py-0 bg-primary text-primary-foreground hover:bg-primary">
+									<Loader2 size={10} className="mr-1 animate-spin" />
+									Saving
+								</Badge>
+							)}
+							{isRecentlyEdited && (
+								<Badge className="text-[10px] px-1.5 py-0 bg-amber-500 text-white hover:bg-amber-500">
+									Updated
+								</Badge>
+							)}
 							<Badge
 								variant="outline"
 								className={`text-[10px] px-1.5 py-0 ${

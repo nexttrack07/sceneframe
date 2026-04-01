@@ -64,6 +64,41 @@
       "when": 1774718120336,
       "tag": "0008_light_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774718120337,
+      "tag": "0009_hushed_stick",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774718120338,
+      "tag": "0010_motion_graphics",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774718120339,
+      "tag": "0011_scenes_active_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1774819800000,
+      "tag": "0012_video_status_stages",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1774900000000,
+      "tag": "0013_shot_size",
+      "breakpoints": true
     }
   ]
 }

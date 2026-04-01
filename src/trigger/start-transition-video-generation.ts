@@ -1,11 +1,13 @@
 import { task } from "@trigger.dev/sdk";
 import { and, eq, isNull } from "drizzle-orm";
-import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, transitionVideos, users } from "@/db/schema";
+import { assets, transitionVideos } from "@/db/schema";
 import type { VideoSettingValue } from "@/features/projects/project-types";
+import {
+	getVideoProviderApiKey,
+	submitVideoGeneration,
+} from "@/features/projects/video-generation-provider.server";
 import { buildTransitionVideoInput } from "@/features/projects/video-models";
-import { decryptUserApiKey } from "@/lib/encryption.server";
 import { checkTransitionVideoGeneration } from "@/trigger/check-transition-video-generation";
 
 export interface StartTransitionVideoGenerationPayload {
@@ -24,7 +26,12 @@ async function loadActiveTransitionVideo(transitionVideoId: string) {
 		),
 	});
 
-	if (!tv || tv.status !== "generating") {
+	if (
+		!tv ||
+		(tv.status !== "queued" &&
+			tv.status !== "generating" &&
+			tv.status !== "finalizing")
+	) {
 		return null;
 	}
 
@@ -74,8 +81,11 @@ export const startTransitionVideoGeneration = task({
 			};
 		}
 
-		const [user, fromImage, toImage] = await Promise.all([
-			db.query.users.findFirst({ where: eq(users.id, payload.userId) }),
+		const [providerApiKey, fromImage, toImage] = await Promise.all([
+			getVideoProviderApiKey({
+				userId: payload.userId,
+				modelId: payload.modelId,
+			}),
 			tv.fromImageId
 				? db.query.assets.findFirst({
 						where: and(eq(assets.id, tv.fromImageId), isNull(assets.deletedAt)),
@@ -88,15 +98,10 @@ export const startTransitionVideoGeneration = task({
 				: Promise.resolve(null),
 		]);
 
-		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
-			throw new Error("No Replicate API key found for user");
-		}
 		if (!fromImage?.url || !toImage?.url) {
 			throw new Error("Transition images are missing");
 		}
 
-		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
-		const replicate = new Replicate({ auth: apiKey });
 		const replicateInput = buildTransitionVideoInput({
 			modelId: payload.modelId,
 			prompt: payload.prompt,
@@ -105,19 +110,28 @@ export const startTransitionVideoGeneration = task({
 			endImageUrl: toImage.url,
 		});
 
-		const prediction = await replicate.predictions.create({
-			model: payload.modelId as `${string}/${string}`,
+		const prediction = await submitVideoGeneration({
+			modelId: payload.modelId,
+			providerApiKey,
+			mode: "transition",
 			input: replicateInput,
 		});
 
 		await db
 			.update(transitionVideos)
-			.set({ generationId: prediction.id })
+			.set({
+				generationId: prediction.requestId,
+				status: prediction.initialStatus,
+			})
 			.where(eq(transitionVideos.id, payload.transitionVideoId));
+
+		console.info(
+			`[TransitionVideoTrigger] started video=${payload.transitionVideoId} model=${payload.modelId} generation=${prediction.requestId} status=${prediction.initialStatus}${prediction.queuePosition ? ` queue=${prediction.queuePosition}` : ""}`,
+		);
 
 		const freshTv = await loadActiveTransitionVideoAttempt(
 			payload.transitionVideoId,
-			prediction.id,
+			prediction.requestId,
 		);
 		if (!freshTv) {
 			return {
@@ -130,7 +144,7 @@ export const startTransitionVideoGeneration = task({
 			{
 				transitionVideoId: payload.transitionVideoId,
 				userId: payload.userId,
-				generationId: prediction.id,
+				generationId: prediction.requestId,
 			},
 			{ delay: "30s" },
 		);
@@ -140,7 +154,10 @@ export const startTransitionVideoGeneration = task({
 			.set({ jobId: handle.id })
 			.where(eq(transitionVideos.id, payload.transitionVideoId));
 
-		return { status: "started" as const, predictionId: prediction.id };
+		return {
+			status: "started" as const,
+			predictionId: prediction.requestId,
+		};
 	},
 
 	onFailure: async ({ payload, error }) => {

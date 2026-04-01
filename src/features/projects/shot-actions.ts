@@ -24,15 +24,109 @@ import {
 	normalizeVideoDefaults,
 } from "./project-normalize";
 import type {
+	PromptAssetTypeSelection,
+	ShotSize,
 	ShotType,
 	TriggerRunSummary,
 	TriggerRunUiStatus,
 } from "./project-types";
+import {
+	buildSceneVisualBrief,
+	critiqueAndRewritePrompt,
+} from "./prompt-quality.server";
+import {
+	getPrecisionPromptInstructions,
+	resolvePromptAssetType,
+} from "./prompt-strategy";
+import { isPendingVideoStatus } from "./video-status";
 
 const REPLICATE_TIMEOUT_MS = 60_000;
+const REFERENCE_IMAGE_ANALYSIS_TIMEOUT_MS = 45_000;
+const PROMPT_MODEL = "openai/gpt-4o-mini";
 const STALE_IMAGE_GENERATION_MS = 6 * 60 * 1000;
 const ORPHANED_IMAGE_GENERATION_ERROR =
 	"Image generation stopped before completion. Please try again.";
+
+async function describeReferenceImage(args: {
+	replicate: Replicate;
+	imageUrl: string;
+	label: string;
+	shotDescription: string;
+	goal: "image" | "video";
+}) {
+	const controller = new AbortController();
+	const timeout = setTimeout(
+		() => controller.abort(),
+		REFERENCE_IMAGE_ANALYSIS_TIMEOUT_MS,
+	);
+
+	try {
+		const chunks: string[] = [];
+		for await (const event of args.replicate.stream(PROMPT_MODEL, {
+			input: {
+				image_input: [args.imageUrl],
+				max_completion_tokens: 300,
+				system_prompt:
+					args.goal === "video"
+						? "You analyze a reference image for writing a grounded video generation prompt."
+						: "You analyze a reference image for writing a grounded image generation prompt.",
+				temperature: 0.3,
+				prompt: `This is a ${args.label} reference image for a ${args.goal} generation prompt.
+
+Shot description:
+${args.shotDescription}
+
+Describe only the concrete visual information that should guide prompt writing:
+- subject appearance, pose, and placement
+- framing and camera distance
+- environment and key props
+- lighting, mood, and visual style
+
+Return 2-4 short sentences. Be specific and visual. Do not speculate beyond what is visible.`,
+			},
+			signal: controller.signal,
+		})) {
+			chunks.push(String(event));
+		}
+
+		return chunks.join("").trim();
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+async function buildReferenceImageContext(args: {
+	replicate: Replicate;
+	imageUrls: string[];
+	shotDescription: string;
+	goal: "image" | "video";
+}) {
+	if (args.imageUrls.length === 0) {
+		return [] as string[];
+	}
+
+	return Promise.all(
+		args.imageUrls.slice(0, 4).map(async (imageUrl, index) => {
+			try {
+				const description = await describeReferenceImage({
+					replicate: args.replicate,
+					imageUrl,
+					label: index === 0 ? "primary" : `additional ${index}`,
+					shotDescription: args.shotDescription,
+					goal: args.goal,
+				});
+				return description;
+			} catch (error) {
+				console.warn(
+					`[PromptContext] reference-image-analysis-failed goal=${args.goal} index=${index} error=${error instanceof Error ? error.message : String(error)}`,
+				);
+				return null;
+			}
+		}),
+	).then((results) =>
+		results.filter((value): value is string => Boolean(value)),
+	);
+}
 
 // ---------------------------------------------------------------------------
 // recomputeProjectTimestamps
@@ -218,6 +312,7 @@ export const updateShot = createServerFn({ method: "POST" })
 			shotId: string;
 			description?: string;
 			shotType?: ShotType;
+			shotSize?: ShotSize;
 			durationSec?: number;
 		}) => {
 			if (data.durationSec !== undefined) {
@@ -232,28 +327,34 @@ export const updateShot = createServerFn({ method: "POST" })
 			return data;
 		},
 	)
-	.handler(async ({ data: { shotId, description, shotType, durationSec } }) => {
-		const { shot, scene } = await assertShotOwner(shotId);
+	.handler(
+		async ({
+			data: { shotId, description, shotType, shotSize, durationSec },
+		}) => {
+			const { shot, scene } = await assertShotOwner(shotId);
 
-		const hasUpdates =
-			description !== undefined ||
-			shotType !== undefined ||
-			durationSec !== undefined;
-		if (hasUpdates) {
-			await db
-				.update(shots)
-				.set({
-					...(description !== undefined && { description }),
-					...(shotType !== undefined && { shotType }),
-					...(durationSec !== undefined && { durationSec }),
-				})
-				.where(eq(shots.id, shotId));
-		}
+			const hasUpdates =
+				description !== undefined ||
+				shotType !== undefined ||
+				shotSize !== undefined ||
+				durationSec !== undefined;
+			if (hasUpdates) {
+				await db
+					.update(shots)
+					.set({
+						...(description !== undefined && { description }),
+						...(shotType !== undefined && { shotType }),
+						...(shotSize !== undefined && { shotSize }),
+						...(durationSec !== undefined && { durationSec }),
+					})
+					.where(eq(shots.id, shotId));
+			}
 
-		if (durationSec !== undefined && durationSec !== shot.durationSec) {
-			await recomputeProjectTimestamps(scene.projectId);
-		}
-	});
+			if (durationSec !== undefined && durationSec !== shot.durationSec) {
+				await recomputeProjectTimestamps(scene.projectId);
+			}
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // deleteShot
@@ -491,6 +592,7 @@ export const addShot = createServerFn({ method: "POST" })
 			sceneId: string;
 			description: string;
 			shotType: ShotType;
+			shotSize?: ShotSize;
 			afterOrder: number;
 		}) => {
 			if (!data.description?.trim()) throw new Error("Description is required");
@@ -503,21 +605,26 @@ export const addShot = createServerFn({ method: "POST" })
 			return data;
 		},
 	)
-	.handler(async ({ data: { sceneId, description, shotType, afterOrder } }) => {
-		const { scene } = await assertSceneOwner(sceneId);
+	.handler(
+		async ({
+			data: { sceneId, description, shotType, shotSize, afterOrder },
+		}) => {
+			const { scene } = await assertSceneOwner(sceneId);
 
-		const newOrder = afterOrder + 0.5;
+			const newOrder = afterOrder + 0.5;
 
-		await db.insert(shots).values({
-			sceneId,
-			order: newOrder,
-			description,
-			shotType,
-			durationSec: 5,
-		});
+			await db.insert(shots).values({
+				sceneId,
+				order: newOrder,
+				description,
+				shotType,
+				shotSize: shotSize ?? "medium",
+				durationSec: 5,
+			});
 
-		await recomputeProjectTimestamps(scene.projectId);
-	});
+			await recomputeProjectTimestamps(scene.projectId);
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // reorderShot
@@ -584,15 +691,28 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 			shotId: string;
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
+			referenceImageUrls?: string[];
+			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
 	.handler(
 		async ({
-			data: { shotId, useProjectContext = true, usePrevShotContext = true },
+			data: {
+				shotId,
+				useProjectContext = true,
+				usePrevShotContext = true,
+				referenceImageUrls = [],
+				assetTypeOverride,
+			},
 		}) => {
 			const { userId, shot, scene, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
+			const resolvedAssetType = resolvePromptAssetType({
+				override: assetTypeOverride,
+				text: `${shot.description}\n${scene.description}\n${referenceImageUrls.join("\n")}`,
+				medium: "image",
+			});
 
 			// Load all shots in this scene for context
 			const sceneShots = await db.query.shots.findMany({
@@ -649,6 +769,7 @@ ${consistencyRules}
 - Keep it specific but compact; avoid overly verbose taxonomies and stacked adjectives
 - If scale matters (tiny subject, huge environment, distant silhouette), state it clearly
 - Do NOT include meta-instructions like "generate an image of"
+${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
 
 Return ONLY the final prompt, nothing else.`;
 
@@ -670,9 +791,39 @@ Return ONLY the final prompt, nothing else.`;
 				.filter(Boolean)
 				.join("\n\n");
 
-			const userMessage = contextParts;
-
 			const replicate = new Replicate({ auth: apiKey });
+			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
+				buildReferenceImageContext({
+					replicate,
+					imageUrls: referenceImageUrls,
+					shotDescription: shot.description,
+					goal: "image",
+				}),
+				buildSceneVisualBrief({
+					replicate,
+					medium: "image",
+					projectName: project.name,
+					sceneTitle: scene.title,
+					sceneDescription: scene.description,
+					projectContext: useProjectContext ? projectContext : null,
+					shotContext: [
+						prevShot ? `Previous shot: ${prevShot.description}` : null,
+						`Current shot: ${shot.description}`,
+						nextShot ? `Next shot: ${nextShot.description}` : null,
+					]
+						.filter(Boolean)
+						.join("\n"),
+				}),
+			]);
+			const userMessage = [
+				contextParts,
+				sceneVisualBrief ? `SCENE VISUAL BRIEF:\n${sceneVisualBrief}` : null,
+				referenceImageContext.length > 0
+					? `REFERENCE IMAGES:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
+					: null,
+			]
+				.filter(Boolean)
+				.join("\n\n");
 			const controller = new AbortController();
 			const timeout = setTimeout(
 				() => controller.abort(),
@@ -681,28 +832,44 @@ Return ONLY the final prompt, nothing else.`;
 
 			try {
 				const chunks: string[] = [];
-				for await (const event of replicate.stream(
-					"anthropic/claude-4.5-haiku",
-					{
-						input: {
-							prompt: `${systemPrompt}\n\n${userMessage}`,
-							max_tokens: 1024,
-							temperature: 0.8,
-						},
-						signal: controller.signal,
+				for await (const event of replicate.stream(PROMPT_MODEL, {
+					input: {
+						prompt: `${systemPrompt}\n\n${userMessage}`,
+						system_prompt:
+							"You are an expert prompt writer for modern text-to-image models.",
+						max_completion_tokens: 1024,
+						temperature: 0.8,
 					},
-				)) {
+					signal: controller.signal,
+				})) {
 					chunks.push(String(event));
 				}
 				const generatedPrompt = chunks.join("").trim();
 				if (!generatedPrompt)
 					throw new Error("AI returned an empty response — please try again");
+				const finalPrompt = await critiqueAndRewritePrompt({
+					replicate,
+					medium: "image",
+					assetType: resolvedAssetType,
+					prompt: generatedPrompt,
+					context: [
+						sceneVisualBrief
+							? `Scene visual brief:\n${sceneVisualBrief}`
+							: null,
+						`Shot description: ${shot.description}`,
+						referenceImageContext.length > 0
+							? `Reference images:\n${referenceImageContext.join("\n")}`
+							: null,
+					]
+						.filter(Boolean)
+						.join("\n\n"),
+				});
 
 				await db
 					.update(shots)
-					.set({ imagePrompt: generatedPrompt })
+					.set({ imagePrompt: finalPrompt })
 					.where(eq(shots.id, shotId));
-				return { prompt: generatedPrompt };
+				return { prompt: finalPrompt, assetType: resolvedAssetType };
 			} finally {
 				clearTimeout(timeout);
 			}
@@ -720,6 +887,8 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 			userPrompt: string;
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
+			referenceImageUrls?: string[];
+			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
 	.handler(
@@ -729,11 +898,18 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 				userPrompt,
 				useProjectContext = true,
 				usePrevShotContext = true,
+				referenceImageUrls = [],
+				assetTypeOverride,
 			},
 		}) => {
 			const { userId, shot, scene, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
+			const resolvedAssetType = resolvePromptAssetType({
+				override: assetTypeOverride,
+				text: `${shot.description}\n${userPrompt}\n${scene.description}`,
+				medium: "image",
+			});
 
 			// Load adjacent shots for context
 			const sceneShots = await db.query.shots.findMany({
@@ -774,6 +950,7 @@ Rules:
 - Keep it specific but compact; remove fluff and avoid over-explaining
 - If the user mentioned visible text, calligraphy, signage, or graphics, preserve that explicitly
 - If scale matters, preserve it exactly
+${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
 ${useProjectContext && projectContext ? `\nProject context:\n${projectContext}` : ""}
 ${useProjectContext ? `Scene: ${scene.description}` : ""}
 Shot: ${shot.description}
@@ -782,6 +959,29 @@ ${usePrevShotContext && nextShot ? `\nNext shot: ${nextShot.description}` : ""}
 Return ONLY the final prompt, nothing else.`;
 
 			const replicate = new Replicate({ auth: apiKey });
+			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
+				buildReferenceImageContext({
+					replicate,
+					imageUrls: referenceImageUrls,
+					shotDescription: shot.description,
+					goal: "image",
+				}),
+				buildSceneVisualBrief({
+					replicate,
+					medium: "image",
+					projectName: project.name,
+					sceneTitle: scene.title,
+					sceneDescription: scene.description,
+					projectContext: useProjectContext ? projectContext : null,
+					shotContext: [
+						prevShot ? `Previous shot: ${prevShot.description}` : null,
+						`Current shot: ${shot.description}`,
+						nextShot ? `Next shot: ${nextShot.description}` : null,
+					]
+						.filter(Boolean)
+						.join("\n"),
+				}),
+			]);
 			const controller = new AbortController();
 			const timeout = setTimeout(
 				() => controller.abort(),
@@ -789,23 +989,43 @@ Return ONLY the final prompt, nothing else.`;
 			);
 			try {
 				const chunks: string[] = [];
-				for await (const event of replicate.stream(
-					"anthropic/claude-4.5-haiku",
-					{
-						input: {
-							prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
-							max_tokens: 1024,
-							temperature: 0.7,
-						},
-						signal: controller.signal,
+				for await (const event of replicate.stream(PROMPT_MODEL, {
+					input: {
+						prompt: `${systemPrompt}${
+							referenceImageContext.length > 0
+								? `\n\nReference images:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
+								: ""
+						}\n\nUser's prompt to enhance:\n${userPrompt}`,
+						system_prompt:
+							"You are an expert prompt writer for modern text-to-image models.",
+						max_completion_tokens: 1024,
+						temperature: 0.7,
 					},
-				)) {
+					signal: controller.signal,
+				})) {
 					chunks.push(String(event));
 				}
 				const enhanced = chunks.join("").trim();
 				if (!enhanced)
 					throw new Error("AI returned an empty response — please try again");
-				return { prompt: enhanced };
+				const finalPrompt = await critiqueAndRewritePrompt({
+					replicate,
+					medium: "image",
+					assetType: resolvedAssetType,
+					prompt: enhanced,
+					context: [
+						sceneVisualBrief
+							? `Scene visual brief:\n${sceneVisualBrief}`
+							: null,
+						`Shot description: ${shot.description}`,
+						referenceImageContext.length > 0
+							? `Reference images:\n${referenceImageContext.join("\n")}`
+							: null,
+					]
+						.filter(Boolean)
+						.join("\n\n"),
+				});
+				return { prompt: finalPrompt, assetType: resolvedAssetType };
 			} finally {
 				clearTimeout(timeout);
 			}
@@ -1055,17 +1275,29 @@ export const getShotImageRunStatuses = createServerFn({ method: "POST" })
 // ---------------------------------------------------------------------------
 
 export const generateShotVideoPrompt = createServerFn({ method: "POST" })
-	.inputValidator((data: { shotId: string }) => data)
-	.handler(async ({ data: { shotId } }) => {
-		const { userId, shot, project } = await assertShotOwner(shotId);
-		const apiKey = await getUserApiKey(userId);
-		const settings = normalizeProjectSettings(project.settings);
-		const characters = settings?.characters;
-		const characterContext = characters?.length
-			? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-			: null;
+	.inputValidator(
+		(data: {
+			shotId: string;
+			referenceImageIds?: string[];
+			assetTypeOverride?: PromptAssetTypeSelection;
+		}) => data,
+	)
+	.handler(
+		async ({ data: { shotId, referenceImageIds = [], assetTypeOverride } }) => {
+			const { userId, shot, project } = await assertShotOwner(shotId);
+			const apiKey = await getUserApiKey(userId);
+			const settings = normalizeProjectSettings(project.settings);
+			const resolvedAssetType = resolvePromptAssetType({
+				override: assetTypeOverride,
+				text: `${shot.description}`,
+				medium: "video",
+			});
+			const characters = settings?.characters;
+			const characterContext = characters?.length
+				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
+				: null;
 
-		const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
+			const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
 Given a shot description, write a concise motion prompt for a short video clip.
 
 Use this exact lightweight structure:
@@ -1084,38 +1316,112 @@ Rules:
 - Be precise about direction, pacing, and camera behavior when relevant
 - Keep every section compact
 - The start frame image already establishes appearance, so focus on motion
+${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "video" })}
 ${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(", ")}` : ""}
 ${settings?.intake?.mood?.length ? `- Mood: ${settings.intake.mood.join(", ")}` : ""}
 ${characterContext ? `- ${characterContext}` : ""}
 
 Return ONLY the final prompt, nothing else.`;
 
-		const userMessage = `Shot description: ${shot.description}`;
+			const replicate = new Replicate({ auth: apiKey });
+			const referenceAssets =
+				referenceImageIds.length > 0
+					? await db.query.assets.findMany({
+							where: and(
+								inArray(assets.id, referenceImageIds),
+								inArray(assets.type, ["start_image", "end_image", "image"]),
+								eq(assets.status, "done"),
+								isNull(assets.deletedAt),
+							),
+						})
+					: [];
+			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
+				buildReferenceImageContext({
+					replicate,
+					imageUrls: referenceAssets
+						.map((asset) => asset.url)
+						.filter((url): url is string => Boolean(url)),
+					shotDescription: shot.description,
+					goal: "video",
+				}),
+				buildSceneVisualBrief({
+					replicate,
+					medium: "video",
+					projectName: project.name,
+					sceneTitle: null,
+					sceneDescription: shot.description,
+					projectContext: [
+						settings?.intake?.concept
+							? `Project concept: ${settings.intake.concept}`
+							: null,
+						settings?.intake?.style?.length
+							? `Visual style: ${settings.intake.style.join(", ")}`
+							: null,
+						settings?.intake?.mood?.length
+							? `Mood: ${settings.intake.mood.join(", ")}`
+							: null,
+						characterContext,
+					]
+						.filter(Boolean)
+						.join("\n"),
+					shotContext: `Current shot: ${shot.description}`,
+				}),
+			]);
+			const userMessage = [
+				`Shot description: ${shot.description}`,
+				sceneVisualBrief ? `Scene visual brief:\n${sceneVisualBrief}` : null,
+				referenceImageContext.length > 0
+					? `Reference images:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
+					: null,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
 
-		const replicate = new Replicate({ auth: apiKey });
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
-
-		try {
-			const chunks: string[] = [];
-			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
-				input: {
-					prompt: `${systemPrompt}\n\n${userMessage}`,
-					max_tokens: 1024,
-					temperature: 0.7,
-				},
-				signal: controller.signal,
-			})) {
-				chunks.push(String(event));
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream(PROMPT_MODEL, {
+					input: {
+						prompt: `${systemPrompt}\n\n${userMessage}`,
+						system_prompt:
+							"You are an expert prompt writer for modern video generation models like Kling.",
+						max_completion_tokens: 1024,
+						temperature: 0.7,
+					},
+					signal: controller.signal,
+				})) {
+					chunks.push(String(event));
+				}
+				const generatedPrompt = chunks.join("").trim();
+				if (!generatedPrompt)
+					throw new Error("AI returned an empty response — please try again");
+				const finalPrompt = await critiqueAndRewritePrompt({
+					replicate,
+					medium: "video",
+					assetType: resolvedAssetType,
+					prompt: generatedPrompt,
+					context: [
+						sceneVisualBrief
+							? `Scene visual brief:\n${sceneVisualBrief}`
+							: null,
+						`Shot description: ${shot.description}`,
+						referenceImageContext.length > 0
+							? `Reference images:\n${referenceImageContext.join("\n")}`
+							: null,
+					]
+						.filter(Boolean)
+						.join("\n\n"),
+				});
+				return { prompt: finalPrompt, assetType: resolvedAssetType };
+			} finally {
+				clearTimeout(timeout);
 			}
-			const generatedPrompt = chunks.join("").trim();
-			if (!generatedPrompt)
-				throw new Error("AI returned an empty response — please try again");
-			return { prompt: generatedPrompt };
-		} finally {
-			clearTimeout(timeout);
-		}
-	});
+		},
+	);
 
 // ---------------------------------------------------------------------------
 // generateShotVideo — fire-and-forget, returns immediately with assetId
@@ -1171,7 +1477,7 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 					prompt,
 					model: normalizedVideo.model,
 					modelSettings: normalizedVideo.modelOptions,
-					status: "generating" as const,
+					status: "queued" as const,
 					isSelected: false,
 					batchId: randomUUID(),
 				})
@@ -1210,7 +1516,7 @@ export const pollVideoAsset = createServerFn({ method: "POST" })
 		if (asset.status === "error")
 			return { status: "error" as const, errorMessage: asset.errorMessage };
 
-		return { status: "generating" as const };
+		return { status: asset.status };
 	});
 
 // ---------------------------------------------------------------------------
@@ -1322,6 +1628,8 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 			userPrompt: string;
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
+			referenceImageIds?: string[];
+			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
 	.handler(
@@ -1331,11 +1639,18 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 				userPrompt,
 				useProjectContext = true,
 				usePrevShotContext = true,
+				referenceImageIds = [],
+				assetTypeOverride,
 			},
 		}) => {
 			const { userId, shot, project, scene } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
+			const resolvedAssetType = resolvePromptAssetType({
+				override: assetTypeOverride,
+				text: `${shot.description}\n${userPrompt}\n${scene.description}`,
+				medium: "video",
+			});
 
 			const intake = settings?.intake;
 			const characters = settings?.characters;
@@ -1394,6 +1709,7 @@ Rules:
 - Write in present tense
 - Keep every section compact
 - The start frame image already establishes appearance, so focus on motion
+${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "video" })}
 
 Shot context:
 ${contextBlock}
@@ -1401,6 +1717,36 @@ ${contextBlock}
 Return ONLY the final prompt, nothing else.`;
 
 			const replicate = new Replicate({ auth: apiKey });
+			const referenceAssets =
+				referenceImageIds.length > 0
+					? await db.query.assets.findMany({
+							where: and(
+								inArray(assets.id, referenceImageIds),
+								inArray(assets.type, ["start_image", "end_image", "image"]),
+								eq(assets.status, "done"),
+								isNull(assets.deletedAt),
+							),
+						})
+					: [];
+			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
+				buildReferenceImageContext({
+					replicate,
+					imageUrls: referenceAssets
+						.map((asset) => asset.url)
+						.filter((url): url is string => Boolean(url)),
+					shotDescription: shot.description,
+					goal: "video",
+				}),
+				buildSceneVisualBrief({
+					replicate,
+					medium: "video",
+					projectName: project.name,
+					sceneTitle: scene.title,
+					sceneDescription: scene.description,
+					projectContext: projectContextLines,
+					shotContext: `Current shot: ${shot.description}`,
+				}),
+			]);
 			const controller = new AbortController();
 			const timeout = setTimeout(
 				() => controller.abort(),
@@ -1408,23 +1754,43 @@ Return ONLY the final prompt, nothing else.`;
 			);
 			try {
 				const chunks: string[] = [];
-				for await (const event of replicate.stream(
-					"anthropic/claude-4.5-haiku",
-					{
-						input: {
-							prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
-							max_tokens: 1024,
-							temperature: 0.7,
-						},
-						signal: controller.signal,
+				for await (const event of replicate.stream(PROMPT_MODEL, {
+					input: {
+						prompt: `${systemPrompt}${
+							referenceImageContext.length > 0
+								? `\n\nReference images:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
+								: ""
+						}\n\nUser's prompt to enhance:\n${userPrompt}`,
+						system_prompt:
+							"You are an expert prompt writer for modern video generation models like Kling.",
+						max_completion_tokens: 1024,
+						temperature: 0.7,
 					},
-				)) {
+					signal: controller.signal,
+				})) {
 					chunks.push(String(event));
 				}
 				const enhanced = chunks.join("").trim();
 				if (!enhanced)
 					throw new Error("AI returned an empty response — please try again");
-				return { prompt: enhanced };
+				const finalPrompt = await critiqueAndRewritePrompt({
+					replicate,
+					medium: "video",
+					assetType: resolvedAssetType,
+					prompt: enhanced,
+					context: [
+						sceneVisualBrief
+							? `Scene visual brief:\n${sceneVisualBrief}`
+							: null,
+						`Shot description: ${shot.description}`,
+						referenceImageContext.length > 0
+							? `Reference images:\n${referenceImageContext.join("\n")}`
+							: null,
+					]
+						.filter(Boolean)
+						.join("\n\n"),
+				});
+				return { prompt: finalPrompt, assetType: resolvedAssetType };
 			} finally {
 				clearTimeout(timeout);
 			}
@@ -1452,7 +1818,7 @@ export const pollShotVideos = createServerFn({ method: "POST" })
 			orderBy: desc(assets.createdAt),
 		});
 
-		const generating = videos.filter((v) => v.status === "generating");
+		const generating = videos.filter((v) => isPendingVideoStatus(v.status));
 		const done = videos.filter((v) => v.status === "done");
 		const errored = videos.filter((v) => v.status === "error");
 		const selectedDone = done.find((v) => v.isSelected) ?? null;
@@ -1485,7 +1851,7 @@ async function reconcileGeneratingShotVideos(args: {
 			eq(assets.shotId, args.shotId),
 			eq(assets.type, "video"),
 			eq(assets.stage, "video"),
-			eq(assets.status, "generating"),
+			inArray(assets.status, ["queued", "generating", "finalizing"]),
 			isNull(assets.deletedAt),
 		),
 		orderBy: desc(assets.createdAt),
@@ -1502,7 +1868,9 @@ async function reconcileGeneratingShotVideos(args: {
 					.set({
 						status: "error",
 						errorMessage:
-							"Video generation timed out before the provider returned a result. Try again or choose a faster model.",
+							video.status === "queued"
+								? "This model stayed queued too long because provider capacity was full. Try again or choose a faster model."
+								: "Video generation timed out before the provider returned a result. Try again or choose a faster model.",
 					})
 					.where(eq(assets.id, video.id));
 				return;
@@ -1543,7 +1911,7 @@ async function reconcileGeneratingShotVideos(args: {
 					const freshAsset = await db.query.assets.findFirst({
 						where: eq(assets.id, video.id),
 					});
-					if (freshAsset?.status === "generating") {
+					if (freshAsset && isPendingVideoStatus(freshAsset.status)) {
 						// The job really did complete but DB wasn't updated — mark as error
 						await db
 							.update(assets)
@@ -1601,7 +1969,7 @@ export const getShotVideoRunStatuses = createServerFn({ method: "POST" })
 				eq(assets.shotId, shotId),
 				eq(assets.type, "video"),
 				eq(assets.stage, "video"),
-				eq(assets.status, "generating"),
+				inArray(assets.status, ["queued", "generating", "finalizing"]),
 				isNull(assets.deletedAt),
 			),
 			orderBy: desc(assets.createdAt),

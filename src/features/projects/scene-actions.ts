@@ -4,7 +4,7 @@ import { runs } from "@trigger.dev/sdk";
 import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, scenes, shots, transitionVideos } from "@/db/schema";
+import { assets, projects, scenes, shots, transitionVideos } from "@/db/schema";
 import {
 	assertAssetOwner,
 	assertProjectOwner,
@@ -26,13 +26,38 @@ import {
 	normalizeImageDefaults,
 	normalizeProjectSettings,
 } from "./project-normalize";
-import type { TriggerRunSummary, TriggerRunUiStatus } from "./project-types";
+import type {
+	PromptAssetTypeSelection,
+	ScenePlanEntry,
+	ShotSize,
+	TriggerRunSummary,
+	TriggerRunUiStatus,
+} from "./project-types";
+import {
+	buildSceneVisualBrief,
+	critiqueAndRewritePrompt,
+} from "./prompt-quality.server";
+import {
+	getPrecisionPromptInstructions,
+	resolvePromptAssetType,
+} from "./prompt-strategy";
 
 const MAX_MESSAGE_LENGTH = 5_000;
 const REPLICATE_TIMEOUT_MS = 60_000;
+const PROMPT_MODEL = "openai/gpt-4o-mini";
 const STALE_IMAGE_GENERATION_MS = 6 * 60 * 1000;
 const ORPHANED_IMAGE_GENERATION_ERROR =
 	"Image generation stopped before completion. Please try again.";
+
+function extractJsonBlock<T>(response: string): T | null {
+	try {
+		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+		const jsonStr = fenceMatch ? fenceMatch[1] : response;
+		return JSON.parse(jsonStr.trim()) as T;
+	} catch {
+		return null;
+	}
+}
 
 export const updateScene = createServerFn({ method: "POST" })
 	.inputValidator(
@@ -127,20 +152,248 @@ Return ONLY the new description text, nothing else.`;
 		}
 	});
 
+export const regenerateSceneAndShots = createServerFn({ method: "POST" })
+	.inputValidator((data: { sceneId: string; instructions: string }) => {
+		const trimmed = data.instructions.trim();
+		if (trimmed.length === 0) throw new Error("Instructions cannot be empty");
+		if (trimmed.length > MAX_MESSAGE_LENGTH) {
+			throw new Error(
+				`Instructions too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+			);
+		}
+		return { sceneId: data.sceneId, instructions: trimmed };
+	})
+	.handler(async ({ data: { sceneId, instructions } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const settings = normalizeProjectSettings(project.settings);
+
+		const allScenes = await db.query.scenes.findMany({
+			where: and(eq(scenes.projectId, project.id), isNull(scenes.deletedAt)),
+			orderBy: asc(scenes.order),
+		});
+		const sceneIndex = allScenes.findIndex((row) => row.id === scene.id);
+		if (sceneIndex < 0) throw new Error("Scene not found in project ordering");
+
+		const sceneShots = await db.query.shots.findMany({
+			where: and(eq(shots.sceneId, sceneId), isNull(shots.deletedAt)),
+			orderBy: asc(shots.order),
+		});
+		if (sceneShots.length === 0) {
+			throw new Error("This scene has no shots to regenerate");
+		}
+
+		const totalDurationSec = sceneShots.reduce(
+			(sum, currentShot) => sum + currentShot.durationSec,
+			0,
+		);
+		const intake = settings?.intake;
+		const projectContext = [
+			`Project: ${project.name}`,
+			intake?.concept ? `Concept: ${intake.concept}` : null,
+			intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+			intake?.style?.length ? `Style: ${intake.style.join(", ")}` : null,
+			intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+			intake?.audience ? `Audience: ${intake.audience}` : null,
+		]
+			.filter(Boolean)
+			.join("\n");
+		const shotSummary = sceneShots
+			.map(
+				(currentShot, index) =>
+					`Shot ${index + 1}: type=${currentShot.shotType}, size=${currentShot.shotSize}, duration=${currentShot.durationSec}s, description=${currentShot.description}`,
+			)
+			.join("\n");
+		const sceneVisualBrief = await buildSceneVisualBrief({
+			replicate,
+			medium: "image",
+			projectName: project.name,
+			sceneTitle: scene.title,
+			sceneDescription: scene.description,
+			projectContext,
+			shotContext: shotSummary,
+		});
+
+		const rewritePrompt = `You are revising a single scene and its existing shot plan for a video project.
+
+You must rewrite:
+1. the scene description
+2. every shot description in that scene
+
+Constraints:
+- Keep the exact same number of shots: ${sceneShots.length}
+- Keep each shot's duration exactly as provided
+- Keep each shot's shotType exactly as provided
+- You may update shotSize for better cinematographic variety
+- Rewrite only text/shot metadata; do not mention assets, files, or previous generations
+- Make the rewritten scene and shots reflect the user's requested changes
+- The scene description should be a strong visual brief
+- Each shot description should be visually distinct and specific
+
+Project context:
+${projectContext}
+
+Current scene:
+Title: ${scene.title ?? "Untitled"}
+Description: ${scene.description}
+Duration target: ${totalDurationSec}s
+
+Scene visual brief:
+${sceneVisualBrief}
+
+Current shots:
+${shotSummary}
+
+User instructions:
+${instructions}
+
+Return ONLY JSON in this shape:
+\`\`\`json
+{
+  "sceneDescription": "rewritten scene description",
+  "shots": [
+    {
+      "index": 0,
+      "shotSize": "wide",
+      "description": "rewritten shot description"
+    }
+  ]
+}
+\`\`\`
+`;
+
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream(PROMPT_MODEL, {
+				input: {
+					prompt: rewritePrompt,
+					system_prompt:
+						"You rewrite scene descriptions and shot plans with precise, production-ready visual language. Return only JSON.",
+					max_completion_tokens: 2048,
+					temperature: 0.6,
+				},
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const parsed = extractJsonBlock<{
+				sceneDescription?: string;
+				shots?: Array<{
+					index?: number;
+					shotSize?: string;
+					description?: string;
+				}>;
+			}>(chunks.join("").trim());
+
+			if (
+				!parsed?.sceneDescription?.trim() ||
+				!Array.isArray(parsed.shots) ||
+				parsed.shots.length !== sceneShots.length
+			) {
+				throw new Error("AI returned an invalid scene regeneration payload");
+			}
+
+			const validShotSizes: ShotSize[] = [
+				"extreme-wide",
+				"wide",
+				"medium",
+				"close-up",
+				"extreme-close-up",
+				"insert",
+			];
+			const rewrittenShots = parsed.shots.map((candidate, index) => {
+				const nextSize = String(
+					candidate.shotSize ?? sceneShots[index]?.shotSize,
+				);
+				const shotSize = validShotSizes.includes(nextSize as ShotSize)
+					? (nextSize as ShotSize)
+					: ((sceneShots[index]?.shotSize as ShotSize | undefined) ?? "medium");
+				const description = String(
+					candidate.description ?? sceneShots[index]?.description ?? "",
+				).trim();
+				if (!description) {
+					throw new Error("AI returned an empty shot description");
+				}
+				return {
+					id: sceneShots[index]?.id,
+					description,
+					shotSize,
+				};
+			});
+
+			const rewrittenSceneDescription = parsed.sceneDescription.trim();
+
+			await db.transaction(async (tx) => {
+				await tx
+					.update(scenes)
+					.set({ description: rewrittenSceneDescription })
+					.where(eq(scenes.id, scene.id));
+
+				for (const rewrittenShot of rewrittenShots) {
+					if (!rewrittenShot.id) continue;
+					await tx
+						.update(shots)
+						.set({
+							description: rewrittenShot.description,
+							shotSize: rewrittenShot.shotSize,
+						})
+						.where(eq(shots.id, rewrittenShot.id));
+				}
+
+				try {
+					const parsedScriptRaw = project.scriptRaw
+						? (JSON.parse(project.scriptRaw) as ScenePlanEntry[])
+						: null;
+					if (Array.isArray(parsedScriptRaw) && parsedScriptRaw[sceneIndex]) {
+						parsedScriptRaw[sceneIndex] = {
+							...parsedScriptRaw[sceneIndex],
+							description: rewrittenSceneDescription,
+						};
+						await tx
+							.update(projects)
+							.set({ scriptRaw: JSON.stringify(parsedScriptRaw) })
+							.where(eq(projects.id, project.id));
+					}
+				} catch {
+					// Keep regeneration non-blocking even if scriptRaw cannot be rewritten.
+				}
+			});
+
+			return {
+				sceneDescription: rewrittenSceneDescription,
+				shotCount: rewrittenShots.length,
+			};
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
 export const generateImagePrompt = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: {
 			sceneId: string;
 			lane: "start" | "end";
 			currentPrompt?: string;
+			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
-	.handler(async ({ data: { sceneId, lane, currentPrompt } }) => {
-		const { userId, scene, project } = await assertSceneOwner(sceneId);
-		const apiKey = await getUserApiKey(userId);
-		const settings = normalizeProjectSettings(project.settings);
+	.handler(
+		async ({ data: { sceneId, lane, currentPrompt, assetTypeOverride } }) => {
+			const { userId, scene, project } = await assertSceneOwner(sceneId);
+			const apiKey = await getUserApiKey(userId);
+			const settings = normalizeProjectSettings(project.settings);
+			const resolvedAssetType = resolvePromptAssetType({
+				override: assetTypeOverride,
+				text: `${scene.description}\n${currentPrompt ?? ""}`,
+				medium: "image",
+			});
 
-		const systemPrompt = `You are an expert prompt writer for modern text-to-image models.
+			const systemPrompt = `You are an expert prompt writer for modern text-to-image models.
 Given a scene description from a video project, write a concise, high-quality prompt for the ${lane === "start" ? "opening" : "closing"} still frame of this scene.
 
 Write the result as 1 to 4 natural-language sentences, not a labeled template.
@@ -161,45 +414,91 @@ Rules:
 - Do NOT include meta-instructions like "generate an image of"
 ${settings?.intake?.audience ? `- Target audience: ${settings.intake.audience}` : ""}
 ${settings?.intake?.viewerAction ? `- Video goal: ${settings.intake.viewerAction}` : ""}
+${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
 
 Return ONLY the final prompt, nothing else.`;
 
-		const userMessage = currentPrompt
-			? `Scene description: ${scene.description}\n\nCurrent prompt (improve this): ${currentPrompt}`
-			: `Scene description: ${scene.description}`;
+			const userMessage = currentPrompt
+				? `Scene description: ${scene.description}\n\nCurrent prompt (improve this): ${currentPrompt}`
+				: `Scene description: ${scene.description}`;
 
-		const replicate = new Replicate({ auth: apiKey });
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+			const replicate = new Replicate({ auth: apiKey });
+			const projectContext = [
+				settings?.intake?.concept
+					? `Project concept: ${settings.intake.concept}`
+					: null,
+				settings?.intake?.style?.length
+					? `Visual style: ${settings.intake.style.join(", ")}`
+					: null,
+				settings?.intake?.mood?.length
+					? `Mood: ${settings.intake.mood.join(", ")}`
+					: null,
+				settings?.intake?.audience
+					? `Target audience: ${settings.intake.audience}`
+					: null,
+			]
+				.filter(Boolean)
+				.join("\n");
+			const sceneVisualBrief = await buildSceneVisualBrief({
+				replicate,
+				medium: "image",
+				projectName: project.name,
+				sceneTitle: scene.title,
+				sceneDescription: scene.description,
+				projectContext,
+				shotContext: `${lane === "start" ? "Opening" : "Closing"} frame for this scene`,
+			});
+			const controller = new AbortController();
+			const timeout = setTimeout(
+				() => controller.abort(),
+				REPLICATE_TIMEOUT_MS,
+			);
 
-		try {
-			const chunks: string[] = [];
-			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
-				input: {
-					prompt: `${systemPrompt}\n\n${userMessage}`,
-					max_tokens: 1024,
-					temperature: 0.8,
-				},
-				signal: controller.signal,
-			})) {
-				chunks.push(String(event));
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream("openai/gpt-4o-mini", {
+					input: {
+						prompt: `${systemPrompt}\n\n${userMessage}`,
+						system_prompt:
+							"You are an expert prompt writer for modern text-to-image models.",
+						max_completion_tokens: 1024,
+						temperature: 0.8,
+					},
+					signal: controller.signal,
+				})) {
+					chunks.push(String(event));
+				}
+				const generatedPrompt = chunks.join("").trim();
+				if (!generatedPrompt)
+					throw new Error("AI returned an empty response — please try again");
+				const finalPrompt = await critiqueAndRewritePrompt({
+					replicate,
+					medium: "image",
+					assetType: resolvedAssetType,
+					prompt: generatedPrompt,
+					context: [
+						sceneVisualBrief
+							? `Scene visual brief:\n${sceneVisualBrief}`
+							: null,
+						`Scene description: ${scene.description}`,
+					]
+						.filter(Boolean)
+						.join("\n\n"),
+				});
+
+				// Persist the generated prompt to the scene
+				const col =
+					lane === "start"
+						? { startFramePrompt: finalPrompt }
+						: { endFramePrompt: finalPrompt };
+				await db.update(scenes).set(col).where(eq(scenes.id, scene.id));
+
+				return { prompt: finalPrompt, assetType: resolvedAssetType };
+			} finally {
+				clearTimeout(timeout);
 			}
-			const generatedPrompt = chunks.join("").trim();
-			if (!generatedPrompt)
-				throw new Error("AI returned an empty response — please try again");
-
-			// Persist the generated prompt to the scene
-			const col =
-				lane === "start"
-					? { startFramePrompt: generatedPrompt }
-					: { endFramePrompt: generatedPrompt };
-			await db.update(scenes).set(col).where(eq(scenes.id, scene.id));
-
-			return { prompt: generatedPrompt };
-		} finally {
-			clearTimeout(timeout);
-		}
-	});
+		},
+	);
 
 export const generateSceneImages = createServerFn({ method: "POST" })
 	.inputValidator(

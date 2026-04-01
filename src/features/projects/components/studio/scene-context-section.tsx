@@ -16,16 +16,22 @@ import {
 import type { Scene } from "@/db/schema";
 import { getPracticalityWarnings } from "../../lib/practicality-warnings";
 import type { ScenePlanEntry } from "../../project-types";
-import { regenerateSceneDescription, updateScene } from "../../scene-actions";
+import {
+	regenerateSceneAndShots,
+	regenerateSceneDescription,
+	updateScene,
+} from "../../scene-actions";
 import { SceneRefinePanel } from "../scene-refine-panel";
 
 export function SceneContextSection({
 	scene,
 	plan,
+	shotCount = 0,
 	onDescriptionSaved,
 }: {
 	scene: Scene;
 	plan?: ScenePlanEntry;
+	shotCount?: number;
 	onDescriptionSaved?: (newDescription: string) => void;
 }) {
 	const router = useRouter();
@@ -39,6 +45,8 @@ export function SceneContextSection({
 	const [isRefineOpen, setIsRefineOpen] = useState(false);
 	const [refineInstructions, setRefineInstructions] = useState("");
 	const [isRegenerating, setIsRegenerating] = useState(false);
+	const [isRegeneratingSceneAndShots, setIsRegeneratingSceneAndShots] =
+		useState(false);
 
 	const practicalityWarnings = getPracticalityWarnings(description);
 
@@ -102,6 +110,41 @@ export function SceneContextSection({
 			);
 		} finally {
 			setIsRegenerating(false);
+		}
+	}
+
+	async function handleRegenerateSceneAndShots() {
+		if (
+			!refineInstructions.trim() ||
+			isRegenerating ||
+			isRegeneratingSceneAndShots
+		) {
+			return;
+		}
+
+		setIsRegeneratingSceneAndShots(true);
+		setError(null);
+		try {
+			const result = await regenerateSceneAndShots({
+				data: {
+					sceneId: scene.id,
+					instructions: refineInstructions,
+				},
+			});
+			setDescription(result.sceneDescription);
+			setIsDirty(false);
+			setRefineInstructions("");
+			setIsRefineOpen(false);
+			await onDescriptionSaved?.(result.sceneDescription);
+			await router.invalidate();
+		} catch (err) {
+			setError(
+				err instanceof Error
+					? err.message
+					: "Failed to regenerate scene and shots",
+			);
+		} finally {
+			setIsRegeneratingSceneAndShots(false);
 		}
 	}
 
@@ -181,6 +224,10 @@ export function SceneContextSection({
 								setRefineInstructions={setRefineInstructions}
 								isRegenerating={isRegenerating}
 								onRegenerate={handleRegenerate}
+								onRegenerateSceneAndShots={
+									shotCount > 0 ? handleRegenerateSceneAndShots : undefined
+								}
+								isRegeneratingSceneAndShots={isRegeneratingSceneAndShots}
 								onClose={() => {
 									setIsRefineOpen(false);
 									setRefineInstructions("");

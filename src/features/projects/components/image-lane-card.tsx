@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { SceneAssetSummary } from "../project-types";
 import { ImageLightbox } from "./image-lightbox";
+import { CopyPromptButton } from "./studio/copy-prompt-button";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -216,6 +217,7 @@ export function ImageLaneCard({
 					)}
 				</div>
 				<div className="flex items-center gap-1.5">
+					<CopyPromptButton value={prompt} />
 					{/* Regenerate same prompt */}
 					{hasAnyDone && (
 						<Tooltip>

@@ -1,6 +1,7 @@
 import {
 	Check,
 	Clock,
+	Download,
 	ImageIcon,
 	Maximize2,
 	RefreshCw,
@@ -9,6 +10,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { downloadRemoteAsset } from "../../download-client";
 import type { SceneAssetSummary, TriggerRunSummary } from "../../project-types";
 import { ImageLightbox } from "../image-lightbox";
 import { GalleryImageCard } from "./gallery-image-card";
@@ -136,13 +138,13 @@ export function StudioGallery({
 					<p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-3">
 						Images
 					</p>
-					<div className="grid grid-cols-2 gap-3">
+					<div className="columns-3 gap-3">
 						{/* Optimistic pending skeletons shown immediately when generating */}
 						{Array.from({ length: pendingCount }).map((_, i) => (
 							<div
 								// biome-ignore lint/suspicious/noArrayIndexKey: optimistic skeletons have no stable identity; index is the only key available
 								key={`pending-${i}`}
-								className="relative rounded-lg overflow-hidden border border-border bg-card aspect-video"
+								className="relative mb-3 break-inside-avoid overflow-hidden rounded-lg border border-border bg-card aspect-video"
 							>
 								<div className="absolute inset-0 bg-gradient-to-r from-card via-muted-foreground/15 to-card animate-pulse" />
 								<div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -246,6 +248,23 @@ export function StudioGallery({
 									<RefreshCw size={12} />
 									Regenerate
 								</Button>
+								{selectedAsset.status === "done" && selectedAsset.url && (
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => {
+											if (!selectedAsset.url) return;
+											void downloadRemoteAsset({
+												url: selectedAsset.url,
+												filenameBase: `image-${selectedAsset.id}`,
+												fallbackExtension: "jpg",
+											});
+										}}
+										className="gap-1.5"
+									>
+										<Download size={12} />
+									</Button>
+								)}
 								{selectedAsset.status === "done" && selectedAsset.url && (
 									<Button
 										size="sm"
