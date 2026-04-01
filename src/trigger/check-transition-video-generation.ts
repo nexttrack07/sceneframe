@@ -1,10 +1,11 @@
 import { logger, task, wait } from "@trigger.dev/sdk";
 import { and, eq, isNull } from "drizzle-orm";
-import Replicate from "replicate";
 import { db } from "@/db/index";
-import { transitionVideos, users } from "@/db/schema";
-import { summarizeGenerationOutput } from "@/features/projects/image-generation-helpers.server";
-import { decryptUserApiKey } from "@/lib/encryption.server";
+import { transitionVideos } from "@/db/schema";
+import {
+	getVideoGenerationStatus,
+	getVideoProviderApiKey,
+} from "@/features/projects/video-generation-provider.server";
 import { uploadFromUrl } from "@/lib/r2.server";
 import { ERROR_MESSAGES, type MediaStage, VIDEO_TIMEOUTS } from "./types";
 
@@ -32,7 +33,9 @@ async function loadActiveTransitionVideo(
 
 	if (
 		!tv ||
-		tv.status !== "generating" ||
+		(tv.status !== "queued" &&
+			tv.status !== "generating" &&
+			tv.status !== "finalizing") ||
 		!tv.generationId ||
 		tv.generationId !== generationId
 	) {
@@ -67,16 +70,10 @@ export const checkTransitionVideoGeneration = task({
 			};
 		}
 
-		// Load user credentials once
-		const user = await db.query.users.findFirst({
-			where: eq(users.id, payload.userId),
+		const providerApiKey = await getVideoProviderApiKey({
+			userId: payload.userId,
+			modelId: initialTv.model,
 		});
-		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
-			throw new Error("No Replicate API key found for user");
-		}
-
-		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
-		const replicate = new Replicate({ auth: apiKey });
 
 		let stage: MediaStage = "running";
 		const logContext = {
@@ -92,21 +89,39 @@ export const checkTransitionVideoGeneration = task({
 
 		// Poll loop with wait.for() checkpoints
 		while (true) {
-			const prediction = await replicate.predictions.get(payload.generationId);
+			const prediction = await getVideoGenerationStatus({
+				modelId: initialTv.model,
+				requestId: payload.generationId,
+				providerApiKey,
+				mode: "transition",
+			});
 
-			if (prediction.status === "succeeded") {
+			if (prediction.stage === "queued") {
+				await db
+					.update(transitionVideos)
+					.set({ status: "queued", errorMessage: null })
+					.where(eq(transitionVideos.id, payload.transitionVideoId));
+			}
+
+			if (prediction.stage === "generating") {
+				await db
+					.update(transitionVideos)
+					.set({ status: "generating", errorMessage: null })
+					.where(eq(transitionVideos.id, payload.transitionVideoId));
+			}
+
+			if (prediction.stage === "done") {
 				stage = "finalizing";
+				await db
+					.update(transitionVideos)
+					.set({ status: "finalizing", errorMessage: null })
+					.where(eq(transitionVideos.id, payload.transitionVideoId));
 				logger.info("Provider succeeded, finalizing upload", {
 					...logContext,
 					stage,
 				});
-				const output = prediction.output;
-				const raw = output as string | { toString(): string };
-				const str = typeof raw === "string" ? raw : String(raw);
-				if (!str.startsWith("http")) {
-					throw new Error(
-						`Unexpected output format from Kling: ${summarizeGenerationOutput(output)}`,
-					);
+				if (!prediction.outputUrl?.startsWith("http")) {
+					throw new Error("Unexpected output format from video provider");
 				}
 
 				const freshTv = await loadActiveTransitionVideo(
@@ -125,7 +140,11 @@ export const checkTransitionVideoGeneration = task({
 				}
 
 				const storageKey = `projects/${freshTv.sceneId}/transitions/${payload.transitionVideoId}.mp4`;
-				const storedUrl = await uploadFromUrl(str, storageKey, "video/mp4");
+				const storedUrl = await uploadFromUrl(
+					prediction.outputUrl,
+					storageKey,
+					"video/mp4",
+				);
 
 				await db
 					.update(transitionVideos)
@@ -148,15 +167,10 @@ export const checkTransitionVideoGeneration = task({
 				};
 			}
 
-			if (prediction.status === "failed" || prediction.status === "canceled") {
+			if (prediction.stage === "error") {
 				stage = "failed";
-				const rawErr = prediction.error;
-				const errorMessage = rawErr
-					? typeof rawErr === "string"
-						? rawErr
-						: (((rawErr as Record<string, unknown>).detail as string) ??
-							JSON.stringify(rawErr))
-					: ERROR_MESSAGES.GENERATION_FAILED;
+				const errorMessage =
+					prediction.errorMessage ?? ERROR_MESSAGES.GENERATION_FAILED;
 
 				logger.error("Provider returned failure", {
 					...logContext,

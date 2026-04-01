@@ -5,6 +5,12 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type {
+	PromptAssetType,
+	PromptAssetTypeSelection,
+} from "../../project-types";
+import { getPromptAssetTypeLabel } from "../../prompt-strategy";
+import { CopyPromptButton } from "./copy-prompt-button";
 
 export function PromptEditor({
 	prompt,
@@ -14,6 +20,9 @@ export function PromptEditor({
 	isGeneratingPrompt,
 	onEnhancePrompt,
 	isEnhancingPrompt,
+	detectedAssetType,
+	promptTypeSelection,
+	onPromptTypeSelectionChange,
 }: {
 	prompt: string;
 	onPromptChange: (value: string) => void;
@@ -22,6 +31,9 @@ export function PromptEditor({
 	isGeneratingPrompt?: boolean;
 	onEnhancePrompt?: () => void;
 	isEnhancingPrompt?: boolean;
+	detectedAssetType?: PromptAssetType | null;
+	promptTypeSelection?: PromptAssetTypeSelection;
+	onPromptTypeSelectionChange?: (value: PromptAssetTypeSelection) => void;
 }) {
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const textareaId = useId();
@@ -35,6 +47,7 @@ export function PromptEditor({
 					Image Prompt
 				</label>
 				<div className="flex items-center gap-1">
+					<CopyPromptButton value={prompt} />
 					{onEnhancePrompt && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -78,6 +91,37 @@ export function PromptEditor({
 						</Tooltip>
 					)}
 				</div>
+			</div>
+			<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-2">
+					<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+						Prompt type
+					</span>
+					{detectedAssetType && (
+						<span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">
+							Detected: {getPromptAssetTypeLabel(detectedAssetType)}
+						</span>
+					)}
+				</div>
+				{onPromptTypeSelectionChange && (
+					<select
+						value={promptTypeSelection ?? "auto"}
+						onChange={(e) =>
+							onPromptTypeSelectionChange(
+								e.target.value as PromptAssetTypeSelection,
+							)
+						}
+						className="h-7 rounded-md border border-border bg-background px-2 text-[10px] font-medium text-foreground"
+					>
+						<option value="auto">Auto detect</option>
+						<option value="cinematic">Cinematic</option>
+						<option value="documentary">Documentary</option>
+						<option value="infographic">Infographic</option>
+						<option value="text_graphic">Text Graphic</option>
+						<option value="talking_head">Talking Head</option>
+						<option value="transition">Transition</option>
+					</select>
+				)}
 			</div>
 			<textarea
 				id={textareaId}

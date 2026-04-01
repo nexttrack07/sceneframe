@@ -97,7 +97,7 @@ export function ChatBubble({ message }: { message: Message }) {
 								className="bg-card border border-primary/30 rounded-lg p-3 shadow-sm"
 							>
 								<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
-									Scene {i + 1}
+									Scene {scene.sceneNumber ?? i + 1}
 									{scene.title ? `: ${scene.title}` : ""}
 								</p>
 								{(scene.beat || scene.durationSec || scene.hookRole) && (

@@ -1,11 +1,13 @@
 import { task } from "@trigger.dev/sdk";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, users } from "@/db/schema";
+import { assets } from "@/db/schema";
 import type { VideoSettingValue } from "@/features/projects/project-types";
+import {
+	getVideoProviderApiKey,
+	submitVideoGeneration,
+} from "@/features/projects/video-generation-provider.server";
 import { buildShotVideoInput } from "@/features/projects/video-models";
-import { decryptUserApiKey } from "@/lib/encryption.server";
 import { checkShotVideoGeneration } from "./check-shot-video-generation";
 
 export interface StartShotVideoGenerationPayload {
@@ -32,7 +34,12 @@ async function loadActiveVideoAsset(assetId: string) {
 		),
 	});
 
-	if (!asset || asset.status !== "generating") {
+	if (
+		!asset ||
+		(asset.status !== "queued" &&
+			asset.status !== "generating" &&
+			asset.status !== "finalizing")
+	) {
 		return null;
 	}
 
@@ -77,8 +84,11 @@ export const startShotVideoGeneration = task({
 		}
 
 		// If specific reference image IDs are provided, use them in the given order.
-		const [user, fetchedReferenceImages] = await Promise.all([
-			db.query.users.findFirst({ where: eq(users.id, payload.userId) }),
+		const [providerApiKey, fetchedReferenceImages] = await Promise.all([
+			getVideoProviderApiKey({
+				userId: payload.userId,
+				modelId: payload.modelId,
+			}),
 			payload.referenceImageIds?.length
 				? db.query.assets.findMany({
 						where: and(
@@ -91,9 +101,6 @@ export const startShotVideoGeneration = task({
 				: Promise.resolve([]),
 		]);
 
-		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
-			throw new Error("No Replicate API key found for user");
-		}
 		const orderedReferenceImages = payload.referenceImageIds?.length
 			? payload.referenceImageIds
 					.map(
@@ -111,10 +118,10 @@ export const startShotVideoGeneration = task({
 			.map((image) => image.url)
 			.filter((url): url is string => Boolean(url));
 
-		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
-		const replicate = new Replicate({ auth: apiKey });
-		const prediction = await replicate.predictions.create({
-			model: payload.modelId as `${string}/${string}`,
+		const prediction = await submitVideoGeneration({
+			modelId: payload.modelId,
+			providerApiKey,
+			mode: "shot",
 			input: buildShotVideoInput({
 				modelId: payload.modelId,
 				prompt: payload.prompt,
@@ -126,11 +133,18 @@ export const startShotVideoGeneration = task({
 
 		await db
 			.update(assets)
-			.set({ generationId: prediction.id })
+			.set({
+				generationId: prediction.requestId,
+				status: prediction.initialStatus,
+			})
 			.where(eq(assets.id, payload.assetId));
 
+		console.info(
+			`[ShotVideoTrigger] started asset=${payload.assetId} model=${payload.modelId} generation=${prediction.requestId} status=${prediction.initialStatus}${prediction.queuePosition ? ` queue=${prediction.queuePosition}` : ""}`,
+		);
+
 		const freshAsset = await loadActiveVideoAsset(payload.assetId);
-		if (!freshAsset || freshAsset.generationId !== prediction.id) {
+		if (!freshAsset || freshAsset.generationId !== prediction.requestId) {
 			return {
 				status: "skipped" as const,
 				reason: "stale-or-missing" as const,
@@ -141,7 +155,7 @@ export const startShotVideoGeneration = task({
 			{
 				assetId: payload.assetId,
 				userId: payload.userId,
-				generationId: prediction.id,
+				generationId: prediction.requestId,
 			},
 			{ delay: "30s" },
 		);
@@ -151,7 +165,10 @@ export const startShotVideoGeneration = task({
 			.set({ jobId: handle.id })
 			.where(eq(assets.id, payload.assetId));
 
-		return { status: "started" as const, predictionId: prediction.id };
+		return {
+			status: "started" as const,
+			predictionId: prediction.requestId,
+		};
 	},
 
 	onFailure: async ({ payload, error }) => {

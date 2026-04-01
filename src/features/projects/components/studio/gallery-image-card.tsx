@@ -1,6 +1,20 @@
-import { Info, Loader2, Maximize2, Pencil, Trash2 } from "lucide-react";
+import {
+	Download,
+	Info,
+	Loader2,
+	Maximize2,
+	Pencil,
+	Trash2,
+} from "lucide-react";
+import { downloadRemoteAsset } from "../../download-client";
 import type { SceneAssetSummary, TriggerRunSummary } from "../../project-types";
 import { GeneratingTimer } from "./generating-timer";
+
+function getImageAspectRatioLabel(asset: SceneAssetSummary) {
+	const raw = asset.modelSettings?.aspect_ratio;
+	if (typeof raw === "string" && raw.trim()) return raw;
+	return null;
+}
 
 export function GalleryImageCard({
 	asset,
@@ -27,6 +41,7 @@ export function GalleryImageCard({
 }) {
 	const isDeleting = deletingAssetId === asset.id;
 	const isClickable = asset.status === "done" && !!asset.url;
+	const aspectRatioLabel = getImageAspectRatioLabel(asset);
 	const loadingLabel =
 		runStatus?.status === "completed"
 			? "Finalizing"
@@ -44,7 +59,7 @@ export function GalleryImageCard({
 		<div
 			role={isClickable ? "button" : undefined}
 			tabIndex={isClickable ? 0 : undefined}
-			className={`relative rounded-lg overflow-hidden bg-muted group ${
+			className={`relative mb-3 break-inside-avoid overflow-hidden rounded-lg bg-muted group ${
 				isClickable ? "cursor-pointer" : "cursor-default"
 			} ${asset.isSelected ? "ring-2 ring-primary ring-offset-2" : ""}`}
 			onClick={isClickable ? onExpand : undefined}
@@ -58,11 +73,7 @@ export function GalleryImageCard({
 		>
 			{/* Image or placeholder */}
 			{asset.url ? (
-				<img
-					src={asset.url}
-					alt=""
-					className="w-full aspect-video object-cover block"
-				/>
+				<img src={asset.url} alt="" className="block h-auto w-full" />
 			) : asset.status === "error" ? (
 				<div className="w-full aspect-video bg-destructive/10" />
 			) : (
@@ -112,6 +123,22 @@ export function GalleryImageCard({
 							<Pencil size={14} />
 						</button>
 					)}
+					<button
+						type="button"
+						onClick={(e) => {
+							e.stopPropagation();
+							if (!asset.url) return;
+							void downloadRemoteAsset({
+								url: asset.url,
+								filenameBase: `image-${asset.id}`,
+								fallbackExtension: "jpg",
+							});
+						}}
+						className="bg-white/90 text-black p-1.5 rounded-md hover:bg-white transition-colors"
+						title="Download image"
+					>
+						<Download size={14} />
+					</button>
 					<button
 						type="button"
 						onClick={(e) => {
@@ -166,6 +193,13 @@ export function GalleryImageCard({
 					</span>
 				) : null}
 			</div>
+			{aspectRatioLabel && asset.status === "done" && (
+				<div className="absolute top-2 left-2">
+					<span className="rounded-md bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
+						{aspectRatioLabel}
+					</span>
+				</div>
+			)}
 
 			{/* Error message */}
 			{asset.status === "error" && asset.errorMessage && (

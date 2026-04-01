@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
 	FEATURE_ALIGNMENT_CONTROL,
 	FEATURE_COLOR_CONTROL,
@@ -18,34 +18,35 @@ import {
 	FEATURE_TEXT_STROKE_WIDTH_CONTROL,
 	FEATURE_TEXT_VALUE_CONTROL,
 	FEATURE_VISUAL_FADE_CONTROL,
-} from '../flags';
-import {TextItem} from '../items/text/text-item-type';
-import {ColorInspector} from './color-inspector';
-import {InspectorLabel} from './components/inspector-label';
+} from "../flags";
+import type { TextItem } from "../items/text/text-item-type";
+import { ColorInspector } from "./color-inspector";
+import { InspectorLabel } from "./components/inspector-label";
 import {
 	CollapsableInspectorSection,
 	InspectorDivider,
-} from './components/inspector-section';
-import {AlignmentControls} from './controls/alignment-controls';
-import {DimensionsControls} from './controls/dimensions-controls';
-import {FadeControls} from './controls/fade-controls';
-import {FontFamilyControl} from './controls/font-family-controls/font-family-controls';
-import {FontSizeControls} from './controls/font-size-controls';
-import {FontStyleControls} from './controls/font-style-controls/font-style-controls';
-import {LetterSpacingControls} from './controls/letter-spacing-controls';
-import {LineHeightControls} from './controls/line-height-controls';
-import {OpacityControls} from './controls/opacity-controls';
-import {PositionControl} from './controls/position-control';
-import {RotationControl} from './controls/rotation-controls';
-import {StrokeWidthControls} from './controls/stroke-width-controls';
-import {TextAlignmentControls} from './controls/text-alignment-controls';
-import {TextBackgroundControls} from './controls/text-background-controls/text-background-controls';
-import {TextDirectionControls} from './controls/text-direction-controls';
-import {TextValueControls} from './controls/text-value-controls/text-value-controls';
+} from "./components/inspector-section";
+import { AlignmentControls } from "./controls/alignment-controls";
+import { DimensionsControls } from "./controls/dimensions-controls";
+import { FadeControls } from "./controls/fade-controls";
+import { FontFamilyControl } from "./controls/font-family-controls/font-family-controls";
+import { FontSizeControls } from "./controls/font-size-controls";
+import { FontStyleControls } from "./controls/font-style-controls/font-style-controls";
+import { LetterSpacingControls } from "./controls/letter-spacing-controls";
+import { LineHeightControls } from "./controls/line-height-controls";
+import { OpacityControls } from "./controls/opacity-controls";
+import { PositionControl } from "./controls/position-control";
+import { RotationControl } from "./controls/rotation-controls";
+import { StrokeWidthControls } from "./controls/stroke-width-controls";
+import { TextAlignmentControls } from "./controls/text-alignment-controls";
+import { TextAnimationControls } from "./controls/text-animation-controls";
+import { TextBackgroundControls } from "./controls/text-background-controls/text-background-controls";
+import { TextDirectionControls } from "./controls/text-direction-controls";
+import { TextValueControls } from "./controls/text-value-controls/text-value-controls";
 
 const TextInspectorUnmemoized: React.FC<{
 	item: TextItem;
-}> = ({item}) => {
+}> = ({ item }) => {
 	return (
 		<div>
 			<CollapsableInspectorSection
@@ -113,6 +114,24 @@ const TextInspectorUnmemoized: React.FC<{
 						/>
 					)}
 				</div>
+			</CollapsableInspectorSection>
+			<InspectorDivider />
+			<CollapsableInspectorSection
+				summary={<InspectorLabel>Animation</InspectorLabel>}
+				id={`animation-${item.id}`}
+				defaultOpen
+			>
+				<TextAnimationControls
+					itemId={item.id}
+					enterAnimation={item.enterAnimation ?? "fade"}
+					enterAnimationDurationInSeconds={
+						item.enterAnimationDurationInSeconds ?? 0.4
+					}
+					exitAnimation={item.exitAnimation ?? "fade"}
+					exitAnimationDurationInSeconds={
+						item.exitAnimationDurationInSeconds ?? 0.4
+					}
+				/>
 			</CollapsableInspectorSection>
 			<InspectorDivider />
 			<CollapsableInspectorSection

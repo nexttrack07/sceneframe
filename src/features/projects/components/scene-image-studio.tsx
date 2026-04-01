@@ -2,9 +2,25 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import type { Scene } from "@/db/schema";
+import {
+	beginGenerationToast,
+	resolveGenerationToast,
+	updateGenerationToast,
+} from "../generation-toast";
+import {
+	readImageSettings,
+	writeImageSettings,
+} from "../image-settings-storage";
+import {
+	applyProjectAspectRatioToImageDefaults,
+	getPreferredAspectRatioFromImageDefaults,
+	persistProjectAspectRatio,
+} from "../project-aspect-ratio";
 import { normalizeImageDefaults } from "../project-normalize";
 import type {
 	ImageDefaults,
+	PromptAssetType,
+	PromptAssetTypeSelection,
 	SceneAssetSummary,
 	ScenePlanEntry,
 	TriggerRunSummary,
@@ -27,43 +43,6 @@ function makeDefaultPrompt(description: string, lane: "start" | "end"): string {
 		return `Start frame: ${description}\nFocus on the opening moment of this scene.`;
 	}
 	return `End frame: ${description}\nFocus on the closing moment of this scene.`;
-}
-
-function formatImageFailureToast(
-	errorMessage: string | null,
-	failedCount: number,
-) {
-	const fallback = `${failedCount} image${failedCount !== 1 ? "s" : ""} failed. Try again.`;
-	if (!errorMessage) return fallback;
-
-	const message = errorMessage.trim();
-	const lower = message.toLowerCase();
-
-	if (
-		lower.includes("high demand") ||
-		lower.includes("service is currently unavailable") ||
-		lower.includes("temporarily unavailable") ||
-		lower.includes("e003")
-	) {
-		return `Image generation failed because the model provider is under heavy load. Wait a moment and try again.`;
-	}
-
-	if (
-		lower.includes("api key") ||
-		lower.includes("authentication") ||
-		lower.includes("unauthorized") ||
-		lower.includes("forbidden")
-	) {
-		return `Image generation failed because your Replicate connection is missing or invalid. Reconnect your API key and try again.`;
-	}
-
-	if (lower.includes("timeout") || lower.includes("timed out")) {
-		return `Image generation timed out before the provider returned a result. Try again, or use a simpler prompt/settings combination.`;
-	}
-
-	const shortened =
-		message.length > 180 ? `${message.slice(0, 177)}...` : message;
-	return `Image generation failed: ${shortened} Try again or adjust the prompt/settings.`;
 }
 
 export function SceneImageStudio({
@@ -111,12 +90,20 @@ export function SceneImageStudio({
 		return sorted[0]?.modelSettings ?? null;
 	}, [sceneAssets]);
 
-	const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(
-		normalizeImageDefaults(lastAssetSettings),
-	);
+	const [settingsOverrides, setSettingsOverridesState] =
+		useState<ImageDefaults>(
+			applyProjectAspectRatioToImageDefaults(
+				scene.projectId,
+				readImageSettings() ?? normalizeImageDefaults(lastAssetSettings),
+			),
+		);
 	const [expandedImageId, setExpandedImageId] = useState<string | null>(null);
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+	const [detectedPromptAssetType, setDetectedPromptAssetType] =
+		useState<PromptAssetType | null>(null);
+	const [promptTypeSelection, setPromptTypeSelection] =
+		useState<PromptAssetTypeSelection>("auto");
 	const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(
 		null,
 	);
@@ -126,8 +113,24 @@ export function SceneImageStudio({
 	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
+	const setSettingsOverrides = useCallback(
+		(next: ImageDefaults) => {
+			const explicitAspectRatio =
+				getPreferredAspectRatioFromImageDefaults(next);
+			if (explicitAspectRatio) {
+				persistProjectAspectRatio(scene.projectId, explicitAspectRatio);
+			}
+			setSettingsOverridesState(
+				applyProjectAspectRatioToImageDefaults(scene.projectId, next),
+			);
+		},
+		[scene.projectId],
+	);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
+	const trackedBatchMetaRef = useRef(
+		new Map<string, { title: string; location: string }>(),
+	);
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
@@ -155,10 +158,17 @@ export function SceneImageStudio({
 		setPrompt(initialPrompt);
 		savedPromptRef.current = initialPrompt;
 		setPromptMode("start");
-		setSettingsOverrides(normalizeImageDefaults(lastAssetSettings));
+		setSettingsOverridesState(
+			applyProjectAspectRatioToImageDefaults(
+				scene.projectId,
+				readImageSettings() ?? normalizeImageDefaults(lastAssetSettings),
+			),
+		);
 		setExpandedImageId(null);
 		setIsGenerating(false);
 		setIsGeneratingPrompt(false);
+		setDetectedPromptAssetType(null);
+		setPromptTypeSelection("auto");
 		setIsSelectingAssetId(null);
 		setDeletingAssetId(null);
 		setError(null);
@@ -190,6 +200,57 @@ export function SceneImageStudio({
 			stopPolling();
 		};
 	}, [stopPolling]);
+
+	useEffect(() => {
+		for (const [batchId, meta] of trackedBatchMetaRef.current.entries()) {
+			const batchAssets = sceneAssets.filter(
+				(asset) => asset.batchId === batchId,
+			);
+			if (batchAssets.length === 0) continue;
+
+			const generatingCount = batchAssets.filter(
+				(asset) => asset.status === "generating",
+			).length;
+			const doneCount = batchAssets.filter(
+				(asset) => asset.status === "done",
+			).length;
+			const erroredAssets = batchAssets.filter(
+				(asset) => asset.status === "error",
+			);
+
+			if (generatingCount > 0) {
+				updateGenerationToast(batchId, {
+					status: "Generating",
+					message: meta.location,
+				});
+				continue;
+			}
+
+			if (doneCount > 0 && erroredAssets.length === 0) {
+				resolveGenerationToast(batchId, {
+					status: "Ready",
+					message: `${meta.location} · ${doneCount} image${doneCount === 1 ? "" : "s"}`,
+				});
+				trackedBatchMetaRef.current.delete(batchId);
+				continue;
+			}
+
+			if (erroredAssets.length > 0) {
+				resolveGenerationToast(batchId, {
+					status: doneCount > 0 ? "Partial failure" : "Failed",
+					message:
+						erroredAssets[0]?.errorMessage ??
+						`${meta.location} · ${erroredAssets.length} failed`,
+					error: true,
+				});
+				trackedBatchMetaRef.current.delete(batchId);
+			}
+		}
+	}, [sceneAssets]);
+
+	useEffect(() => {
+		writeImageSettings(settingsOverrides);
+	}, [settingsOverrides]);
 
 	const startPolling = useCallback(
 		(sceneId: string) => {
@@ -226,27 +287,13 @@ export function SceneImageStudio({
 						stopPolling();
 						setRunStatusesByAssetId({});
 						await router.invalidate();
-						if (result.doneCount > 0) {
-							toast(
-								`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
-								result.erroredCount > 0 ? "error" : "success",
-							);
-						} else if (result.erroredCount > 0) {
-							toast(
-								formatImageFailureToast(
-									result.latestErrorMessage,
-									result.erroredCount,
-								),
-								"error",
-							);
-						}
 					}
 				} catch {
 					// Transient error, keep polling
 				}
 			}, 3000);
 		},
-		[router, stopPolling, toast],
+		[router, stopPolling],
 	);
 
 	useEffect(() => {
@@ -317,11 +364,22 @@ export function SceneImageStudio({
 				},
 			});
 			await router.invalidate();
+			const location = `Scene ${sceneIndex + 1} · ${
+				promptMode === "start" ? "Start frame" : "End frame"
+			}`;
+			trackedBatchMetaRef.current.set(result.batchId, {
+				title: "Generating image",
+				location,
+			});
+			beginGenerationToast({
+				id: result.batchId,
+				title: "Generating image",
+				location,
+				medium: "image",
+				status: "Queued",
+				href: `/projects/${scene.projectId}?scene=${scene.id}`,
+			});
 			startPolling(scene.id);
-			toast(
-				`Queued ${result.queuedCount} image${result.queuedCount !== 1 ? "s" : ""}`,
-				"success",
-			);
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate images";
@@ -341,9 +399,11 @@ export function SceneImageStudio({
 					sceneId: scene.id,
 					lane: promptMode,
 					currentPrompt: prompt.trim() || undefined,
+					assetTypeOverride: promptTypeSelection,
 				},
 			});
 			setPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			await router.invalidate();
 			toast("Prompt generated", "success");
 		} catch (err) {
@@ -425,6 +485,9 @@ export function SceneImageStudio({
 					onPromptBlur={handlePromptBlur}
 					onGeneratePrompt={handleGeneratePrompt}
 					isGeneratingPrompt={isGeneratingPrompt}
+					detectedPromptAssetType={detectedPromptAssetType}
+					promptTypeSelection={promptTypeSelection}
+					onPromptTypeSelectionChange={setPromptTypeSelection}
 					settingsOverrides={settingsOverrides}
 					onSettingsChange={setSettingsOverrides}
 					isGenerating={isGenerating}

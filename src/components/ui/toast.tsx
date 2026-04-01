@@ -1,13 +1,8 @@
-import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
-import { createContext, useCallback, useContext, useState } from "react";
+import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { createContext, useContext, useMemo } from "react";
+import { toast as sonnerToast, Toaster } from "sonner";
 
-type ToastVariant = "success" | "error" | "info";
-
-interface Toast {
-	id: string;
-	message: string;
-	variant: ToastVariant;
-}
+export type ToastVariant = "success" | "error" | "info";
 
 interface ToastContextValue {
 	toast: (message: string, variant?: ToastVariant) => void;
@@ -21,66 +16,56 @@ export function useToast() {
 	return ctx;
 }
 
-const ICON_MAP = {
-	success: CheckCircle2,
-	error: AlertCircle,
-	info: Info,
-} as const;
+function dispatchToast(message: string, variant: ToastVariant = "info") {
+	const baseOptions = {
+		description: undefined,
+		duration: variant === "error" ? 6000 : 3000,
+	};
 
-const ICON_COLOR_MAP = {
-	success: "text-blue-600",
-	error: "text-red-500",
-	info: "text-foreground/70",
-} as const;
+	switch (variant) {
+		case "success":
+			sonnerToast.success(message, baseOptions);
+			break;
+		case "error":
+			sonnerToast.error(message, baseOptions);
+			break;
+		default:
+			sonnerToast(message, baseOptions);
+	}
+}
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-	const [toasts, setToasts] = useState<Toast[]>([]);
-
-	const addToast = useCallback(
-		(message: string, variant: ToastVariant = "info") => {
-			const id = crypto.randomUUID();
-			setToasts((prev) => [...prev, { id, message, variant }]);
-			setTimeout(() => {
-				setToasts((prev) => prev.filter((t) => t.id !== id));
-			}, variant === "error" ? 6000 : 3000);
-		},
+	const value = useMemo<ToastContextValue>(
+		() => ({
+			toast: dispatchToast,
+		}),
 		[],
 	);
 
-	const dismiss = useCallback((id: string) => {
-		setToasts((prev) => prev.filter((t) => t.id !== id));
-	}, []);
-
 	return (
-		<ToastContext.Provider value={{ toast: addToast }}>
+		<ToastContext.Provider value={value}>
 			{children}
-			{/* Toast container — bottom right */}
-			{toasts.length > 0 && (
-				<div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-					{toasts.map((t) => {
-						const Icon = ICON_MAP[t.variant];
-						return (
-							<div
-								key={t.id}
-								className="pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-lg border border-border bg-background text-foreground shadow-lg text-sm animate-in slide-in-from-right-5 fade-in duration-200"
-							>
-								<Icon
-									size={15}
-									className={`shrink-0 ${ICON_COLOR_MAP[t.variant]}`}
-								/>
-								<span className="flex-1">{t.message}</span>
-								<button
-									type="button"
-									onClick={() => dismiss(t.id)}
-									className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
-								>
-									<X size={13} />
-								</button>
-							</div>
-						);
-					})}
-				</div>
-			)}
+			<Toaster
+				position="bottom-right"
+				expand
+				closeButton
+				visibleToasts={8}
+				toastOptions={{
+					classNames: {
+						toast:
+							"group rounded-[4px] border border-border/80 bg-background text-foreground shadow-lg",
+						title: "text-sm font-medium",
+						description: "text-xs text-muted-foreground",
+						closeButton:
+							"border-border bg-background text-muted-foreground hover:text-foreground",
+					},
+				}}
+				icons={{
+					success: <CheckCircle2 size={16} className="text-blue-600" />,
+					error: <AlertCircle size={16} className="text-red-500" />,
+					info: <Info size={16} className="text-foreground/70" />,
+				}}
+			/>
 		</ToastContext.Provider>
 	);
 }

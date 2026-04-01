@@ -1,6 +1,6 @@
-import { Film, Image } from "lucide-react";
+import { Film, Image, PanelsTopLeft } from "lucide-react";
 
-export type ShotMediaTab = "images" | "video";
+export type ShotMediaTab = "images" | "video" | "graphics";
 
 export function ShotMediaTabs({
 	activeTab,
@@ -34,6 +34,18 @@ export function ShotMediaTabs({
 			>
 				<Film size={14} />
 				Video
+			</button>
+			<button
+				type="button"
+				onClick={() => onTabChange("graphics")}
+				className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+					activeTab === "graphics"
+						? "bg-background text-foreground shadow-sm"
+						: "text-muted-foreground hover:text-foreground hover:bg-background/50"
+				}`}
+			>
+				<PanelsTopLeft size={14} />
+				Graphics
 			</button>
 		</div>
 	);

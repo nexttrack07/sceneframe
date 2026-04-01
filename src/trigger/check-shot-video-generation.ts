@@ -1,10 +1,11 @@
 import { logger, task, wait } from "@trigger.dev/sdk";
 import { and, eq, isNull } from "drizzle-orm";
-import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, users } from "@/db/schema";
-import { summarizeGenerationOutput } from "@/features/projects/image-generation-helpers.server";
-import { decryptUserApiKey } from "@/lib/encryption.server";
+import { assets } from "@/db/schema";
+import {
+	getVideoGenerationStatus,
+	getVideoProviderApiKey,
+} from "@/features/projects/video-generation-provider.server";
 import { uploadFromUrl } from "@/lib/r2.server";
 import { ERROR_MESSAGES, type MediaStage, VIDEO_TIMEOUTS } from "./types";
 
@@ -31,7 +32,9 @@ async function loadActiveVideoAsset(assetId: string, generationId: string) {
 
 	if (
 		!asset ||
-		asset.status !== "generating" ||
+		(asset.status !== "queued" &&
+			asset.status !== "generating" &&
+			asset.status !== "finalizing") ||
 		!asset.generationId ||
 		asset.generationId !== generationId
 	) {
@@ -66,16 +69,10 @@ export const checkShotVideoGeneration = task({
 			};
 		}
 
-		// Load user credentials once
-		const user = await db.query.users.findFirst({
-			where: eq(users.id, payload.userId),
+		const providerApiKey = await getVideoProviderApiKey({
+			userId: payload.userId,
+			modelId: initialAsset.model ?? "kwaivgi/kling-v3-omni-video",
 		});
-		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
-			throw new Error("No Replicate API key found for user");
-		}
-
-		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
-		const replicate = new Replicate({ auth: apiKey });
 
 		let stage: MediaStage = "running";
 		const logContext = {
@@ -91,22 +88,40 @@ export const checkShotVideoGeneration = task({
 
 		// Poll loop with wait.for() checkpoints
 		while (true) {
-			const prediction = await replicate.predictions.get(payload.generationId);
+			const prediction = await getVideoGenerationStatus({
+				modelId: initialAsset.model ?? "kwaivgi/kling-v3-omni-video",
+				requestId: payload.generationId,
+				providerApiKey,
+				mode: "shot",
+			});
 
-			if (prediction.status === "succeeded") {
+			if (prediction.stage === "queued") {
+				await db
+					.update(assets)
+					.set({ status: "queued", errorMessage: null })
+					.where(eq(assets.id, payload.assetId));
+			}
+
+			if (prediction.stage === "generating") {
+				await db
+					.update(assets)
+					.set({ status: "generating", errorMessage: null })
+					.where(eq(assets.id, payload.assetId));
+			}
+
+			if (prediction.stage === "done") {
 				stage = "finalizing";
+				await db
+					.update(assets)
+					.set({ status: "finalizing", errorMessage: null })
+					.where(eq(assets.id, payload.assetId));
 				logger.info("Provider succeeded, finalizing upload", {
 					...logContext,
 					stage,
 				});
 
-				const output = prediction.output;
-				const raw = output as string | { toString(): string };
-				const str = typeof raw === "string" ? raw : String(raw);
-				if (!str.startsWith("http")) {
-					throw new Error(
-						`Unexpected output format from Kling: ${summarizeGenerationOutput(output)}`,
-					);
+				if (!prediction.outputUrl?.startsWith("http")) {
+					throw new Error("Unexpected output format from video provider");
 				}
 
 				const freshAsset = await loadActiveVideoAsset(
@@ -122,7 +137,11 @@ export const checkShotVideoGeneration = task({
 				}
 
 				const storageKey = `projects/${freshAsset.sceneId}/shots/${freshAsset.shotId}/videos/${payload.assetId}.mp4`;
-				const storedUrl = await uploadFromUrl(str, storageKey, "video/mp4");
+				const storedUrl = await uploadFromUrl(
+					prediction.outputUrl,
+					storageKey,
+					"video/mp4",
+				);
 
 				await db
 					.update(assets)
@@ -139,14 +158,10 @@ export const checkShotVideoGeneration = task({
 				return { status: "done" as const, assetId: payload.assetId };
 			}
 
-			if (prediction.status === "failed" || prediction.status === "canceled") {
+			if (prediction.stage === "error") {
 				stage = "failed";
-				const rawError = prediction.error;
-				const errorMessage = rawError
-					? typeof rawError === "string"
-						? rawError
-						: JSON.stringify(rawError)
-					: ERROR_MESSAGES.GENERATION_FAILED;
+				const errorMessage =
+					prediction.errorMessage ?? ERROR_MESSAGES.GENERATION_FAILED;
 
 				logger.error("Provider returned failure", {
 					...logContext,

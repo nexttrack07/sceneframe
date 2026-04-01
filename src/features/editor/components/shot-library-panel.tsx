@@ -1,17 +1,14 @@
-import {
-	ChevronLeft,
-	ChevronRight,
-	Image,
-	Music,
-	Video,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Image, Music, Video } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Shot } from "@/db/schema";
+import type { Scene, Shot } from "@/db/schema";
 import type {
+	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
+	ShotVideoSummary,
 	TransitionVideoSummary,
 	VoiceoverAssetSummary,
 } from "@/features/projects/project-types";
+import { createEditorAssetLabeler } from "../asset-labels";
 
 // ---------------------------------------------------------------------------
 // Drag payload type
@@ -47,48 +44,46 @@ type TabId = "images" | "videos" | "audio";
 
 function AssetThumbnail({
 	asset,
-	shotIndex,
+	label,
+	filename,
 }: {
-	asset: SceneAssetSummary;
-	shotIndex?: number;
+	asset: SceneAssetSummary & { url: string };
+	label: string;
+	filename: string;
 }) {
-	const [showPrompt, setShowPrompt] = useState(false);
-
 	const payload: DragPayload = {
 		type: "image",
 		assetId: `asset-img-${asset.id}`,
-		url: asset.url!,
-		filename: `image-${asset.id}.jpg`,
+		url: asset.url,
+		filename,
 	};
 
 	return (
-		<div
+		<button
+			type="button"
 			className="relative group cursor-grab active:cursor-grabbing"
 			draggable
 			onDragStart={(e) => startDrag(e, payload)}
-			onMouseEnter={() => setShowPrompt(true)}
-			onMouseLeave={() => setShowPrompt(false)}
+			aria-label={label}
 		>
 			<img
-				src={asset.url!}
+				src={asset.url}
 				alt="Shot asset"
 				className="w-full aspect-video object-cover rounded-md border border-zinc-700 hover:ring-2 ring-blue-500 transition-all"
 			/>
-			{shotIndex !== undefined && (
-				<div className="absolute top-1 left-1 bg-black/70 rounded px-1.5 py-0.5">
-					<span className="text-[9px] text-zinc-300 font-medium">
-						Shot {shotIndex + 1}
-					</span>
-				</div>
-			)}
-			{showPrompt && asset.prompt && (
-				<div className="absolute inset-0 bg-black/70 rounded-md flex items-end p-1 z-10">
+			{asset.prompt && (
+				<div className="absolute inset-0 hidden group-hover:flex bg-black/70 rounded-md items-end p-1 z-10">
 					<p className="text-[9px] text-zinc-200 line-clamp-3 leading-tight">
 						{asset.prompt}
 					</p>
 				</div>
 			)}
-		</div>
+			<div className="mt-1">
+				<p className="text-[10px] text-zinc-300 leading-tight line-clamp-2">
+					{label}
+				</p>
+			</div>
+		</button>
 	);
 }
 
@@ -98,43 +93,45 @@ function AssetThumbnail({
 
 function TransitionThumbnail({
 	tv,
-	shotIndex,
+	label,
+	filename,
 }: {
-	tv: TransitionVideoSummary;
-	shotIndex?: number;
+	tv: { id: string; url: string };
+	label: string;
+	filename: string;
 }) {
 	const payload: DragPayload = {
 		type: "video",
 		assetId: `asset-tv-${tv.id}`,
-		url: tv.url!,
-		filename: `clip-${tv.id}.mp4`,
+		url: tv.url,
+		filename,
 	};
 
 	return (
-		<div
+		<button
+			type="button"
 			className="relative cursor-grab active:cursor-grabbing"
 			draggable
 			onDragStart={(e) => startDrag(e, payload)}
+			aria-label={label}
 		>
 			<video
-				src={tv.url!}
+				src={tv.url}
 				className="w-full aspect-video object-cover rounded-md border border-zinc-700 hover:ring-2 ring-blue-500 transition-all"
 				muted
 			/>
 			<div className="absolute bottom-1 left-1 flex items-center gap-0.5 bg-black/70 rounded px-1 py-0.5">
 				<Video size={8} className="text-zinc-300" />
 				<span className="text-[8px] text-zinc-300 uppercase tracking-wide">
-					Clip
+					Video
 				</span>
 			</div>
-			{shotIndex !== undefined && (
-				<div className="absolute top-1 left-1 bg-black/70 rounded px-1.5 py-0.5">
-					<span className="text-[9px] text-zinc-300 font-medium">
-						Shot {shotIndex + 1}
-					</span>
-				</div>
-			)}
-		</div>
+			<div className="mt-1">
+				<p className="text-[10px] text-zinc-300 leading-tight line-clamp-2">
+					{label}
+				</p>
+			</div>
+		</button>
 	);
 }
 
@@ -142,35 +139,45 @@ function TransitionThumbnail({
 // VoiceoverItem — audio draggable
 // ---------------------------------------------------------------------------
 
-function VoiceoverItem({ vo }: { vo: VoiceoverAssetSummary }) {
-	const durationLabel = vo.durationMs
-		? `${(vo.durationMs / 1000).toFixed(1)}s`
+function AudioAssetItem({
+	audio,
+	label,
+	filename,
+}: {
+	audio: (VoiceoverAssetSummary | BackgroundMusicAssetSummary) & {
+		url: string;
+	};
+	label: string;
+	filename: string;
+}) {
+	const durationLabel = audio.durationMs
+		? `${(audio.durationMs / 1000).toFixed(1)}s`
 		: null;
 
 	const payload: DragPayload = {
 		type: "audio",
-		assetId: `asset-vo-${vo.id}`,
-		url: vo.url!,
-		durationMs: vo.durationMs ?? undefined,
-		filename: `voiceover-${vo.id}.mp3`,
+		assetId: `asset-audio-${audio.id}`,
+		url: audio.url,
+		durationMs: audio.durationMs ?? undefined,
+		filename,
 	};
 
 	return (
-		<div
+		<button
+			type="button"
 			className="flex items-center gap-2 p-2 rounded-md bg-zinc-800 border border-zinc-700 hover:ring-2 ring-blue-500 cursor-grab active:cursor-grabbing transition-all"
 			draggable
 			onDragStart={(e) => startDrag(e, payload)}
+			aria-label={label}
 		>
 			<Music size={12} className="text-zinc-400 flex-shrink-0" />
-			<span className="text-[10px] text-zinc-300 truncate flex-1">
-				Voiceover
-			</span>
+			<span className="text-[10px] text-zinc-300 truncate flex-1">{label}</span>
 			{durationLabel && (
 				<span className="text-[9px] text-zinc-500 flex-shrink-0">
 					{durationLabel}
 				</span>
 			)}
-		</div>
+		</button>
 	);
 }
 
@@ -219,20 +226,22 @@ function TabButton({
 // ---------------------------------------------------------------------------
 
 function ImagesTabContent({
+	scenes,
 	assets,
 	shots,
 }: {
+	scenes: Scene[];
 	assets: SceneAssetSummary[];
 	shots: Shot[];
 }) {
-	const shotIndexMap = useMemo(() => {
-		const map = new Map<string, number>();
-		shots.forEach((shot, idx) => map.set(shot.id, idx));
-		return map;
-	}, [shots]);
+	const labels = useMemo(
+		() => createEditorAssetLabeler({ scenes, shots }),
+		[scenes, shots],
+	);
 
 	const filteredAssets = assets.filter(
-		(a) => a.isSelected && a.status === "done" && a.url != null,
+		(a): a is SceneAssetSummary & { url: string } =>
+			a.isSelected && a.status === "done" && a.url != null,
 	);
 
 	if (filteredAssets.length === 0) {
@@ -245,13 +254,17 @@ function ImagesTabContent({
 
 	return (
 		<div className="grid grid-cols-2 gap-2">
-			{filteredAssets.map((asset) => (
-				<AssetThumbnail
-					key={asset.id}
-					asset={asset}
-					shotIndex={asset.shotId ? shotIndexMap.get(asset.shotId) : undefined}
-				/>
-			))}
+			{filteredAssets.map((asset) => {
+				const label = labels.imageLabel(asset, filteredAssets);
+				return (
+					<AssetThumbnail
+						key={asset.id}
+						asset={asset}
+						label={label}
+						filename={labels.fileName(label, "jpg")}
+					/>
+				);
+			})}
 		</div>
 	);
 }
@@ -261,23 +274,34 @@ function ImagesTabContent({
 // ---------------------------------------------------------------------------
 
 function VideosTabContent({
+	scenes,
+	shotVideoAssets,
 	transitionVideos,
 	shots,
 }: {
+	scenes: Scene[];
+	shotVideoAssets: ShotVideoSummary[];
 	transitionVideos: TransitionVideoSummary[];
 	shots: Shot[];
 }) {
-	const shotIndexMap = useMemo(() => {
-		const map = new Map<string, number>();
-		shots.forEach((shot, idx) => map.set(shot.id, idx));
-		return map;
-	}, [shots]);
-
-	const filteredVideos = transitionVideos.filter(
-		(tv) => tv.isSelected && tv.status === "done" && tv.url != null,
+	const labels = useMemo(
+		() => createEditorAssetLabeler({ scenes, shots }),
+		[scenes, shots],
 	);
 
-	if (filteredVideos.length === 0) {
+	const filteredTransitionVideos = transitionVideos.filter(
+		(tv): tv is TransitionVideoSummary & { url: string } =>
+			tv.isSelected && tv.status === "done" && tv.url != null,
+	);
+	const filteredShotVideos = shotVideoAssets.filter(
+		(video): video is ShotVideoSummary & { url: string } =>
+			video.isSelected && video.status === "done" && video.url != null,
+	);
+
+	if (
+		filteredTransitionVideos.length === 0 &&
+		filteredShotVideos.length === 0
+	) {
 		return (
 			<p className="text-[11px] text-zinc-600 text-center pt-8">
 				No video clips yet
@@ -287,13 +311,28 @@ function VideosTabContent({
 
 	return (
 		<div className="grid grid-cols-2 gap-2">
-			{filteredVideos.map((tv) => (
-				<TransitionThumbnail
-					key={tv.id}
-					tv={tv}
-					shotIndex={shotIndexMap.get(tv.fromShotId)}
-				/>
-			))}
+			{filteredShotVideos.map((video) => {
+				const label = labels.shotVideoLabel(video, filteredShotVideos);
+				return (
+					<TransitionThumbnail
+						key={video.id}
+						tv={video}
+						label={label}
+						filename={labels.fileName(label, "mp4")}
+					/>
+				);
+			})}
+			{filteredTransitionVideos.map((tv) => {
+				const label = labels.transitionVideoLabel(tv, filteredTransitionVideos);
+				return (
+					<TransitionThumbnail
+						key={tv.id}
+						tv={tv}
+						label={label}
+						filename={labels.fileName(label, "mp4")}
+					/>
+				);
+			})}
 		</div>
 	);
 }
@@ -303,27 +342,62 @@ function VideosTabContent({
 // ---------------------------------------------------------------------------
 
 function AudioTabContent({
+	scenes,
+	shots,
 	voiceovers,
+	backgroundMusic,
 }: {
+	scenes: Scene[];
+	shots: Shot[];
 	voiceovers: VoiceoverAssetSummary[];
+	backgroundMusic: BackgroundMusicAssetSummary[];
 }) {
+	const labels = useMemo(
+		() => createEditorAssetLabeler({ scenes, shots }),
+		[scenes, shots],
+	);
 	const filteredVoiceovers = voiceovers.filter(
-		(vo) => vo.isSelected && vo.status === "done" && vo.url != null,
+		(vo): vo is VoiceoverAssetSummary & { url: string } =>
+			vo.status === "done" && vo.url != null,
+	);
+	const filteredBackgroundMusic = backgroundMusic.filter(
+		(track): track is BackgroundMusicAssetSummary & { url: string } =>
+			track.status === "done" && track.url != null,
 	);
 
-	if (filteredVoiceovers.length === 0) {
+	if (filteredVoiceovers.length === 0 && filteredBackgroundMusic.length === 0) {
 		return (
-			<p className="text-[11px] text-zinc-600 text-center pt-8">
-				No audio yet
-			</p>
+			<p className="text-[11px] text-zinc-600 text-center pt-8">No audio yet</p>
 		);
 	}
 
 	return (
 		<div className="space-y-2">
-			{filteredVoiceovers.map((vo) => (
-				<VoiceoverItem key={vo.id} vo={vo} />
-			))}
+			{filteredVoiceovers.map((vo) => {
+				const label = labels.voiceoverLabel(vo, filteredVoiceovers);
+				return (
+					<AudioAssetItem
+						key={vo.id}
+						audio={vo}
+						label={label}
+						filename={labels.fileName(label, "mp3")}
+					/>
+				);
+			})}
+			{filteredBackgroundMusic.map((track) => {
+				const label = labels.backgroundMusicLabel(
+					track,
+					filteredBackgroundMusic,
+				);
+				return (
+					<AudioAssetItem
+						key={track.id}
+						audio={track}
+						label={label}
+						filename={labels.fileName(label, "mp3")}
+					/>
+				);
+			})}
 		</div>
 	);
 }
@@ -333,17 +407,23 @@ function AudioTabContent({
 // ---------------------------------------------------------------------------
 
 interface ShotLibraryPanelProps {
+	scenes: Scene[];
 	shots: Shot[];
 	assets: SceneAssetSummary[];
+	shotVideoAssets: ShotVideoSummary[];
 	transitionVideos: TransitionVideoSummary[];
 	voiceovers: VoiceoverAssetSummary[];
+	backgroundMusic: BackgroundMusicAssetSummary[];
 }
 
 export function ShotLibraryPanel({
+	scenes,
 	shots,
 	assets,
+	shotVideoAssets,
 	transitionVideos,
 	voiceovers,
+	backgroundMusic,
 }: ShotLibraryPanelProps) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [activeTab, setActiveTab] = useState<TabId>("images");
@@ -353,14 +433,22 @@ export function ShotLibraryPanel({
 			images: assets.filter(
 				(a) => a.isSelected && a.status === "done" && a.url != null,
 			).length,
-			videos: transitionVideos.filter(
-				(tv) => tv.isSelected && tv.status === "done" && tv.url != null,
-			).length,
-			audio: voiceovers.filter(
-				(vo) => vo.isSelected && vo.status === "done" && vo.url != null,
-			).length,
+			videos:
+				transitionVideos.filter(
+					(tv) => tv.isSelected && tv.status === "done" && tv.url != null,
+				).length +
+				shotVideoAssets.filter(
+					(video) =>
+						video.isSelected && video.status === "done" && video.url != null,
+				).length,
+			audio:
+				voiceovers.filter((vo) => vo.status === "done" && vo.url != null)
+					.length +
+				backgroundMusic.filter(
+					(track) => track.status === "done" && track.url != null,
+				).length,
 		};
-	}, [assets, transitionVideos, voiceovers]);
+	}, [assets, shotVideoAssets, transitionVideos, voiceovers, backgroundMusic]);
 
 	if (collapsed) {
 		return (
@@ -422,13 +510,23 @@ export function ShotLibraryPanel({
 			{/* Tab content */}
 			<div className="flex-1 overflow-y-auto p-3">
 				{activeTab === "images" && (
-					<ImagesTabContent assets={assets} shots={shots} />
+					<ImagesTabContent scenes={scenes} assets={assets} shots={shots} />
 				)}
 				{activeTab === "videos" && (
-					<VideosTabContent transitionVideos={transitionVideos} shots={shots} />
+					<VideosTabContent
+						scenes={scenes}
+						shotVideoAssets={shotVideoAssets}
+						transitionVideos={transitionVideos}
+						shots={shots}
+					/>
 				)}
 				{activeTab === "audio" && (
-					<AudioTabContent voiceovers={voiceovers} />
+					<AudioTabContent
+						scenes={scenes}
+						shots={shots}
+						voiceovers={voiceovers}
+						backgroundMusic={backgroundMusic}
+					/>
 				)}
 			</div>
 		</div>

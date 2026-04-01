@@ -1,7 +1,24 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Shot } from "@/db/schema";
+import {
+	buildShotLabelMap,
+	formatTransitionLocation,
+} from "../generation-labels";
+import {
+	beginGenerationToast,
+	resolveGenerationToast,
+	updateGenerationToast,
+} from "../generation-toast";
+import {
+	applyProjectAspectRatioToVideoDefaults,
+	getPreferredAspectRatioFromVideoDefaults,
+	persistProjectAspectRatio,
+} from "../project-aspect-ratio";
 import { normalizeVideoDefaults } from "../project-normalize";
 import type {
+	PromptAssetType,
+	PromptAssetTypeSelection,
 	TransitionVideoSummary,
 	TriggerRunSummary,
 	VideoDefaults,
@@ -16,6 +33,7 @@ import {
 	pollTransitionVideos,
 	selectTransitionVideo,
 } from "../scene-actions";
+import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
 
@@ -82,12 +100,14 @@ function writeTransitionDraft(
 export function useVideoStudio({
 	projectId,
 	selectedTransitionPair,
+	storyShots,
 	allTransitionVideos,
 	toast,
 	setError,
 }: {
 	projectId: string;
 	selectedTransitionPair: { fromShotId: string; toShotId: string } | null;
+	storyShots: Shot[];
 	allTransitionVideos: TransitionVideoSummary[];
 	toast: ToastFn;
 	setError: (msg: string | null) => void;
@@ -95,16 +115,24 @@ export function useVideoStudio({
 	const queryClient = useQueryClient();
 	const logPrefix = "[TransitionVideo]";
 	const [videoPrompt, setVideoPrompt] = useState("");
-	const [videoSettings, setVideoSettings] = useState<VideoDefaults>(
+	const [videoSettings, setVideoSettingsState] = useState<VideoDefaults>(
 		normalizeVideoDefaults(null),
 	);
+	const [isQueueingVideo, setIsQueueingVideo] = useState(false);
 	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
+	const [detectedPromptAssetType, setDetectedPromptAssetType] =
+		useState<PromptAssetType | null>(null);
+	const [promptTypeSelection, setPromptTypeSelection] =
+		useState<PromptAssetTypeSelection>("auto");
 	const allTransitionVideosRef = useRef(allTransitionVideos);
+	const trackedToastMetaRef = useRef(
+		new Map<string, { title: string; location: string }>(),
+	);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
 	const completedRunIdsRef = useRef<Set<string>>(new Set());
@@ -115,6 +143,20 @@ export function useVideoStudio({
 	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
+	const shotLabelMap = buildShotLabelMap(storyShots);
+	const setVideoSettings = useCallback(
+		(next: VideoDefaults) => {
+			const explicitAspectRatio =
+				getPreferredAspectRatioFromVideoDefaults(next);
+			if (explicitAspectRatio) {
+				persistProjectAspectRatio(projectId, explicitAspectRatio);
+			}
+			setVideoSettingsState(
+				applyProjectAspectRatioToVideoDefaults(projectId, next),
+			);
+		},
+		[projectId],
+	);
 
 	const stopPolling = useCallback(() => {
 		cancelPollingRef.current = true;
@@ -154,23 +196,28 @@ export function useVideoStudio({
 			});
 
 		// Check if there are any generating videos for this pair
-		const hasGeneratingVideos = pairVideos.some(
-			(tv) => tv.status === "generating",
+		const hasGeneratingVideos = pairVideos.some((tv) =>
+			isPendingVideoStatus(tv.status),
 		);
 
 		setVideoPrompt(initialPrompt);
-		setVideoSettings(initialSettings);
+		setVideoSettingsState(
+			applyProjectAspectRatioToVideoDefaults(projectId, initialSettings),
+		);
+		setIsQueueingVideo(false);
 		setIsGeneratingVideo(hasGeneratingVideos); // Keep true if videos are generating
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
+		setDetectedPromptAssetType(null);
+		setPromptTypeSelection("auto");
 		setRunStatusesByVideoId({});
 		completedRunIdsRef.current.clear();
 		stopPolling();
 		cancelPollingRef.current = false;
-	}, [selectedTransitionPair, stopPolling]);
+	}, [selectedTransitionPair, stopPolling, projectId]);
 
 	useEffect(() => {
 		if (!selectedTransitionPair) return;
@@ -185,6 +232,7 @@ export function useVideoStudio({
 	// Keep local loading state aligned with fresh query data for the selected transition pair.
 	useEffect(() => {
 		if (!selectedTransitionPair) {
+			setIsQueueingVideo(false);
 			setIsGeneratingVideo(false);
 			setRunStatusesByVideoId({});
 			return;
@@ -194,7 +242,7 @@ export function useVideoStudio({
 			(video) =>
 				video.fromShotId === selectedTransitionPair.fromShotId &&
 				video.toShotId === selectedTransitionPair.toShotId &&
-				video.status === "generating",
+				isPendingVideoStatus(video.status),
 		);
 
 		if (!hasGeneratingVideos) {
@@ -203,6 +251,7 @@ export function useVideoStudio({
 			} else {
 				setIsGeneratingVideo(false);
 			}
+			setIsQueueingVideo(false);
 			setRunStatusesByVideoId({});
 		}
 	}, [allTransitionVideos, selectedTransitionPair, stopPolling]);
@@ -279,7 +328,12 @@ export function useVideoStudio({
 						data: pair,
 					});
 
-					if (!result.isGenerating) {
+					if (result.isGenerating) {
+						await queryClient.refetchQueries({
+							queryKey: projectKeys.project(projectId),
+							type: "active",
+						});
+					} else {
 						stopPolling();
 						setRunStatusesByVideoId({});
 						if (!result.selectedDoneId && result.latestDoneId) {
@@ -305,19 +359,6 @@ export function useVideoStudio({
 							doneCount: result.doneCount,
 							erroredCount: result.erroredCount,
 						});
-
-						if (result.doneCount > 0) {
-							toast(
-								`${result.doneCount} transition video${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
-								result.erroredCount > 0 ? "error" : "success",
-							);
-						} else if (result.erroredCount > 0) {
-							toast(
-								result.latestErrorMessage ??
-									"Transition video generation failed",
-								"error",
-							);
-						}
 					}
 				} catch (error) {
 					// Transient error, keep polling.
@@ -328,8 +369,46 @@ export function useVideoStudio({
 				}
 			}, 3000);
 		},
-		[projectId, queryClient, stopPolling, toast],
+		[projectId, queryClient, stopPolling],
 	);
+
+	useEffect(() => {
+		for (const [videoId, meta] of trackedToastMetaRef.current.entries()) {
+			const video = allTransitionVideos.find((entry) => entry.id === videoId);
+			if (!video) continue;
+
+			if (isPendingVideoStatus(video.status)) {
+				updateGenerationToast(videoId, {
+					status:
+						video.status === "queued"
+							? "Queued"
+							: video.status === "finalizing"
+								? "Finalizing"
+								: "Generating",
+					message: meta.location,
+				});
+				continue;
+			}
+
+			if (video.status === "done") {
+				resolveGenerationToast(videoId, {
+					status: "Ready",
+					message: meta.location,
+				});
+				trackedToastMetaRef.current.delete(videoId);
+				continue;
+			}
+
+			if (video.status === "error") {
+				resolveGenerationToast(videoId, {
+					status: "Failed",
+					message: video.errorMessage ?? meta.location,
+					error: true,
+				});
+				trackedToastMetaRef.current.delete(videoId);
+			}
+		}
+	}, [allTransitionVideos]);
 
 	useEffect(() => {
 		const pair = selectedTransitionPair;
@@ -338,7 +417,7 @@ export function useVideoStudio({
 			(tv) =>
 				tv.fromShotId === pair.fromShotId &&
 				tv.toShotId === pair.toShotId &&
-				tv.status === "generating",
+				isPendingVideoStatus(tv.status),
 		);
 		if (!generatingTv || isPollingRef.current) return;
 		return startPolling(pair);
@@ -355,9 +434,11 @@ export function useVideoStudio({
 					toShotId: selectedTransitionPair.toShotId,
 					useProjectContext,
 					usePrevShotContext,
+					assetTypeOverride: promptTypeSelection,
 				},
 			});
 			setVideoPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			toast("Prompt generated", "success");
 		} catch (err) {
 			const msg =
@@ -381,9 +462,11 @@ export function useVideoStudio({
 					userPrompt: videoPrompt,
 					useProjectContext,
 					usePrevShotContext,
+					assetTypeOverride: promptTypeSelection,
 				},
 			});
 			setVideoPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			toast("Video prompt enhanced", "success");
 		} catch (err) {
 			const msg =
@@ -398,16 +481,15 @@ export function useVideoStudio({
 	async function handleGenerateVideo() {
 		const pair = selectedTransitionPair;
 		if (!pair || !videoPrompt.trim()) return;
-		if (isPollingRef.current) return;
 		console.info(`${logPrefix} queue:start`, {
 			...pair,
 			model: videoSettings.model,
 		});
-		setIsGeneratingVideo(true);
+		setIsQueueingVideo(true);
 		cancelPollingRef.current = false;
 		setError(null);
 		try {
-			await generateTransitionVideo({
+			const result = await generateTransitionVideo({
 				data: {
 					fromShotId: pair.fromShotId,
 					toShotId: pair.toShotId,
@@ -419,9 +501,36 @@ export function useVideoStudio({
 				queryKey: projectKeys.project(projectId),
 				type: "active",
 			});
+			const fromLabel = shotLabelMap.get(pair.fromShotId);
+			const toLabel = shotLabelMap.get(pair.toShotId);
+			const location =
+				fromLabel && toLabel
+					? formatTransitionLocation({
+							fromSceneNumber: fromLabel.sceneNumber,
+							fromShotNumber: fromLabel.shotNumber,
+							toSceneNumber: toLabel.sceneNumber,
+							toShotNumber: toLabel.shotNumber,
+						})
+					: "Selected transition";
+			const fromSceneId =
+				storyShots.find((shot) => shot.id === pair.fromShotId)?.sceneId ?? null;
+			const href = fromSceneId
+				? `/projects/${projectId}?scene=${fromSceneId}&from=${pair.fromShotId}&to=${pair.toShotId}&mediaTab=video`
+				: `/projects/${projectId}?from=${pair.fromShotId}&to=${pair.toShotId}&mediaTab=video`;
+			trackedToastMetaRef.current.set(result.transitionVideoId, {
+				title: "Generating transition video",
+				location,
+			});
+			beginGenerationToast({
+				id: result.transitionVideoId,
+				title: "Generating transition video",
+				location,
+				medium: "video",
+				status: "Queued",
+				href,
+			});
 			startPolling(pair);
 			console.info(`${logPrefix} queue:done`, pair);
-			toast("Queued transition video", "success");
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate video";
@@ -432,6 +541,8 @@ export function useVideoStudio({
 			setError(msg);
 			toast(msg, "error");
 			stopPolling();
+		} finally {
+			setIsQueueingVideo(false);
 		}
 	}
 
@@ -469,6 +580,7 @@ export function useVideoStudio({
 		setVideoPrompt,
 		videoSettings,
 		setVideoSettings,
+		isQueueingVideo,
 		isGeneratingVideo,
 		isGeneratingVideoPrompt,
 		isEnhancingVideoPrompt,
@@ -477,6 +589,9 @@ export function useVideoStudio({
 		setUseProjectContext,
 		usePrevShotContext,
 		setUsePrevShotContext,
+		detectedPromptAssetType,
+		promptTypeSelection,
+		setPromptTypeSelection,
 		runStatusesByVideoId,
 		handleGenerateVideoPrompt,
 		handleEnhanceVideoPrompt,

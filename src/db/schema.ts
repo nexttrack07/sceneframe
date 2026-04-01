@@ -13,7 +13,12 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import type { ProjectSettings } from "@/features/projects/project-types";
+import type {
+	MotionGraphicPreset,
+	MotionGraphicSpec,
+	ProjectSettings,
+	ShotSize,
+} from "@/features/projects/project-types";
 
 // ---------------------------------------------------------------------------
 // users
@@ -55,7 +60,7 @@ export const projects = pgTable(
 			.$type<"idle" | "generating" | "done" | "error">(),
 		scriptJobId: text("script_job_id"),
 		settings: jsonb("settings").$type<ProjectSettings | null>(),
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsonb must be `any` to satisfy TanStack serialization constraints
+		// biome-ignore lint/suspicious/noExplicitAny: TanStack route serialization in this repo expects a permissive JSON object shape here
 		editorState: jsonb("editor_state").$type<Record<string, any> | null>(),
 		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
@@ -134,6 +139,7 @@ export const shots = pgTable(
 		order: doublePrecision("order").notNull(),
 		description: text("description").notNull(),
 		shotType: text("shot_type").notNull().$type<"talking" | "visual">(),
+		shotSize: text("shot_size").notNull().default("medium").$type<ShotSize>(),
 		durationSec: integer("duration_sec").notNull().default(5),
 		timestampStart: doublePrecision("timestamp_start"),
 		timestampEnd: doublePrecision("timestamp_end"),
@@ -154,6 +160,10 @@ export const shots = pgTable(
 		check(
 			"shots_shot_type_check",
 			sql`${table.shotType} IN ('talking', 'visual')`,
+		),
+		check(
+			"shots_shot_size_check",
+			sql`${table.shotSize} IN ('extreme-wide', 'wide', 'medium', 'close-up', 'extreme-close-up', 'insert')`,
 		),
 		check("shots_duration_check", sql`${table.durationSec} BETWEEN 1 AND 10`),
 		check("shots_description_check", sql`trim(${table.description}) != ''`),
@@ -198,7 +208,7 @@ export const assets = pgTable(
 		status: text("status")
 			.notNull()
 			.default("generating")
-			.$type<"generating" | "done" | "error">(),
+			.$type<"queued" | "generating" | "finalizing" | "done" | "error">(),
 		isSelected: boolean("is_selected").notNull().default(false),
 		batchId: uuid("batch_id"),
 		errorMessage: text("error_message"),
@@ -255,7 +265,7 @@ export const assets = pgTable(
 		),
 		check(
 			"assets_status_check",
-			sql`${table.status} IN ('generating', 'done', 'error')`,
+			sql`${table.status} IN ('queued', 'generating', 'finalizing', 'done', 'error')`,
 		),
 		check(
 			"assets_type_stage_check",
@@ -296,7 +306,7 @@ export const transitionVideos = pgTable(
 		status: text("status")
 			.notNull()
 			.default("generating")
-			.$type<"generating" | "done" | "error">(),
+			.$type<"queued" | "generating" | "finalizing" | "done" | "error">(),
 		errorMessage: text("error_message"),
 		isSelected: boolean("is_selected").notNull().default(false),
 		stale: boolean("stale").notNull().default(false),
@@ -321,13 +331,54 @@ export const transitionVideos = pgTable(
 			.where(sql`${table.isSelected} = true AND ${table.deletedAt} IS NULL`),
 		check(
 			"transition_videos_status_check",
-			sql`${table.status} IN ('generating', 'done', 'error')`,
+			sql`${table.status} IN ('queued', 'generating', 'finalizing', 'done', 'error')`,
 		),
 	],
 );
 
 export type TransitionVideo = typeof transitionVideos.$inferSelect;
 export type NewTransitionVideo = typeof transitionVideos.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// motion_graphics
+// ---------------------------------------------------------------------------
+
+export const motionGraphics = pgTable(
+	"motion_graphics",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		sceneId: uuid("scene_id")
+			.notNull()
+			.references(() => scenes.id),
+		shotId: uuid("shot_id")
+			.notNull()
+			.references(() => shots.id),
+		preset: text("preset").notNull().$type<MotionGraphicPreset>(),
+		title: text("title").notNull(),
+		sourceText: text("source_text").notNull(),
+		spec: jsonb("spec").notNull().$type<MotionGraphicSpec>(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow()
+			.$onUpdateFn(() => new Date()),
+	},
+	(table) => [
+		index("idx_motion_graphics_scene_id").on(table.sceneId),
+		index("idx_motion_graphics_shot_id").on(table.shotId),
+		index("idx_motion_graphics_deleted").on(table.deletedAt),
+		check(
+			"motion_graphics_preset_check",
+			sql`${table.preset} IN ('lower_third', 'callout')`,
+		),
+	],
+);
+
+export type MotionGraphic = typeof motionGraphics.$inferSelect;
+export type NewMotionGraphic = typeof motionGraphics.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // messages (Script Workshop chat history)

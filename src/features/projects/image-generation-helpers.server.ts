@@ -2,7 +2,12 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
 import { decryptUserApiKey } from "@/lib/encryption.server";
-import type { IntakeAnswers, ShotPlanEntry, ShotType } from "./project-types";
+import type {
+	IntakeAnswers,
+	ShotPlanEntry,
+	ShotSize,
+	ShotType,
+} from "./project-types";
 
 export async function getUserApiKey(userId: string) {
 	const user = await db.query.users.findFirst({
@@ -49,6 +54,8 @@ export function parseGeneratedMediaUrls(output: unknown): string[] {
 			walk(record.url);
 			walk(record.output);
 			walk(record.images);
+			walk(record.video);
+			walk(record.videos);
 			walk(record.data);
 			walk(record.image);
 			walk(record.files);
@@ -186,58 +193,68 @@ export function buildShotBreakdownPrompt(
 	scenes: { title: string; description: string; durationSec?: number }[],
 	targetDurationSec: number,
 ): string {
-	const perSceneDuration = Math.round(targetDurationSec / scenes.length);
 	const sceneList = scenes
 		.map((s, i) => {
-			const dur = s.durationSec ?? perSceneDuration;
-			const minShots = Math.ceil(dur / 5);
-			return `Scene ${i} (title: "${s.title || `Scene ${i + 1}`}", durationSec: ${dur}, needs ~${minShots} shots): ${s.description}`;
+			const dur =
+				s.durationSec ??
+				Math.round(targetDurationSec / Math.max(scenes.length, 1));
+			return `Scene ${i}: "${s.title || `Scene ${i + 1}`}" (${dur}s) — ${s.description}`;
 		})
 		.join("\n");
 
-	const sceneSummary = scenes
-		.map((s, i) => {
-			const dur = s.durationSec ?? perSceneDuration;
-			return `Scene ${i}: "${s.title || `Scene ${i + 1}`}" - ${dur}s → needs ~${Math.ceil(dur / 5)} shots`;
-		})
-		.join("\n");
+	return `You are an award-winning cinematographer breaking scenes into visually distinct shots.
 
-	return `You are a video production assistant. Break the following scenes into shots for a video with a total target duration of ${targetDurationSec} seconds.
+Each shot captures a DECISIVE INSTANT — not a generic scene, but a specific micro-moment that implies story before and after. Light should DO something (rake, rim, silhouette, bloom). Include one tactile texture detail.
 
-SCENES:
+SCENES TO BREAK DOWN:
 ${sceneList}
 
-CRITICAL DURATION REQUIREMENTS:
-Each scene has a target durationSec. You MUST generate enough shots to fill that ENTIRE duration.
-- Visual/B-roll shots: 3-5 seconds each
-- Talking head shots: 5-8 seconds each
-- Transition shots: 2-3 seconds each
+SHOT SIZE OPTIONS (adjacent shots MUST use different sizes):
+- extreme-wide: landscape establishing, subject small in frame
+- wide: full scene, subject in environment
+- medium: waist-up, balance of context and detail
+- close-up: face or key object, emotion and detail
+- extreme-close-up: single detail, texture, intensity
+- insert: cutaway to specific object or action
 
-For each scene, the sum of shot durationSec values MUST equal the scene's durationSec. Use ceil(durationSec / avgShotDuration) as a minimum shot count.
+EXAMPLES OF EXCEPTIONAL IMAGE PROMPTS:
+- "Wide, lone figure silhouetted against floor-to-ceiling window, city lights blooming in rain, reflection doubling the solitude"
+- "Extreme close-up, weathered fingers hovering over key mid-press, desk lamp rim-lighting knuckles, moment of decision"
+- "Medium, woman mid-laugh coffee cup suspended, golden hour raking across steam and flyaway hair, bokeh of strangers"
+- "Insert, phone screen glowing with notification, thumb hovering, face reflected in glass, blue light on skin"
 
-Scene breakdown (you MUST meet these shot counts):
-${sceneSummary}
+NEVER USE: beautiful, stunning, amazing, high quality, 4K, highly detailed, cinematic, professional
 
-Example: A scene with durationSec=80 needs at least 10-15 shots, NOT 3-4 shots.
-
-RULES:
+CRITICAL RULES:
 - shotType is either "talking" (person speaking to camera) or "visual" (b-roll, graphics, environment).
-- Each shot description must be a single, self-contained visual prompt (1-2 sentences).
+- shotSize is REQUIRED and must be one of the six values above.
+- Adjacent shots must not reuse the same shotSize.
+- Each imagePrompt must be 15-25 words and describe: shot size, specific subject moment, light doing something, and one texture or atmosphere detail.
+- Each shot description must describe a different visual beat, not a continuation chunk.
 - sceneIndex is zero-based matching the scene list above.
 - durationSec is REQUIRED for every shot (integer, min 2, max 10).
-- Total duration across ALL shots must be close to ${targetDurationSec} seconds.
+- The sum of shot durationSec values within each scene should closely match that scene's durationSec.
 
 Return a JSON block with this exact format:
 
 \`\`\`json
 {
   "shots": [
-    { "sceneIndex": 0, "description": "...", "shotType": "visual", "durationSec": 5 }
+    {
+      "sceneIndex": 0,
+      "shotSize": "wide",
+      "shotType": "visual",
+      "durationSec": 5,
+      "description": "Brief shot description",
+      "imagePrompt": "15-25 words: [size], [subject in specific moment], [light doing something], [texture/atmosphere detail]"
+    }
   ]
 }
 \`\`\`
 
-Return ONLY the JSON block, nothing else.`;
+CRITICAL: Each shot must be visually DISTINCT. Never repeat the same shot size twice in a row. The sequence should tell a visual story even as still images.
+
+Return ONLY the JSON block.`;
 }
 
 export function parseShotBreakdownResponse(
@@ -254,6 +271,14 @@ export function parseShotBreakdownResponse(
 		if (!Array.isArray(rawShots) || rawShots.length === 0) return null;
 
 		const validShotTypes: ShotType[] = ["talking", "visual"];
+		const validShotSizes: ShotSize[] = [
+			"extreme-wide",
+			"wide",
+			"medium",
+			"close-up",
+			"extreme-close-up",
+			"insert",
+		];
 
 		const result: ShotPlanEntry[] = rawShots
 			.filter(
@@ -274,14 +299,23 @@ export function parseShotBreakdownResponse(
 				const shotType: ShotType = validShotTypes.includes(rawType as ShotType)
 					? (rawType as ShotType)
 					: "visual";
+				const rawSize = String(s.shotSize ?? "medium");
+				const shotSize: ShotSize = validShotSizes.includes(rawSize as ShotSize)
+					? (rawSize as ShotSize)
+					: "medium";
 				const rawDuration = Number(s.durationSec ?? 5);
 				const durationSec =
 					rawDuration >= 1 && rawDuration <= 10 ? rawDuration : 5;
+				const imagePrompt =
+					typeof s.imagePrompt === "string" && s.imagePrompt.trim().length > 0
+						? s.imagePrompt.trim()
+						: null;
 
 				return {
 					sceneIndex: Number(s.sceneIndex),
-					description: (s.description as string).trim(),
+					description: imagePrompt ?? (s.description as string).trim(),
 					shotType,
+					shotSize,
 					durationSec,
 				};
 			});

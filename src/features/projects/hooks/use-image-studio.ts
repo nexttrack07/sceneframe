@@ -1,9 +1,26 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
+import { buildShotLabelMap, formatShotLocation } from "../generation-labels";
+import {
+	beginGenerationToast,
+	resolveGenerationToast,
+	updateGenerationToast,
+} from "../generation-toast";
+import {
+	readImageSettings,
+	writeImageSettings,
+} from "../image-settings-storage";
+import {
+	applyProjectAspectRatioToImageDefaults,
+	getPreferredAspectRatioFromImageDefaults,
+	persistProjectAspectRatio,
+} from "../project-aspect-ratio";
 import { normalizeImageDefaults } from "../project-normalize";
 import type {
 	ImageDefaults,
+	PromptAssetType,
+	PromptAssetTypeSelection,
 	SceneAssetSummary,
 	TriggerRunSummary,
 } from "../project-types";
@@ -20,43 +37,6 @@ import {
 } from "../scene-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
-
-function formatImageFailureToast(
-	errorMessage: string | null,
-	failedCount: number,
-) {
-	const fallback = `${failedCount} image${failedCount !== 1 ? "s" : ""} failed. Try again.`;
-	if (!errorMessage) return fallback;
-
-	const message = errorMessage.trim();
-	const lower = message.toLowerCase();
-
-	if (
-		lower.includes("high demand") ||
-		lower.includes("service is currently unavailable") ||
-		lower.includes("temporarily unavailable") ||
-		lower.includes("e003")
-	) {
-		return `Image generation failed because the model provider is under heavy load. Wait a moment and try again.`;
-	}
-
-	if (
-		lower.includes("api key") ||
-		lower.includes("authentication") ||
-		lower.includes("unauthorized") ||
-		lower.includes("forbidden")
-	) {
-		return `Image generation failed because your Replicate connection is missing or invalid. Reconnect your API key and try again.`;
-	}
-
-	if (lower.includes("timeout") || lower.includes("timed out")) {
-		return `Image generation timed out before the provider returned a result. Try again, or use a simpler prompt/settings combination.`;
-	}
-
-	const shortened =
-		message.length > 180 ? `${message.slice(0, 177)}...` : message;
-	return `Image generation failed: ${shortened} Try again or adjust the prompt/settings.`;
-}
 
 export function useImageStudio({
 	projectId,
@@ -76,6 +56,9 @@ export function useImageStudio({
 	const queryClient = useQueryClient();
 	const storyShotsRef = useRef(storyShots);
 	const assetsByShotIdRef = useRef(assetsByShotId);
+	const trackedBatchMetaRef = useRef(
+		new Map<string, { title: string; location: string }>(),
+	);
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
 	const completedRunIdsRef = useRef<Set<string>>(new Set());
@@ -85,9 +68,8 @@ export function useImageStudio({
 	storyShotsRef.current = storyShots;
 	assetsByShotIdRef.current = assetsByShotId;
 	const [prompt, setPrompt] = useState("");
-	const [settingsOverrides, setSettingsOverrides] = useState<ImageDefaults>(
-		normalizeImageDefaults(null),
-	);
+	const [settingsOverrides, setSettingsOverridesState] =
+		useState<ImageDefaults>(normalizeImageDefaults(null));
 	const [isQueueing, setIsQueueing] = useState(false);
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
@@ -106,18 +88,34 @@ export function useImageStudio({
 	);
 	const [userReferenceUrls, setUserReferenceUrls] = useState<string[]>([]);
 	const [isUploadingReference, setIsUploadingReference] = useState(false);
+	const [detectedPromptAssetType, setDetectedPromptAssetType] =
+		useState<PromptAssetType | null>(null);
+	const [promptTypeSelection, setPromptTypeSelection] =
+		useState<PromptAssetTypeSelection>("auto");
 	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
+	const shotLabelMap = buildShotLabelMap(storyShots);
+	const setSettingsOverrides = useCallback(
+		(next: ImageDefaults) => {
+			const explicitAspectRatio =
+				getPreferredAspectRatioFromImageDefaults(next);
+			if (explicitAspectRatio) {
+				persistProjectAspectRatio(projectId, explicitAspectRatio);
+			}
+			setSettingsOverridesState(
+				applyProjectAspectRatioToImageDefaults(projectId, next),
+			);
+		},
+		[projectId],
+	);
 	const pollingParamsRef = useRef({
 		projectId,
 		queryClient,
-		toast,
 	});
 	pollingParamsRef.current = {
 		projectId,
 		queryClient,
-		toast,
 	};
 
 	const stopPolling = useCallback(() => {
@@ -179,20 +177,6 @@ export function useImageStudio({
 						await pollingParamsRef.current.queryClient.invalidateQueries({
 							queryKey: projectKeys.project(pollingParamsRef.current.projectId),
 						});
-						if (result.doneCount > 0) {
-							pollingParamsRef.current.toast(
-								`${result.doneCount} image${result.doneCount !== 1 ? "s" : ""} ready${result.erroredCount > 0 ? ` (${result.erroredCount} failed)` : ""}`,
-								result.erroredCount > 0 ? "error" : "success",
-							);
-						} else if (result.erroredCount > 0) {
-							pollingParamsRef.current.toast(
-								formatImageFailureToast(
-									result.latestErrorMessage,
-									result.erroredCount,
-								),
-								"error",
-							);
-						}
 					}
 				} catch {
 					// Transient error, keep polling
@@ -225,6 +209,7 @@ export function useImageStudio({
 					(a, b) =>
 						new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
 				)[0]?.modelSettings ?? null;
+		const persistedImageSettings = readImageSettings();
 
 		// Check if there are any generating assets for this shot
 		const hasGeneratingAssets = shotAssets.some(
@@ -232,7 +217,12 @@ export function useImageStudio({
 		);
 
 		setPrompt(shot?.imagePrompt ?? "");
-		setSettingsOverrides(normalizeImageDefaults(lastAssetSettings));
+		setSettingsOverridesState(
+			applyProjectAspectRatioToImageDefaults(
+				projectId,
+				persistedImageSettings ?? normalizeImageDefaults(lastAssetSettings),
+			),
+		);
 		setExpandedImageId(null);
 		setIsQueueing(false);
 		setIsGenerating(hasGeneratingAssets); // Keep true if assets are generating
@@ -243,10 +233,16 @@ export function useImageStudio({
 		setEditingReferenceUrl(null);
 		setUserReferenceUrls([]);
 		setIsUploadingReference(false);
+		setDetectedPromptAssetType(null);
+		setPromptTypeSelection("auto");
 		setRunStatusesByAssetId({});
 		completedRunIdsRef.current.clear();
 		cancelPollingRef.current = false;
-	}, [selectedShotId, stopPolling]);
+	}, [selectedShotId, stopPolling, projectId]);
+
+	useEffect(() => {
+		writeImageSettings(settingsOverrides);
+	}, [settingsOverrides]);
 
 	// Auto-resume polling for generating assets when switching to a shot
 	useEffect(() => {
@@ -287,6 +283,53 @@ export function useImageStudio({
 		setUseRefImage(Boolean(prevShotSelectedImageUrl));
 	}, [selectedShotId, prevShotSelectedImageUrl]);
 
+	useEffect(() => {
+		for (const [batchId, meta] of trackedBatchMetaRef.current.entries()) {
+			const batchAssets = Array.from(assetsByShotId.values())
+				.flat()
+				.filter((asset) => asset.batchId === batchId);
+			if (batchAssets.length === 0) continue;
+
+			const generatingCount = batchAssets.filter(
+				(asset) => asset.status === "generating",
+			).length;
+			const doneCount = batchAssets.filter(
+				(asset) => asset.status === "done",
+			).length;
+			const erroredAssets = batchAssets.filter(
+				(asset) => asset.status === "error",
+			);
+
+			if (generatingCount > 0) {
+				updateGenerationToast(batchId, {
+					status: "Generating",
+					message: meta.location,
+				});
+				continue;
+			}
+
+			if (doneCount > 0 && erroredAssets.length === 0) {
+				resolveGenerationToast(batchId, {
+					status: "Ready",
+					message: `${meta.location} · ${doneCount} image${doneCount === 1 ? "" : "s"}`,
+				});
+				trackedBatchMetaRef.current.delete(batchId);
+				continue;
+			}
+
+			if (erroredAssets.length > 0) {
+				resolveGenerationToast(batchId, {
+					status: doneCount > 0 ? "Partial failure" : "Failed",
+					message:
+						erroredAssets[0]?.errorMessage ??
+						`${meta.location} · ${erroredAssets.length} failed`,
+					error: true,
+				});
+				trackedBatchMetaRef.current.delete(batchId);
+			}
+		}
+	}, [assetsByShotId]);
+
 	async function handleGenerate() {
 		if (!selectedShotId) return;
 		const promptOverride = prompt.trim();
@@ -312,15 +355,29 @@ export function useImageStudio({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			const label = shotLabelMap.get(selectedShotId);
+			const location = label ? formatShotLocation(label) : "Selected shot";
+			const sceneId =
+				storyShotsRef.current.find((shot) => shot.id === selectedShotId)
+					?.sceneId ?? null;
+			trackedBatchMetaRef.current.set(result.batchId, {
+				title: "Generating image",
+				location,
+			});
+			const href = sceneId
+				? `/projects/${projectId}?scene=${sceneId}&shot=${selectedShotId}&mediaTab=images`
+				: `/projects/${projectId}?shot=${selectedShotId}&mediaTab=images`;
+			beginGenerationToast({
+				id: result.batchId,
+				title: "Generating image",
+				location,
+				medium: "image",
+				status: "Queued",
+				href,
+			});
 			startPolling(selectedShotId);
 			const wasEditing = !!editingReferenceUrl;
 			if (wasEditing) setEditingReferenceUrl(null);
-			toast(
-				wasEditing
-					? `Queued ${result.queuedCount} edited variant${result.queuedCount !== 1 ? "s" : ""}`
-					: `Queued ${result.queuedCount} image${result.queuedCount !== 1 ? "s" : ""}`,
-				"success",
-			);
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to generate images";
@@ -333,13 +390,28 @@ export function useImageStudio({
 
 	async function handleGeneratePrompt() {
 		if (!selectedShotId) return;
+		const effectiveReferenceImageUrls = editingReferenceUrl
+			? [editingReferenceUrl]
+			: [
+					...(useRefImage && prevShotSelectedImageUrl
+						? [prevShotSelectedImageUrl]
+						: []),
+					...userReferenceUrls,
+				];
 		setIsGeneratingPrompt(true);
 		setError(null);
 		try {
 			const result = await generateShotImagePrompt({
-				data: { shotId: selectedShotId, useProjectContext, usePrevShotContext },
+				data: {
+					shotId: selectedShotId,
+					useProjectContext,
+					usePrevShotContext,
+					referenceImageUrls: effectiveReferenceImageUrls,
+					assetTypeOverride: promptTypeSelection,
+				},
 			});
 			setPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
@@ -356,6 +428,14 @@ export function useImageStudio({
 
 	async function handleEnhancePrompt() {
 		if (!selectedShotId || !prompt.trim()) return;
+		const effectiveReferenceImageUrls = editingReferenceUrl
+			? [editingReferenceUrl]
+			: [
+					...(useRefImage && prevShotSelectedImageUrl
+						? [prevShotSelectedImageUrl]
+						: []),
+					...userReferenceUrls,
+				];
 		setIsEnhancingPrompt(true);
 		setError(null);
 		try {
@@ -365,9 +445,12 @@ export function useImageStudio({
 					userPrompt: prompt,
 					useProjectContext,
 					usePrevShotContext,
+					referenceImageUrls: effectiveReferenceImageUrls,
+					assetTypeOverride: promptTypeSelection,
 				},
 			});
 			setPrompt(result.prompt);
+			setDetectedPromptAssetType(result.assetType);
 			toast("Prompt enhanced", "success");
 		} catch (err) {
 			const msg =
@@ -486,6 +569,9 @@ export function useImageStudio({
 		setEditingReferenceUrl,
 		userReferenceUrls,
 		isUploadingReference,
+		detectedPromptAssetType,
+		promptTypeSelection,
+		setPromptTypeSelection,
 		handleUploadReference,
 		handleRemoveReference,
 		resetForShot,

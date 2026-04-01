@@ -38,7 +38,13 @@ function EditorPage() {
 				<Link
 					to="/projects/$projectId"
 					params={{ projectId }}
-					search={{ shot: undefined, from: undefined, to: undefined }}
+					search={{
+						scene: undefined,
+						shot: undefined,
+						from: undefined,
+						to: undefined,
+						mediaTab: undefined,
+					}}
 					className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
 				>
 					<ArrowLeft size={14} />
@@ -60,10 +66,13 @@ function EditorPage() {
 					}
 				>
 					<EditorView
+						scenes={data_.scenes}
 						shots={data_.shots}
 						assets={data_.assets}
+						shotVideoAssets={data_.shotVideoAssets}
 						transitionVideos={data_.transitionVideos}
 						voiceovers={data_.voiceovers}
+						backgroundMusic={data_.backgroundMusic}
 						projectId={projectId}
 						savedEditorState={data_.project.editorState}
 					/>
