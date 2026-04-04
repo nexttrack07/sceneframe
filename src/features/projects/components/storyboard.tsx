@@ -7,6 +7,7 @@ import {
 	Download,
 	Film,
 	Info,
+	Loader2,
 	Mic,
 	Play,
 	Plus,
@@ -156,6 +157,7 @@ export function Storyboard({
 	const { toast } = useToast();
 	const [isResetting, setIsResetting] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
+	const [isCopyingScript, setIsCopyingScript] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [selectedSceneId, setSelectedSceneId] = useState<string | null>(
 		initialSceneId ?? null,
@@ -720,6 +722,22 @@ export function Storyboard({
 			setError(err instanceof Error ? err.message : "Failed to export handoff");
 		} finally {
 			setIsExporting(false);
+		}
+	}
+
+	async function handleCopyScript() {
+		setIsCopyingScript(true);
+		setError(null);
+		try {
+			const result = await exportProjectHandoff({
+				data: { projectId, format: "markdown" },
+			});
+			await navigator.clipboard.writeText(result.content);
+			toast("Script copied to clipboard", "success");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to copy script");
+		} finally {
+			setIsCopyingScript(false);
 		}
 	}
 
@@ -1783,6 +1801,20 @@ export function Storyboard({
 						>
 							<Download size={12} />
 							Export .json
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={isCopyingScript}
+							onClick={handleCopyScript}
+							className="gap-1.5"
+						>
+							{isCopyingScript ? (
+								<Loader2 size={12} className="animate-spin" />
+							) : (
+								<Copy size={12} />
+							)}
+							Copy script
 						</Button>
 						<ResetDialog isResetting={isResetting} onConfirm={handleReset} />
 					</div>

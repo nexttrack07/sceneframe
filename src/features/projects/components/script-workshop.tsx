@@ -29,7 +29,9 @@ import {
 } from "../lib/script-helpers";
 import {
 	applyScriptEditDraft,
+	approveScenes,
 	generateOpeningHook,
+	generateScenePlan,
 	proposeScriptEdit,
 	resetWorkshop,
 	saveIntake,
@@ -85,6 +87,17 @@ export function ScriptWorkshop({
 	const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages);
 	const [input, setInput] = useState("");
 	const [isSending, setIsSending] = useState(false);
+	const [isApprovingProposal, setIsApprovingProposal] = useState(false);
+	const [workshopStage, setWorkshopStage] = useState<"hook" | "scene-plan">(
+		fallbackProposal?.length ? "scene-plan" : "hook",
+	);
+	const [selectedProposalScenes, setSelectedProposalScenes] = useState<
+		number[]
+	>(() =>
+		(fallbackProposal ?? [])
+			.map((scene, index) => scene.sceneNumber ?? index + 1)
+			.filter((value) => Number.isFinite(value)),
+	);
 	const [error, setError] = useState<string | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -134,6 +147,41 @@ export function ScriptWorkshop({
 		return null;
 	}, [chatMessages]);
 	const effectiveProposal = lastProposal ?? fallbackProposal ?? null;
+
+	useEffect(() => {
+		if (effectiveProposal) {
+			setWorkshopStage("scene-plan");
+			setSelectedProposalScenes((current) => {
+				const nextSceneNumbers = effectiveProposal
+					.map((scene, index) => scene.sceneNumber ?? index + 1)
+					.filter((value) => Number.isFinite(value));
+				const nextSet = new Set(nextSceneNumbers);
+				const retained = current.filter((sceneNumber) =>
+					nextSet.has(sceneNumber),
+				);
+				return retained.length > 0 ? retained : nextSceneNumbers;
+			});
+		}
+	}, [effectiveProposal]);
+
+	const shouldExpandToScenePlan = useCallback(
+		(content: string) => {
+			if (!effectiveOpeningHook || effectiveProposal) return false;
+			const normalized = content.toLowerCase();
+			return [
+				"looks good",
+				"good",
+				"next scene",
+				"rest of the script",
+				"expand",
+				"continue",
+				"go from there",
+				"scene plan",
+				"scene breakdown",
+			].some((phrase) => normalized.includes(phrase));
+		},
+		[effectiveOpeningHook, effectiveProposal],
+	);
 
 	const quickReplies = useMemo(() => {
 		for (let i = chatMessages.length - 1; i >= 0; i--) {
@@ -261,6 +309,75 @@ export function ScriptWorkshop({
 		[projectId],
 	);
 
+	const runScenePlanGeneration = useCallback(
+		async (feedback?: string) => {
+			const trimmed = feedback?.trim();
+			const selectedSceneContext =
+				effectiveProposal && selectedProposalScenes.length > 0
+					? `Selected scenes to revise: ${selectedProposalScenes
+							.slice()
+							.sort((a, b) => a - b)
+							.map((sceneNumber) => `Scene ${sceneNumber}`)
+							.join(", ")}.\n\n`
+					: "";
+			const scopedFeedback = trimmed
+				? `${selectedSceneContext}${trimmed}`.trim()
+				: selectedSceneContext.trim() || undefined;
+			const tempId = crypto.randomUUID();
+
+			if (effectiveProposal && selectedProposalScenes.length === 0) {
+				setError("Select at least one scene to revise.");
+				return;
+			}
+
+			if (trimmed) {
+				const userMsg: Message = {
+					id: tempId,
+					projectId,
+					role: "user",
+					content: trimmed,
+					createdAt: new Date(),
+				};
+				setChatMessages((prev) => [...prev, userMsg]);
+			}
+
+			setWorkshopStage("scene-plan");
+			setIsSending(true);
+			setError(null);
+
+			try {
+				const result = await generateScenePlan({
+					data: { projectId, feedback: scopedFeedback },
+				});
+				setChatMessages((prev) => [
+					...prev,
+					{
+						id: crypto.randomUUID(),
+						projectId,
+						role: "assistant",
+						content: result.content,
+						createdAt: new Date(),
+					},
+				]);
+			} catch (err) {
+				if (trimmed) {
+					setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
+				}
+				setError(
+					err instanceof Error
+						? err.message
+						: "Failed to generate the scene plan",
+				);
+				if (!effectiveProposal) {
+					setWorkshopStage("hook");
+				}
+			} finally {
+				setIsSending(false);
+			}
+		},
+		[effectiveProposal, projectId, selectedProposalScenes],
+	);
+
 	async function handleSend() {
 		if (!input.trim() || isSending) return;
 		const content = input.trim();
@@ -303,6 +420,14 @@ export function ScriptWorkshop({
 			}
 			return;
 		}
+		if (
+			workshopStage === "scene-plan" ||
+			effectiveProposal ||
+			shouldExpandToScenePlan(content)
+		) {
+			await runScenePlanGeneration(content);
+			return;
+		}
 		await runHookGeneration(content);
 	}
 
@@ -336,6 +461,8 @@ export function ScriptWorkshop({
 			await resetWorkshop({ data: projectId });
 			setChatMessages([]);
 			setOpeningHook(null);
+			setWorkshopStage("hook");
+			setSelectedProposalScenes([]);
 			setShowIntake(true);
 			await router.invalidate();
 		} catch (err) {
@@ -385,6 +512,28 @@ export function ScriptWorkshop({
 		} finally {
 			onDraftApplyStateChange?.(null);
 			setIsSending(false);
+		}
+	}
+
+	async function handleApproveProposal() {
+		if (!effectiveProposal || isSending || isApprovingProposal) return;
+		setIsApprovingProposal(true);
+		setError(null);
+		try {
+			await approveScenes({
+				data: {
+					projectId,
+					parsedScenes: effectiveProposal,
+					targetDurationSec: intake?.targetDurationSec,
+				},
+			});
+			await router.invalidate();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to approve scene plan",
+			);
+		} finally {
+			setIsApprovingProposal(false);
 		}
 	}
 
@@ -626,7 +775,9 @@ export function ScriptWorkshop({
 									placeholder={
 										mode === "copilot"
 											? "Ask to edit the script, scenes, or shots..."
-											: "Tell me how to refine the opening hook..."
+											: effectiveOpeningHook && !effectiveProposal
+												? "Refine the hook, or ask to expand into the full scene plan..."
+												: "Tell me how to refine the opening hook..."
 									}
 									rows={2}
 									className="resize-none flex-1"
@@ -671,6 +822,64 @@ export function ScriptWorkshop({
 									</p>
 								</div>
 							</div>
+						) : effectiveProposal ? (
+							<div className="max-w-4xl space-y-5">
+								<div className="flex items-center gap-2 text-sm text-muted-foreground">
+									<Film size={15} />
+									<span>Scene Plan</span>
+								</div>
+								<div className="flex items-center justify-between gap-3 rounded-2xl border bg-background px-5 py-4 shadow-sm">
+									<div>
+										<p className="text-sm font-medium text-foreground">
+											Review the generated scenes
+										</p>
+										<p className="text-sm text-muted-foreground">
+											Approve when this breakdown is ready to become your
+											storyboard.
+										</p>
+									</div>
+									<Button
+										onClick={() => void handleApproveProposal()}
+										disabled={isApprovingProposal}
+									>
+										{isApprovingProposal ? (
+											<Loader2 size={14} className="mr-2 animate-spin" />
+										) : null}
+										Approve scene plan
+									</Button>
+								</div>
+								{effectiveProposal.map((scene, i) => (
+									<label
+										key={`${scene.title}-${scene.description.slice(0, 30)}`}
+										className="flex gap-3 bg-background border rounded-xl p-4 cursor-pointer"
+									>
+										<input
+											type="checkbox"
+											checked={selectedProposalScenes.includes(
+												scene.sceneNumber ?? i + 1,
+											)}
+											onChange={() => {
+												const sceneNumber = scene.sceneNumber ?? i + 1;
+												setSelectedProposalScenes((current) =>
+													current.includes(sceneNumber)
+														? current.filter((value) => value !== sceneNumber)
+														: [...current, sceneNumber],
+												);
+											}}
+											className="mt-1 h-4 w-4 shrink-0 accent-primary"
+										/>
+										<div className="min-w-0">
+											<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
+												Scene {scene.sceneNumber ?? i + 1}
+												{scene.title ? `: ${scene.title}` : ""}
+											</p>
+											<p className="text-sm text-foreground leading-relaxed">
+												{scene.description}
+											</p>
+										</div>
+									</label>
+								))}
+							</div>
 						) : effectiveOpeningHook ? (
 							<div className="max-w-4xl space-y-5">
 								<div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -705,27 +914,24 @@ export function ScriptWorkshop({
 										</div>
 									</div>
 								</div>
-							</div>
-						) : effectiveProposal ? (
-							<div className="max-w-4xl space-y-3">
-								<div className="flex items-center gap-2 text-sm text-muted-foreground">
-									<Film size={15} />
-									<span>Legacy scene proposal</span>
-								</div>
-								{effectiveProposal.map((scene, i) => (
-									<div
-										key={`${scene.title}-${scene.description.slice(0, 30)}`}
-										className="bg-background border rounded-xl p-4"
+								<div className="rounded-2xl border bg-background px-5 py-4 shadow-sm flex items-center justify-between gap-4">
+									<p className="text-sm text-muted-foreground leading-relaxed">
+										If this hook is working, generate the rest of the scene plan
+										next.
+									</p>
+									<Button
+										type="button"
+										variant="outline"
+										onClick={() =>
+											void runScenePlanGeneration(
+												"The opening hook looks good. Please expand it into a full scene-by-scene breakdown now.",
+											)
+										}
+										disabled={isSending}
 									>
-										<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
-											Scene {scene.sceneNumber ?? i + 1}
-											{scene.title ? `: ${scene.title}` : ""}
-										</p>
-										<p className="text-sm text-foreground leading-relaxed">
-											{scene.description}
-										</p>
-									</div>
-								))}
+										Generate scene plan
+									</Button>
+								</div>
 							</div>
 						) : (
 							<div className="h-full rounded-2xl border border-dashed border-border/70 bg-background/70 flex items-center justify-center">

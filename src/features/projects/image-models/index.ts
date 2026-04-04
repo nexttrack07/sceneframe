@@ -1,14 +1,4 @@
 import type { ImageDefaults, ImageSettingValue } from "../project-types";
-import { flux2FlexSchema } from "./schemas/flux-2-flex";
-import { flux2MaxSchema } from "./schemas/flux-2-max";
-import { flux2ProSchema } from "./schemas/flux-2-pro";
-import { gptImage15Schema } from "./schemas/gpt-image-1.5";
-import { nanoBananaSchema } from "./schemas/nano-banana";
-import { nanoBanana2Schema } from "./schemas/nano-banana-2";
-import { nanoBananaProSchema } from "./schemas/nano-banana-pro";
-import { pImageSchema } from "./schemas/p-image";
-import { seedream4Schema } from "./schemas/seedream-4";
-import { zImageTurboSchema } from "./schemas/z-image-turbo";
 
 type ImageSettingPrimitive = string | number | boolean;
 
@@ -39,10 +29,50 @@ export interface ImageModelControlDefinition {
 	max?: number;
 }
 
+/**
+ * Provider switch - controls which provider is used for image generation.
+ * Set via IMAGE_PROVIDER environment variable: "replicate" or "fal"
+ * Defaults to "replicate" for production stability.
+ */
+const IMAGE_PROVIDER: "replicate" | "fal" =
+	(process.env.IMAGE_PROVIDER as "replicate" | "fal") || "replicate";
+
+/**
+ * Replicate execution configuration for image models.
+ */
+interface ReplicateExecution {
+	provider: "replicate";
+	/** Replicate model identifier (e.g., "owner/model-name") */
+	model: string;
+	/** Optional separate model for image-to-image */
+	imageToImageModel?: string;
+}
+
+/**
+ * fal.ai execution configuration for image models.
+ */
+interface FalExecution {
+	provider: "fal";
+	/** Endpoint for text-to-image generation */
+	textToImage: string;
+	/** Endpoint for image-to-image generation (optional, falls back to textToImage) */
+	imageToImage?: string;
+}
+
+/**
+ * Execution configuration for image models.
+ * Supports multiple providers for easy migration between services.
+ */
+export type ImageModelExecution = ReplicateExecution | FalExecution;
+
 export interface ImageModelDefinition {
 	id: string;
 	label: string;
 	provider: string;
+	/** Replicate execution config (optional if model is fal-only) */
+	replicateExecution?: ReplicateExecution;
+	/** fal.ai execution config (optional if model is replicate-only) */
+	falExecution?: FalExecution;
 	description: string;
 	logoText: string;
 	logoImageUrl?: string;
@@ -50,7 +80,7 @@ export interface ImageModelDefinition {
 	accentClassName?: string;
 	schema: ImageSchema;
 	supportsReferenceImages: boolean;
-	referenceInputField?: "image_input" | "input_images";
+	referenceInputField?: "image_url" | "image_urls" | "input_images";
 	visibleSettings: readonly string[];
 	hiddenDefaults?: Record<string, ImageSettingPrimitive>;
 }
@@ -122,220 +152,508 @@ function coercePropertyValue(
 	return typeof value === "string" ? value : fallback;
 }
 
+// fal.ai native schemas
+const fluxProSchema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		image_size: {
+			type: "string",
+			title: "Image Size",
+			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			default: "landscape_16_9",
+		},
+		num_images: {
+			type: "integer",
+			title: "Number of Images",
+			default: 1,
+			minimum: 1,
+			maximum: 4,
+		},
+		output_format: {
+			type: "string",
+			title: "Output Format",
+			enum: ["jpeg", "png"],
+			default: "png",
+		},
+		safety_tolerance: {
+			type: "integer",
+			title: "Safety Tolerance",
+			default: 2,
+			minimum: 1,
+			maximum: 6,
+		},
+	},
+} as const;
+
+const fluxDevSchema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		image_size: {
+			type: "string",
+			title: "Image Size",
+			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			default: "landscape_16_9",
+		},
+		num_inference_steps: {
+			type: "integer",
+			title: "Steps",
+			default: 28,
+			minimum: 1,
+			maximum: 50,
+		},
+		guidance_scale: {
+			type: "number",
+			title: "Guidance Scale",
+			default: 3.5,
+			minimum: 1,
+			maximum: 20,
+		},
+		num_images: {
+			type: "integer",
+			title: "Number of Images",
+			default: 1,
+			minimum: 1,
+			maximum: 4,
+		},
+		output_format: {
+			type: "string",
+			title: "Output Format",
+			enum: ["jpeg", "png"],
+			default: "png",
+		},
+	},
+} as const;
+
+const fluxSchnellSchema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		image_size: {
+			type: "string",
+			title: "Image Size",
+			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			default: "landscape_16_9",
+		},
+		num_inference_steps: {
+			type: "integer",
+			title: "Steps",
+			default: 4,
+			minimum: 1,
+			maximum: 12,
+		},
+		num_images: {
+			type: "integer",
+			title: "Number of Images",
+			default: 1,
+			minimum: 1,
+			maximum: 4,
+		},
+		output_format: {
+			type: "string",
+			title: "Output Format",
+			enum: ["jpeg", "png"],
+			default: "png",
+		},
+	},
+} as const;
+
+const recraftV3Schema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		image_size: {
+			type: "string",
+			title: "Image Size",
+			enum: ["square", "square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			default: "landscape_16_9",
+		},
+		style: {
+			type: "string",
+			title: "Style",
+			enum: ["any", "realistic_image", "digital_illustration", "vector_illustration", "icon"],
+			default: "realistic_image",
+		},
+	},
+} as const;
+
+const ideogramV2Schema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
+			default: "16:9",
+		},
+		style_type: {
+			type: "string",
+			title: "Style",
+			enum: ["auto", "general", "realistic", "design", "render_3d", "anime"],
+			default: "auto",
+		},
+		magic_prompt_option: {
+			type: "string",
+			title: "Magic Prompt",
+			enum: ["auto", "on", "off"],
+			default: "auto",
+		},
+	},
+} as const;
+
+const sd35LargeSchema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		negative_prompt: { type: "string", title: "Negative Prompt", default: "" },
+		image_size: {
+			type: "string",
+			title: "Image Size",
+			enum: ["square", "square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			default: "landscape_16_9",
+		},
+		num_inference_steps: {
+			type: "integer",
+			title: "Steps",
+			default: 28,
+			minimum: 1,
+			maximum: 50,
+		},
+		guidance_scale: {
+			type: "number",
+			title: "CFG Scale",
+			default: 4.5,
+			minimum: 1,
+			maximum: 20,
+		},
+	},
+} as const;
+
+const nanoBanana2Schema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"],
+			default: "16:9",
+		},
+		resolution: {
+			type: "string",
+			title: "Resolution",
+			enum: ["0.5K", "1K", "2K", "4K"],
+			default: "1K",
+		},
+		output_format: {
+			type: "string",
+			title: "Output Format",
+			enum: ["jpeg", "png", "webp"],
+			default: "png",
+		},
+		safety_tolerance: {
+			type: "string",
+			title: "Safety Tolerance",
+			enum: ["1", "2", "3", "4", "5", "6"],
+			default: "4",
+		},
+	},
+} as const;
+
+const nanoBananaProSchema = {
+	type: "object",
+	title: "Input",
+	required: ["prompt"],
+	properties: {
+		prompt: { type: "string", title: "Prompt" },
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+			default: "16:9",
+		},
+		resolution: {
+			type: "string",
+			title: "Resolution",
+			enum: ["1K", "2K", "4K"],
+			default: "2K",
+		},
+		output_format: {
+			type: "string",
+			title: "Output Format",
+			enum: ["jpeg", "png", "webp"],
+			default: "png",
+		},
+		safety_tolerance: {
+			type: "string",
+			title: "Safety Tolerance",
+			enum: ["1", "2", "3", "4", "5", "6"],
+			default: "4",
+		},
+	},
+} as const;
+
 export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 	{
-		id: "google/nano-banana",
-		label: "Nano Banana",
-		provider: "Google",
-		description:
-			"Fast general-purpose image generation with strong visual fidelity.",
-		logoText: "G",
-		logoImageUrl: "/model-media/google-logo.png",
-		previewImageUrl: "/model-media/nano-banana-cover.png",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#102542_0%,#163f7a_35%,#5eb0ff_68%,#f5fbff_100%)]",
-		schema: nanoBananaSchema,
-		supportsReferenceImages: true,
-		referenceInputField: "image_input",
-		visibleSettings: ["aspect_ratio", "output_format"],
-	},
-	{
-		id: "google/nano-banana-2",
-		label: "Nano Banana 2",
-		provider: "Google",
-		description:
-			"Higher-resolution Nano Banana with broader aspect-ratio support.",
-		logoText: "G",
-		logoImageUrl: "/model-media/google-logo.png",
-		previewImageUrl: "/model-media/nano-banana-2-cover.jpeg",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#12263f_0%,#2457a5_30%,#42c4ff_68%,#e8fff8_100%)]",
-		schema: nanoBanana2Schema,
-		supportsReferenceImages: true,
-		referenceInputField: "image_input",
-		visibleSettings: [
-			"aspect_ratio",
-			"resolution",
-			"output_format",
-			"google_search",
-			"image_search",
-		],
-	},
-	{
-		id: "google/nano-banana-pro",
-		label: "Nano Banana Pro",
-		provider: "Google",
-		description:
-			"Premium Nano Banana variant tuned for quality and cinematic detail.",
-		logoText: "G",
-		logoImageUrl: "/model-media/google-logo.png",
-		previewImageUrl: "/model-media/nano-banana-pro-cover.png",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#1d1135_0%,#4c2b93_30%,#6cc9ff_65%,#fff4cc_100%)]",
-		schema: nanoBananaProSchema,
-		supportsReferenceImages: true,
-		referenceInputField: "image_input",
-		visibleSettings: [
-			"aspect_ratio",
-			"resolution",
-			"output_format",
-			"safety_filter_level",
-			"allow_fallback_model",
-		],
-	},
-	{
-		id: "black-forest-labs/flux-2-flex",
-		label: "FLUX 2 Flex",
+		id: "fal-ai/flux-pro/v1.1",
+		label: "FLUX Pro 1.1",
 		provider: "BFL",
+		replicateExecution: {
+			provider: "replicate",
+			model: "black-forest-labs/flux-1.1-pro",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/flux-pro/v1.1",
+			imageToImage: "fal-ai/flux-pro/v1.1/redux",
+		},
 		description:
-			"Flexible FLUX model for strong prompt following and quick iteration.",
-		logoText: "B",
-		logoImageUrl: "/model-media/bfl-logo.png",
-		previewImageUrl: "/model-media/flux-2-flex-cover.webp",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#0f172a_0%,#115e59_30%,#34d399_62%,#d1fae5_100%)]",
-		schema: flux2FlexSchema,
-		supportsReferenceImages: true,
-		referenceInputField: "input_images",
-		visibleSettings: [
-			"aspect_ratio",
-			"resolution",
-			"output_format",
-			"output_quality",
-			"prompt_upsampling",
-			"safety_tolerance",
-		],
-	},
-	{
-		id: "black-forest-labs/flux-2-pro",
-		label: "FLUX 2 Pro",
-		provider: "BFL",
-		description:
-			"Higher-end FLUX model tuned for polished, commercial-looking output.",
-		logoText: "B",
+			"High-quality FLUX Pro model with excellent prompt following and detail.",
+		logoText: "F",
 		logoImageUrl: "/model-media/bfl-logo.png",
 		previewImageUrl: "/model-media/flux-2-pro-cover.jpg",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#111827_0%,#7c2d12_35%,#f59e0b_65%,#ffedd5_100%)]",
-		schema: flux2ProSchema,
+		schema: fluxProSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "input_images",
+		referenceInputField: "image_url",
 		visibleSettings: [
-			"aspect_ratio",
-			"resolution",
+			"image_size",
 			"output_format",
-			"output_quality",
 			"safety_tolerance",
 		],
 	},
 	{
-		id: "black-forest-labs/flux-2-max",
-		label: "FLUX 2 Max",
+		id: "fal-ai/flux-pro/v1.1-ultra",
+		label: "FLUX Pro Ultra",
 		provider: "BFL",
+		replicateExecution: {
+			provider: "replicate",
+			model: "black-forest-labs/flux-1.1-pro-ultra",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/flux-pro/v1.1-ultra",
+			imageToImage: "fal-ai/flux-pro/v1.1-ultra/redux",
+		},
 		description:
-			"Top-tier FLUX rendering with richer detail and stronger finish.",
-		logoText: "B",
+			"Ultra high-resolution FLUX for maximum detail and clarity.",
+		logoText: "F",
 		logoImageUrl: "/model-media/bfl-logo.png",
 		previewImageUrl: "/model-media/flux-2-max-cover.jpg",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#111827_0%,#3b0764_30%,#c084fc_65%,#f5d0fe_100%)]",
-		schema: flux2MaxSchema,
+		schema: fluxProSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "input_images",
+		referenceInputField: "image_url",
 		visibleSettings: [
-			"aspect_ratio",
-			"resolution",
+			"image_size",
 			"output_format",
-			"output_quality",
 			"safety_tolerance",
 		],
 	},
 	{
-		id: "openai/gpt-image-1.5",
-		label: "GPT Image 1.5",
-		provider: "OpenAI",
+		id: "fal-ai/flux/dev",
+		label: "FLUX Dev",
+		provider: "BFL",
+		replicateExecution: {
+			provider: "replicate",
+			model: "black-forest-labs/flux-dev",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/flux/dev",
+			imageToImage: "fal-ai/flux/dev/image-to-image",
+		},
 		description:
-			"Versatile image generation and editing with strong composition control.",
-		logoText: "O",
-		logoImageUrl: "/model-media/openai-logo.png",
-		previewImageUrl: "/model-media/gpt-image-1-5-cover.jpg",
+			"Balanced FLUX model for development and iteration with good quality.",
+		logoText: "F",
+		logoImageUrl: "/model-media/bfl-logo.png",
+		previewImageUrl: "/model-media/flux-2-flex-cover.webp",
 		accentClassName:
-			"bg-[linear-gradient(135deg,#052e16_0%,#166534_35%,#4ade80_65%,#ecfccb_100%)]",
-		schema: gptImage15Schema,
+			"bg-[linear-gradient(135deg,#0f172a_0%,#115e59_30%,#34d399_62%,#d1fae5_100%)]",
+		schema: fluxDevSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "input_images",
+		referenceInputField: "image_url",
 		visibleSettings: [
-			"size",
-			"quality",
-			"background",
-			"output_format",
-			"output_compression",
-			"moderation",
-			"input_fidelity",
-		],
-	},
-	{
-		id: "bytedance/seedream-4",
-		label: "Seedream 4",
-		provider: "ByteDance",
-		description:
-			"Crisp stylized generation with prompt enhancement and reference support.",
-		logoText: "S",
-		logoImageUrl: "/model-media/bytedance-logo.png",
-		previewImageUrl: "/model-media/seedream-4-cover.jpg",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#172554_0%,#1d4ed8_34%,#38bdf8_68%,#eff6ff_100%)]",
-		schema: seedream4Schema,
-		supportsReferenceImages: true,
-		referenceInputField: "image_input",
-		visibleSettings: ["size", "aspect_ratio", "enhance_prompt"],
-	},
-	{
-		id: "prunaai/p-image",
-		label: "P Image",
-		provider: "PrunaAI",
-		description:
-			"Balanced text-to-image model with quick iterations and prompt enhancement.",
-		logoText: "P",
-		logoImageUrl: "/model-media/prunaai-logo.png",
-		previewImageUrl: "/model-media/p-image-cover.jpeg",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#3f0d12_0%,#a71d31_35%,#f97316_68%,#fff7ed_100%)]",
-		schema: pImageSchema,
-		supportsReferenceImages: false,
-		visibleSettings: [
-			"aspect_ratio",
-			"output_format",
-			"speed",
-			"enhance_prompt",
-		],
-	},
-	{
-		id: "prunaai/z-image-turbo",
-		label: "Z Image Turbo",
-		provider: "PrunaAI",
-		description:
-			"Turbo-focused image model for rapid renders and responsive exploration.",
-		logoText: "Z",
-		logoImageUrl: "/model-media/prunaai-logo.png",
-		previewImageUrl: "/model-media/z-image-turbo-cover.jpg",
-		accentClassName:
-			"bg-[linear-gradient(135deg,#1f2937_0%,#0f766e_30%,#2dd4bf_65%,#ccfbf1_100%)]",
-		schema: zImageTurboSchema,
-		supportsReferenceImages: false,
-		visibleSettings: [
-			"width",
-			"height",
+			"image_size",
 			"num_inference_steps",
 			"guidance_scale",
-			"output_format",
-			"output_quality",
 		],
+	},
+	{
+		id: "fal-ai/flux/schnell",
+		label: "FLUX Schnell",
+		provider: "BFL",
+		replicateExecution: {
+			provider: "replicate",
+			model: "black-forest-labs/flux-schnell",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/flux/schnell",
+		},
+		description:
+			"Fast FLUX model for rapid iteration and quick previews.",
+		logoText: "F",
+		logoImageUrl: "/model-media/bfl-logo.png",
+		previewImageUrl: "/model-media/flux-2-flex-cover.webp",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#0f172a_0%,#0891b2_35%,#22d3ee_65%,#cffafe_100%)]",
+		schema: fluxSchnellSchema,
+		supportsReferenceImages: false,
+		visibleSettings: [
+			"image_size",
+			"num_inference_steps",
+		],
+	},
+	{
+		id: "fal-ai/recraft-v3",
+		label: "Recraft V3",
+		provider: "Recraft",
+		replicateExecution: {
+			provider: "replicate",
+			model: "recraft-ai/recraft-v3",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/recraft-v3",
+		},
+		description:
+			"Excellent for graphic design, illustrations, and stylized imagery.",
+		logoText: "R",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#1f2937_0%,#7c3aed_35%,#a78bfa_65%,#ede9fe_100%)]",
+		schema: recraftV3Schema,
+		supportsReferenceImages: false,
+		visibleSettings: ["image_size", "style"],
+	},
+	{
+		id: "fal-ai/ideogram/v2",
+		label: "Ideogram V2",
+		provider: "Ideogram",
+		replicateExecution: {
+			provider: "replicate",
+			model: "ideogram-ai/ideogram-v2",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/ideogram/v2",
+		},
+		description:
+			"Exceptional text rendering and typography in generated images.",
+		logoText: "I",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#172554_0%,#1d4ed8_34%,#38bdf8_68%,#eff6ff_100%)]",
+		schema: ideogramV2Schema,
+		supportsReferenceImages: false,
+		visibleSettings: ["aspect_ratio", "style_type", "magic_prompt_option"],
+	},
+	{
+		id: "fal-ai/stable-diffusion-v35-large",
+		label: "SD 3.5 Large",
+		provider: "Stability",
+		replicateExecution: {
+			provider: "replicate",
+			model: "stability-ai/stable-diffusion-3.5-large",
+		},
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/stable-diffusion-v35-large",
+			imageToImage: "fal-ai/stable-diffusion-v35-large/image-to-image",
+		},
+		description:
+			"Stable Diffusion 3.5 Large with strong coherence and detail.",
+		logoText: "S",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#1f2937_0%,#6d28d9_30%,#a78bfa_65%,#ede9fe_100%)]",
+		schema: sd35LargeSchema,
+		supportsReferenceImages: true,
+		referenceInputField: "image_url",
+		visibleSettings: ["image_size", "num_inference_steps", "guidance_scale", "negative_prompt"],
+	},
+	{
+		id: "fal-ai/nano-banana-2",
+		label: "Nano Banana 2",
+		provider: "Google",
+		// Google Imagen models are only available on fal.ai
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/nano-banana-2",
+			imageToImage: "fal-ai/nano-banana-2/edit",
+		},
+		description:
+			"Google's fast image generation and editing model with web search grounding.",
+		logoText: "G",
+		logoImageUrl: "/model-media/google-logo.png",
+		previewImageUrl: "/model-media/nano-banana-2-cover.jpeg",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#1e3a5f_0%,#4285f4_30%,#34a853_50%,#fbbc05_70%,#ea4335_100%)]",
+		schema: nanoBanana2Schema,
+		supportsReferenceImages: true,
+		referenceInputField: "image_urls",
+		visibleSettings: ["aspect_ratio", "resolution", "output_format", "safety_tolerance"],
+	},
+	{
+		id: "fal-ai/nano-banana-pro",
+		label: "Nano Banana Pro",
+		provider: "Google",
+		// Google Imagen models are only available on fal.ai
+		falExecution: {
+			provider: "fal",
+			textToImage: "fal-ai/nano-banana-pro",
+			imageToImage: "fal-ai/nano-banana-pro/edit",
+		},
+		description:
+			"Google's state-of-the-art image generation model with highest quality output.",
+		logoText: "G",
+		logoImageUrl: "/model-media/google-logo.png",
+		previewImageUrl: "/model-media/nano-banana-pro-cover.png",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#0f172a_0%,#4285f4_25%,#34a853_50%,#fbbc05_75%,#ea4335_100%)]",
+		schema: nanoBananaProSchema,
+		supportsReferenceImages: true,
+		referenceInputField: "image_urls",
+		visibleSettings: ["aspect_ratio", "resolution", "output_format", "safety_tolerance"],
 	},
 ] as const;
 
 export function getImageModelDefinition(modelId: string): ImageModelDefinition {
 	return IMAGE_MODELS.find((model) => model.id === modelId) ?? IMAGE_MODELS[0];
+}
+
+export function getImageModelExecution(modelId: string): ImageModelExecution {
+	const model = getImageModelDefinition(modelId);
+
+	// Prefer the configured provider if available
+	if (IMAGE_PROVIDER === "fal" && model.falExecution) {
+		return model.falExecution;
+	}
+	if (IMAGE_PROVIDER === "replicate" && model.replicateExecution) {
+		return model.replicateExecution;
+	}
+
+	// Fall back to whatever is available
+	if (model.replicateExecution) return model.replicateExecution;
+	if (model.falExecution) return model.falExecution;
+
+	throw new Error(`No execution config found for image model ${modelId}`);
 }
 
 export function isSupportedImageModel(modelId: string) {
@@ -425,11 +743,13 @@ export function buildImageModelInput({
 	prompt,
 	modelOptions,
 	referenceImageUrls,
+	mode = "text-to-image",
 }: {
 	modelId: string;
 	prompt: string;
 	modelOptions: Record<string, ImageSettingValue>;
 	referenceImageUrls?: string[];
+	mode?: "text-to-image" | "image-to-image";
 }) {
 	const model = getImageModelDefinition(modelId);
 	const normalizedOptions = normalizeImageModelOptions(modelId, modelOptions);
@@ -438,15 +758,40 @@ export function buildImageModelInput({
 		...normalizedOptions,
 	};
 
-	if (
-		model.supportsReferenceImages &&
-		model.referenceInputField &&
-		referenceImageUrls?.length
-	) {
-		input[model.referenceInputField] = referenceImageUrls;
+	// Handle reference images for fal.ai models
+	// Different endpoints have different input schemas
+	const hasReferenceImages = referenceImageUrls && referenceImageUrls.length > 0;
+	const isImageToImage = mode === "image-to-image" || hasReferenceImages;
+
+	if (isImageToImage && hasReferenceImages && model.supportsReferenceImages) {
+		// Use the model's specified reference input field
+		if (model.referenceInputField === "image_urls") {
+			// Models that accept an array of images (e.g., Nano Banana)
+			input.image_urls = referenceImageUrls;
+		} else {
+			// Models that accept a single image URL (e.g., FLUX, SD)
+			input.image_url = referenceImageUrls[0];
+
+			// Add strength parameter for image-to-image if not already set
+			// This controls how much of the original image is preserved
+			if (input.strength === undefined) {
+				input.strength = 0.85; // Default: keep most of the image structure
+			}
+		}
 	}
 
 	return input;
+}
+
+/**
+ * Determine the generation mode based on inputs
+ */
+export function determineImageGenerationMode(args: {
+	referenceImageUrls?: string[];
+}): "text-to-image" | "image-to-image" {
+	return args.referenceImageUrls && args.referenceImageUrls.length > 0
+		? "image-to-image"
+		: "text-to-image";
 }
 
 export function getImageOutputFormat(
@@ -480,7 +825,7 @@ export function normalizeImageDefaults(value: unknown): ImageDefaults {
 	const model =
 		typeof raw.model === "string" && isSupportedImageModel(raw.model)
 			? raw.model
-			: "google/nano-banana-pro";
+			: "fal-ai/flux-pro/v1.1";
 	const rawModelOptions =
 		raw.modelOptions && typeof raw.modelOptions === "object"
 			? (raw.modelOptions as Record<string, unknown>)

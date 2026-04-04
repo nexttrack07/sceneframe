@@ -1,6 +1,6 @@
 import { Film } from "lucide-react";
 import type { Message } from "@/db/schema";
-import { parseSceneProposal, stripSuggestions } from "../lib/script-helpers";
+import { stripSuggestions } from "../lib/script-helpers";
 
 function renderMarkdown(text: string): React.ReactNode[] {
 	const lines = text.split("\n");
@@ -53,7 +53,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
 export function ChatBubble({ message }: { message: Message }) {
 	const isUser = message.role === "user";
 
-	const sceneProposal = !isUser ? parseSceneProposal(message.content) : null;
 	const displayText = !isUser
 		? stripSuggestions(
 				message.content.replace(/```scenes\s*[\s\S]*?```/, "").trim(),
@@ -87,35 +86,6 @@ export function ChatBubble({ message }: { message: Message }) {
 						<p className="text-sm whitespace-pre-wrap leading-relaxed">
 							{renderMarkdown(displayText)}
 						</p>
-					</div>
-				)}
-				{sceneProposal && (
-					<div className="space-y-2">
-						{sceneProposal.map((scene, i) => (
-							<div
-								key={`${scene.title}-${scene.description.slice(0, 30)}`}
-								className="bg-card border border-primary/30 rounded-lg p-3 shadow-sm"
-							>
-								<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
-									Scene {scene.sceneNumber ?? i + 1}
-									{scene.title ? `: ${scene.title}` : ""}
-								</p>
-								{(scene.beat || scene.durationSec || scene.hookRole) && (
-									<p className="text-[11px] text-muted-foreground mb-1">
-										{[
-											scene.beat ? `Beat: ${scene.beat}` : null,
-											scene.durationSec ? `${scene.durationSec}s` : null,
-											scene.hookRole ? `Role: ${scene.hookRole}` : null,
-										]
-											.filter(Boolean)
-											.join(" • ")}
-									</p>
-								)}
-								<p className="text-sm text-foreground leading-relaxed">
-									{scene.description}
-								</p>
-							</div>
-						))}
 					</div>
 				)}
 			</div>

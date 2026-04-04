@@ -1,19 +1,17 @@
 import { task } from "@trigger.dev/sdk";
 import { and, eq } from "drizzle-orm";
-import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, scenes, users } from "@/db/schema";
+import { assets, scenes } from "@/db/schema";
 import {
-	parseGeneratedMediaUrls,
-	summarizeGenerationOutput,
-} from "@/features/projects/image-generation-helpers.server";
+	generateImageSync,
+	getImageProviderApiKey,
+} from "@/features/projects/image-generation-provider.server";
 import {
 	buildImageModelInput,
 	getImageOutputContentType,
 	getImageOutputFormat,
 } from "@/features/projects/image-models";
 import type { ImageSettingValue } from "@/features/projects/project-types";
-import { decryptUserApiKey } from "@/lib/encryption.server";
 import { uploadFromUrl } from "@/lib/r2.server";
 import { loadActiveAsset } from "./helpers";
 
@@ -55,37 +53,33 @@ export const generateSceneImageAsset = task({
 			};
 		}
 
-		const user = await db.query.users.findFirst({
-			where: eq(users.id, payload.userId),
+		const apiKey = await getImageProviderApiKey({
+			userId: payload.userId,
+			modelId: payload.model,
 		});
-		if (!user?.providerKeyEnc || !user?.providerKeyDek) {
-			throw new Error("No Replicate API key found for user");
-		}
-
-		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
-		const replicate = new Replicate({ auth: apiKey });
 		const outputFormat = getImageOutputFormat(
 			payload.model,
 			payload.modelOptions,
 		);
 		const outputContentType = getImageOutputContentType(outputFormat);
-		const replicateInput = buildImageModelInput({
+		const modelInput = buildImageModelInput({
 			modelId: payload.model,
 			prompt: payload.prompt,
 			modelOptions: payload.modelOptions,
+			mode: "text-to-image",
 		});
 
-		const output = await replicate.run(payload.model as `${string}/${string}`, {
-			input: replicateInput,
+		const urls = await generateImageSync({
+			modelId: payload.model,
+			input: modelInput,
+			providerApiKey: apiKey,
+			mode: "text-to-image",
 		});
 
-		const urls = parseGeneratedMediaUrls(output);
 		const sourceUrl = urls[0];
 
 		if (!sourceUrl) {
-			throw new Error(
-				`No output URL found (${summarizeGenerationOutput(output)}).`,
-			);
+			throw new Error("No output URL found from fal.ai generation.");
 		}
 
 		const storageKey = `projects/${payload.projectId}/scenes/${payload.sceneId}/images/${payload.batchId}/image-${payload.sequenceIndex + 1}.${outputFormat}`;

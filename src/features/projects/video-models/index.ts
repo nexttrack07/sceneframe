@@ -26,22 +26,40 @@ export interface VideoModelControlDefinition {
 	max?: number;
 }
 
+interface ReplicateExecution {
+	provider: "replicate";
+	model: string;
+	/** Optional separate model for image-to-video if different from main model */
+	imageToVideoModel?: string;
+	/** Optional separate model for first-last-frame transitions */
+	transitionModel?: string;
+}
+
+interface FalExecution {
+	provider: "fal";
+	shotTextToVideo?: string;
+	shotImageToVideo: string;
+	shotReferenceToVideo?: string;
+	transitionImageToVideo: string;
+}
+
+export type VideoExecution = ReplicateExecution | FalExecution;
+
+/**
+ * Set to "replicate" to use Replicate, "fal" to use fal.ai
+ * Default: "replicate"
+ */
+const VIDEO_PROVIDER: "replicate" | "fal" =
+	(process.env.VIDEO_PROVIDER as "replicate" | "fal") || "replicate";
+
 export interface VideoModelDefinition {
 	id: string;
 	label: string;
 	provider: string;
-	execution:
-		| {
-				provider: "replicate";
-				model: string;
-		  }
-		| {
-				provider: "fal";
-				shotTextToVideo?: string;
-				shotImageToVideo: string;
-				shotReferenceToVideo?: string;
-				transitionImageToVideo: string;
-		  };
+	/** Replicate execution config */
+	replicateExecution?: ReplicateExecution;
+	/** fal.ai execution config */
+	falExecution?: FalExecution;
 	description: string;
 	logoText: string;
 	logoImageUrl?: string;
@@ -174,21 +192,27 @@ const veo31Schema = {
 		aspect_ratio: {
 			type: "string",
 			title: "Aspect Ratio",
-			enum: ["16:9", "9:16"],
-			default: "16:9",
+			enum: ["auto", "16:9", "9:16"],
+			default: "auto",
 		},
 		duration: {
-			type: "integer",
+			type: "string",
 			title: "Duration",
-			default: 8,
-			minimum: 8,
-			maximum: 8,
+			enum: ["4s", "6s", "8s"],
+			default: "8s",
 		},
 		resolution: {
 			type: "string",
 			title: "Resolution",
-			enum: ["1080p"],
-			default: "1080p",
+			enum: ["720p", "1080p", "4k"],
+			default: "720p",
+		},
+		safety_tolerance: {
+			type: "string",
+			title: "Safety Tolerance",
+			description: "1 = strictest, 6 = least strict",
+			enum: ["1", "2", "3", "4", "5", "6"],
+			default: "6",
 		},
 		negative_prompt: {
 			type: "string",
@@ -258,7 +282,11 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "kwaivgi/kling-v3-omni-video",
 		label: "Kling V3 Omni",
 		provider: "Kwai",
-		execution: {
+		replicateExecution: {
+			provider: "replicate",
+			model: "kwaivgi/kling-v3-omni-video",
+		},
+		falExecution: {
 			provider: "fal",
 			shotTextToVideo: "fal-ai/kling-video/o3/pro/text-to-video",
 			shotImageToVideo: "fal-ai/kling-video/o3/pro/image-to-video",
@@ -340,7 +368,11 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "kwaivgi/kling-v2.5-turbo-pro",
 		label: "Kling 2.5 Turbo",
 		provider: "Kwai",
-		execution: {
+		replicateExecution: {
+			provider: "replicate",
+			model: "kwaivgi/kling-v2.5-turbo-pro",
+		},
+		falExecution: {
 			provider: "fal",
 			shotTextToVideo: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
 			shotImageToVideo: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
@@ -410,9 +442,13 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "xai/grok-imagine-video",
 		label: "Grok Imagine Video",
 		provider: "xAI",
-		execution: {
-			provider: "replicate",
-			model: "xai/grok-imagine-video",
+		// Note: Grok is only available on fal.ai (xAI partnership)
+		falExecution: {
+			provider: "fal",
+			shotTextToVideo: "xai/grok-imagine-video/text-to-video",
+			shotImageToVideo: "xai/grok-imagine-video/image-to-video",
+			shotReferenceToVideo: "xai/grok-imagine-video/reference-to-video",
+			transitionImageToVideo: "xai/grok-imagine-video/image-to-video",
 		},
 		description:
 			"Image-to-video model with native audio and broad aspect-ratio support.",
@@ -425,8 +461,8 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		visibleSettings: ["duration", "aspect_ratio", "resolution"],
 		buildTransitionInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			image: startImageUrl,
-			duration: Math.max(1, Math.min(15, Number(modelOptions.duration) || 5)),
+			image_url: startImageUrl,
+			duration: Math.max(1, Math.min(15, Number(modelOptions.duration) || 6)),
 			aspect_ratio:
 				typeof modelOptions.aspect_ratio === "string"
 					? modelOptions.aspect_ratio
@@ -435,8 +471,8 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			...(startImageUrl ? { image: startImageUrl } : {}),
-			duration: Math.max(1, Math.min(15, Number(modelOptions.duration) || 5)),
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
+			duration: Math.max(1, Math.min(15, Number(modelOptions.duration) || 6)),
 			aspect_ratio:
 				typeof modelOptions.aspect_ratio === "string"
 					? modelOptions.aspect_ratio
@@ -448,9 +484,16 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "google/veo-3.1",
 		label: "Veo 3.1",
 		provider: "Google",
-		execution: {
+		replicateExecution: {
 			provider: "replicate",
 			model: "google/veo-3.1",
+		},
+		falExecution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/veo3.1",
+			shotImageToVideo: "fal-ai/veo3.1/image-to-video",
+			shotReferenceToVideo: "fal-ai/veo3.1/reference-to-video",
+			transitionImageToVideo: "fal-ai/veo3.1/first-last-frame-to-video",
 		},
 		description:
 			"High-fidelity video model with reference images and ending-frame interpolation.",
@@ -460,7 +503,7 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		accentClassName:
 			"bg-[linear-gradient(135deg,#0f172a_0%,#2563eb_38%,#67e8f9_100%)]",
 		schema: veo31Schema,
-		visibleSettings: ["aspect_ratio", "negative_prompt", "generate_audio"],
+		visibleSettings: ["aspect_ratio", "duration", "resolution", "safety_tolerance", "negative_prompt", "generate_audio"],
 		buildTransitionInput: ({
 			prompt,
 			modelOptions,
@@ -468,11 +511,18 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			endImageUrl,
 		}) => ({
 			prompt,
-			image: startImageUrl,
-			last_frame: endImageUrl,
-			aspect_ratio: modelOptions.aspect_ratio === "9:16" ? "9:16" : "16:9",
-			duration: 8,
-			resolution: "1080p",
+			first_frame_url: startImageUrl,
+			last_frame_url: endImageUrl,
+			aspect_ratio: modelOptions.aspect_ratio === "16:9" || modelOptions.aspect_ratio === "9:16" ? modelOptions.aspect_ratio : "auto",
+			duration:
+				modelOptions.duration === "4s" || modelOptions.duration === "6s"
+					? (modelOptions.duration as "4s" | "6s")
+					: "8s",
+			resolution: modelOptions.resolution === "1080p" || modelOptions.resolution === "4k" ? modelOptions.resolution : "720p",
+			safety_tolerance:
+			typeof modelOptions.safety_tolerance === "string"
+				? modelOptions.safety_tolerance
+				: "6",
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
@@ -483,21 +533,96 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 					? modelOptions.generate_audio
 					: true,
 		}),
-		buildShotInput: ({
+		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
+			prompt,
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
+			aspect_ratio: modelOptions.aspect_ratio === "16:9" || modelOptions.aspect_ratio === "9:16" ? modelOptions.aspect_ratio : "auto",
+			duration:
+				modelOptions.duration === "4s" || modelOptions.duration === "6s"
+					? (modelOptions.duration as "4s" | "6s")
+					: "8s",
+			resolution: modelOptions.resolution === "1080p" || modelOptions.resolution === "4k" ? modelOptions.resolution : "720p",
+			safety_tolerance:
+			typeof modelOptions.safety_tolerance === "string"
+				? modelOptions.safety_tolerance
+				: "6",
+			negative_prompt:
+				typeof modelOptions.negative_prompt === "string" &&
+				modelOptions.negative_prompt.trim().length > 0
+					? modelOptions.negative_prompt.trim()
+					: undefined,
+			generate_audio:
+				typeof modelOptions.generate_audio === "boolean"
+					? modelOptions.generate_audio
+					: true,
+		}),
+	},
+	{
+		id: "google/veo-3.1-fast",
+		label: "Veo 3.1 Fast",
+		provider: "Google",
+		replicateExecution: {
+			provider: "replicate",
+			model: "google/veo-3.1-fast",
+		},
+		falExecution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/veo3.1/fast",
+			shotImageToVideo: "fal-ai/veo3.1/fast/image-to-video",
+			shotReferenceToVideo: "fal-ai/veo3.1/fast/reference-to-video",
+			transitionImageToVideo: "fal-ai/veo3.1/fast/first-last-frame-to-video",
+		},
+		description:
+			"Faster version of Veo 3.1 with quicker generation times.",
+		logoText: "G",
+		logoImageUrl: "/model-media/google-logo.png",
+		previewImageUrl: "/model-media/veo-3-1-preview.mp4",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#0f172a_0%,#3b82f6_38%,#93c5fd_100%)]",
+		schema: veo31Schema,
+		visibleSettings: ["aspect_ratio", "duration", "resolution", "safety_tolerance", "negative_prompt", "generate_audio"],
+		buildTransitionInput: ({
 			prompt,
 			modelOptions,
 			startImageUrl,
-			referenceImageUrls,
+			endImageUrl,
 		}) => ({
 			prompt,
-			...(referenceImageUrls.length > 1
-				? { reference_images: referenceImageUrls.slice(0, 4) }
-				: startImageUrl
-					? { image: startImageUrl }
-					: {}),
-			aspect_ratio: modelOptions.aspect_ratio === "9:16" ? "9:16" : "16:9",
-			duration: 8,
-			resolution: "1080p",
+			first_frame_url: startImageUrl,
+			last_frame_url: endImageUrl,
+			aspect_ratio: modelOptions.aspect_ratio === "16:9" || modelOptions.aspect_ratio === "9:16" ? modelOptions.aspect_ratio : "auto",
+			duration:
+				modelOptions.duration === "4s" || modelOptions.duration === "6s"
+					? (modelOptions.duration as "4s" | "6s")
+					: "8s",
+			resolution: modelOptions.resolution === "1080p" || modelOptions.resolution === "4k" ? modelOptions.resolution : "720p",
+			safety_tolerance:
+				typeof modelOptions.safety_tolerance === "string"
+					? modelOptions.safety_tolerance
+					: "6",
+			negative_prompt:
+				typeof modelOptions.negative_prompt === "string" &&
+				modelOptions.negative_prompt.trim().length > 0
+					? modelOptions.negative_prompt.trim()
+					: undefined,
+			generate_audio:
+				typeof modelOptions.generate_audio === "boolean"
+					? modelOptions.generate_audio
+					: true,
+		}),
+		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
+			prompt,
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
+			aspect_ratio: modelOptions.aspect_ratio === "16:9" || modelOptions.aspect_ratio === "9:16" ? modelOptions.aspect_ratio : "auto",
+			duration:
+				modelOptions.duration === "4s" || modelOptions.duration === "6s"
+					? (modelOptions.duration as "4s" | "6s")
+					: "8s",
+			resolution: modelOptions.resolution === "1080p" || modelOptions.resolution === "4k" ? modelOptions.resolution : "720p",
+			safety_tolerance:
+				typeof modelOptions.safety_tolerance === "string"
+					? modelOptions.safety_tolerance
+					: "6",
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
@@ -513,9 +638,12 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		id: "openai/sora-2",
 		label: "Sora 2",
 		provider: "OpenAI",
-		execution: {
-			provider: "replicate",
-			model: "openai/sora-2",
+		// Note: Sora is only available on fal.ai
+		falExecution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/sora-2/text-to-video",
+			shotImageToVideo: "fal-ai/sora-2/image-to-video",
+			transitionImageToVideo: "fal-ai/sora-2/image-to-video",
 		},
 		description:
 			"OpenAI flagship video generation with optional image reference as the starting frame.",
@@ -528,26 +656,33 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		visibleSettings: ["seconds", "aspect_ratio"],
 		buildTransitionInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			input_reference: startImageUrl,
-			seconds: Math.max(4, Math.min(20, Number(modelOptions.seconds) || 4)),
+			image_url: startImageUrl,
+			duration: Math.max(4, Math.min(20, Number(modelOptions.seconds) || 4)),
 			aspect_ratio:
-				modelOptions.aspect_ratio === "landscape" ? "landscape" : "portrait",
+				modelOptions.aspect_ratio === "landscape" ? "16:9" : "9:16",
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			...(startImageUrl ? { input_reference: startImageUrl } : {}),
-			seconds: Math.max(4, Math.min(20, Number(modelOptions.seconds) || 4)),
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
+			duration: Math.max(4, Math.min(20, Number(modelOptions.seconds) || 4)),
 			aspect_ratio:
-				modelOptions.aspect_ratio === "landscape" ? "landscape" : "portrait",
+				modelOptions.aspect_ratio === "landscape" ? "16:9" : "9:16",
 		}),
 	},
 	{
-		id: "wan-video/wan-2.5-i2v",
-		label: "Wan 2.5 I2V",
+		id: "wan-video/wan-2.7-i2v",
+		label: "Wan 2.7 I2V",
 		provider: "Alibaba",
-		execution: {
+		replicateExecution: {
 			provider: "replicate",
-			model: "wan-video/wan-2.5-i2v",
+			model: "wan-video/wan-2.7-i2v",
+		},
+		falExecution: {
+			provider: "fal",
+			shotTextToVideo: "fal-ai/wan/v2.7/text-to-video",
+			shotImageToVideo: "fal-ai/wan/v2.7/image-to-video",
+			shotReferenceToVideo: "fal-ai/wan/v2.7/reference-to-video",
+			transitionImageToVideo: "fal-ai/wan/v2.7/image-to-video",
 		},
 		description:
 			"Image-to-video generation with prompt expansion and optional negative prompt.",
@@ -560,9 +695,9 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		visibleSettings: ["negative_prompt", "enable_prompt_expansion"],
 		buildTransitionInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			image: startImageUrl,
+			image_url: startImageUrl,
 			duration: 5,
-			resolution: "720p",
+			resolution: "1080p",
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
@@ -575,9 +710,9 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			...(startImageUrl ? { image: startImageUrl } : {}),
+			...(startImageUrl ? { image_url: startImageUrl } : {}),
 			duration: 5,
-			resolution: "720p",
+			resolution: "1080p",
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
@@ -667,8 +802,22 @@ export function getVideoModelDefinition(modelId: string): VideoModelDefinition {
 	return VIDEO_MODELS.find((model) => model.id === modelId) ?? VIDEO_MODELS[0];
 }
 
-export function getVideoModelExecution(modelId: string) {
-	return getVideoModelDefinition(modelId).execution;
+export function getVideoModelExecution(modelId: string): VideoExecution {
+	const model = getVideoModelDefinition(modelId);
+	if (VIDEO_PROVIDER === "fal" && model.falExecution) {
+		return model.falExecution;
+	}
+	if (VIDEO_PROVIDER === "replicate" && model.replicateExecution) {
+		return model.replicateExecution;
+	}
+	// Fallback: return whichever is available
+	if (model.replicateExecution) return model.replicateExecution;
+	if (model.falExecution) return model.falExecution;
+	throw new Error(`No execution config found for model ${modelId}`);
+}
+
+export function getActiveVideoProvider(): "replicate" | "fal" {
+	return VIDEO_PROVIDER;
 }
 
 export function isSupportedVideoModel(modelId: string) {

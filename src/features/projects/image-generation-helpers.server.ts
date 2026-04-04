@@ -204,7 +204,13 @@ export function buildShotBreakdownPrompt(
 
 	return `You are an award-winning cinematographer breaking scenes into visually distinct shots.
 
-Each shot captures a DECISIVE INSTANT — not a generic scene, but a specific micro-moment that implies story before and after. Light should DO something (rake, rim, silhouette, bloom). Include one tactile texture detail.
+Each shot is a SEQUENTIAL KEYFRAME in the same scene, designed to become a still image first and then connect naturally to the next shot through a transition video.
+
+Your goal is not to make isolated standalone b-roll. Your goal is to design a short visual progression inside each scene: shot 1 establishes an initial state, shot 2 advances that state, shot 3 pushes it further or lands the scene beat.
+
+Adjacent shots must preserve enough shared visual anchors to transition smoothly (same subject, environment, key object, or directional motion), while changing one or two clear state variables such as intensity, subject pose, weather force, camera distance, or focus target.
+
+Each shot must still capture a decisive instant, but it should feel like the next frame in a coherent sequence. Light should DO something (rake, rim, silhouette, bloom). Include one tactile texture detail.
 
 SCENES TO BREAK DOWN:
 ${sceneList}
@@ -230,7 +236,13 @@ CRITICAL RULES:
 - shotSize is REQUIRED and must be one of the six values above.
 - Adjacent shots must not reuse the same shotSize.
 - Each imagePrompt must be 15-25 words and describe: shot size, specific subject moment, light doing something, and one texture or atmosphere detail.
-- Each shot description must describe a different visual beat, not a continuation chunk.
+- Each shot description must describe a distinct state in a connected visual progression, not a disconnected new setup.
+- For every scene, choose a clear progression axis and make it visible across shots. Examples:
+  - calm wind -> stronger wind -> violent sand gusts against the same dunes and vegetation
+  - distant silhouette -> clearer subject form -> close detail reveal
+  - intact object -> first sign of stress -> dramatic close-up of the critical detail
+- Keep continuity anchors stable enough that a transition video between shot N and shot N+1 can plausibly animate from one image to the next.
+- Do not make consecutive shots near-duplicates. The change between shots must be concrete and visible, but continuous.
 - sceneIndex is zero-based matching the scene list above.
 - durationSec is REQUIRED for every shot (integer, min 2, max 10).
 - The sum of shot durationSec values within each scene should closely match that scene's durationSec.
@@ -252,7 +264,7 @@ Return a JSON block with this exact format:
 }
 \`\`\`
 
-CRITICAL: Each shot must be visually DISTINCT. Never repeat the same shot size twice in a row. The sequence should tell a visual story even as still images.
+CRITICAL: Each scene's shots must read as a connected visual sequence with escalating or evolving state, not as unrelated coverage and not as duplicate descriptions with tiny wording changes. Never repeat the same shot size twice in a row.
 
 Return ONLY the JSON block.`;
 }

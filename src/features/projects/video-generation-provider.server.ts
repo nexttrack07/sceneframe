@@ -157,6 +157,97 @@ function adaptFalInputForEndpoint(args: {
 	return args.input;
 }
 
+/**
+ * Adapts input for Replicate API which may have different schema requirements
+ * than fal.ai (e.g., duration as integer vs string).
+ */
+function adaptInputForReplicate(args: {
+	modelId: string;
+	input: Record<string, unknown>;
+}): Record<string, unknown> {
+	const adapted = { ...args.input };
+
+	// Convert duration strings like "8s" to integers for Replicate
+	if (typeof adapted.duration === "string") {
+		const match = adapted.duration.match(/^(\d+)s?$/);
+		if (match) {
+			adapted.duration = parseInt(match[1], 10);
+		}
+	}
+
+	// Convert safety_tolerance string to integer if needed
+	if (typeof adapted.safety_tolerance === "string") {
+		const parsed = parseInt(adapted.safety_tolerance, 10);
+		if (!isNaN(parsed)) {
+			adapted.safety_tolerance = parsed;
+		}
+	}
+
+	// Handle Kling field mappings for Replicate
+	// Replicate schema: start_image, end_image, duration (int), aspect_ratio, negative_prompt
+	if (args.modelId.includes("kling")) {
+		// first_frame_url -> start_image for Replicate Kling
+		if (adapted.first_frame_url && !adapted.start_image) {
+			adapted.start_image = adapted.first_frame_url;
+			delete adapted.first_frame_url;
+		}
+		// image_url -> start_image for Replicate Kling
+		if (adapted.image_url && !adapted.start_image) {
+			adapted.start_image = adapted.image_url;
+			delete adapted.image_url;
+		}
+		// last_frame_url -> end_image for Replicate Kling
+		if (adapted.last_frame_url && !adapted.end_image) {
+			adapted.end_image = adapted.last_frame_url;
+			delete adapted.last_frame_url;
+		}
+	}
+
+	// Handle Wan field mappings for Replicate
+	// Replicate schema: first_frame, last_frame, duration (int), prompt, negative_prompt, resolution
+	if (args.modelId.includes("wan")) {
+		// first_frame_url -> first_frame for Replicate Wan
+		if (adapted.first_frame_url && !adapted.first_frame) {
+			adapted.first_frame = adapted.first_frame_url;
+			delete adapted.first_frame_url;
+		}
+		// image_url -> first_frame for Replicate Wan
+		if (adapted.image_url && !adapted.first_frame) {
+			adapted.first_frame = adapted.image_url;
+			delete adapted.image_url;
+		}
+		// last_frame_url -> last_frame for Replicate Wan
+		if (adapted.last_frame_url && !adapted.last_frame) {
+			adapted.last_frame = adapted.last_frame_url;
+			delete adapted.last_frame_url;
+		}
+	}
+
+	// Handle Veo 3.1 field mappings for Replicate
+	// Replicate schema: image, last_frame, duration (int), resolution, aspect_ratio, generate_audio, negative_prompt, reference_images
+	if (args.modelId.includes("veo")) {
+		// first_frame_url -> image for Replicate Veo
+		if (adapted.first_frame_url && !adapted.image) {
+			adapted.image = adapted.first_frame_url;
+			delete adapted.first_frame_url;
+		}
+		// image_url -> image for Replicate Veo
+		if (adapted.image_url && !adapted.image) {
+			adapted.image = adapted.image_url;
+			delete adapted.image_url;
+		}
+		// last_frame_url -> last_frame for Replicate Veo
+		if (adapted.last_frame_url) {
+			adapted.last_frame = adapted.last_frame_url;
+			delete adapted.last_frame_url;
+		}
+		// Remove safety_tolerance (not supported by Replicate Veo 3.1)
+		delete adapted.safety_tolerance;
+	}
+
+	return adapted;
+}
+
 export async function getVideoProviderApiKey(args: {
 	userId: string;
 	modelId: string;
@@ -202,13 +293,17 @@ export async function submitVideoGeneration(
 	const execution = getVideoModelExecution(args.modelId);
 
 	if (execution.provider === "replicate") {
+		const adaptedInput = adaptInputForReplicate({
+			modelId: args.modelId,
+			input: args.input,
+		});
 		console.info(
 			`[VideoProvider] submit provider=replicate mode=${args.mode} model=${args.modelId} endpoint=${execution.model}`,
 		);
 		const replicate = new Replicate({ auth: args.providerApiKey });
 		const prediction = await replicate.predictions.create({
 			model: execution.model as `${string}/${string}`,
-			input: args.input,
+			input: adaptedInput,
 		});
 
 		return {

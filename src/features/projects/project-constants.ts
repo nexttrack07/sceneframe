@@ -34,13 +34,12 @@ export const SCRIPT_STATUS = {
 export type ScriptStatus = (typeof SCRIPT_STATUS)[keyof typeof SCRIPT_STATUS];
 
 export const DEFAULT_IMAGE_DEFAULTS: ImageDefaults = {
-	model: "google/nano-banana-pro",
+	model: "fal-ai/nano-banana-pro",
 	batchCount: 1,
 	modelOptions: {
 		aspect_ratio: "16:9",
 		resolution: "2K",
-		output_format: "jpg",
-		safety_filter_level: "block_only_high",
-		allow_fallback_model: false,
+		output_format: "png",
+		safety_tolerance: "4",
 	},
 };

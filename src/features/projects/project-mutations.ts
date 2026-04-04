@@ -27,7 +27,7 @@ import {
 	getUserApiKey,
 	parseShotBreakdownResponse,
 } from "./image-generation-helpers.server";
-import { parseOpeningHook } from "./lib/script-helpers";
+import { parseOpeningHook, parseSceneProposal } from "./lib/script-helpers";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
 	IntakeAnswers,
@@ -44,10 +44,78 @@ const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
 
 function extractJsonBlock<T>(response: string): T | null {
+	const parseCandidate = (candidate: string): T | null => {
+		try {
+			return JSON.parse(candidate.trim()) as T;
+		} catch {
+			return null;
+		}
+	};
+
+	const extractBalancedJsonObject = (text: string): string | null => {
+		const start = text.indexOf("{");
+		if (start === -1) return null;
+
+		let depth = 0;
+		let inString = false;
+		let isEscaped = false;
+
+		for (let index = start; index < text.length; index += 1) {
+			const char = text[index];
+
+			if (inString) {
+				if (isEscaped) {
+					isEscaped = false;
+					continue;
+				}
+				if (char === "\\") {
+					isEscaped = true;
+					continue;
+				}
+				if (char === '"') {
+					inString = false;
+				}
+				continue;
+			}
+
+			if (char === '"') {
+				inString = true;
+				continue;
+			}
+
+			if (char === "{") {
+				depth += 1;
+				continue;
+			}
+
+			if (char === "}") {
+				depth -= 1;
+				if (depth === 0) {
+					return text.slice(start, index + 1);
+				}
+			}
+		}
+
+		return null;
+	};
+
 	try {
 		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-		const jsonStr = fenceMatch ? fenceMatch[1] : response;
-		return JSON.parse(jsonStr.trim()) as T;
+		const fencedBlock = fenceMatch?.[1];
+		if (fencedBlock) {
+			const parsed = parseCandidate(fencedBlock);
+			if (parsed) return parsed;
+		}
+
+		const parsedRaw = parseCandidate(response);
+		if (parsedRaw) return parsedRaw;
+
+		const embeddedJson = extractBalancedJsonObject(
+			fencedBlock ? fencedBlock : response,
+		);
+		if (!embeddedJson) return null;
+
+		return parseCandidate(embeddedJson);
 	} catch {
 		return null;
 	}
@@ -101,12 +169,22 @@ export const sendMessage = createServerFn({ method: "POST" })
 			.then((rows) => rows.reverse());
 		const apiKey = await getUserApiKey(userId);
 
-		const intake = normalizeProjectSettings(project.settings)?.intake ?? null;
+		const settings = normalizeProjectSettings(project.settings);
+		const intake = settings?.intake ?? null;
+		const openingHook = settings?.workshop?.openingHook ?? null;
 		const systemPrompt = buildSystemPrompt(project.name, intake);
+		const openingHookContext = openingHook
+			? `
+CURRENT OPENING HOOK:
+- Headline: ${openingHook.headline}
+- Narration: ${openingHook.narration}
+- Visual direction: ${openingHook.visualDirection}
+`
+			: "";
 		const llmMessages = recentHistory.map((m) =>
 			m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`,
 		);
-		const prompt = `${systemPrompt}\n\n${llmMessages.join("\n\n")}`;
+		const prompt = `${systemPrompt}${openingHookContext}\n\n${llmMessages.join("\n\n")}`;
 
 		const replicate = new Replicate({ auth: apiKey });
 		const controller = new AbortController();
@@ -246,6 +324,132 @@ Return only this fenced block:
 			});
 
 			return { openingHook, assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+export const generateScenePlan = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; feedback?: string }) => ({
+		projectId: data.projectId,
+		feedback: data.feedback?.trim() || undefined,
+	}))
+	.handler(async ({ data: { projectId, feedback } }) => {
+		const { userId, project } = await assertProjectOwner(projectId, "error");
+		const settings = normalizeProjectSettings(project.settings) ?? {};
+		const intake = settings.intake ?? null;
+		const openingHook = settings.workshop?.openingHook ?? null;
+		if (!intake) {
+			throw new Error("Save the creative brief before generating scenes");
+		}
+		if (!openingHook) {
+			throw new Error("Generate an opening hook before expanding into scenes");
+		}
+
+		const apiKey = await getUserApiKey(userId);
+		const recentHistory = await db.query.messages
+			.findMany({
+				where: eq(messages.projectId, projectId),
+				orderBy: desc(messages.createdAt),
+				limit: MAX_HISTORY_MESSAGES,
+			})
+			.then((rows) => rows.reverse());
+		const historyBlock = recentHistory
+			.map((m) =>
+				m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`,
+			)
+			.join("\n\n");
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+		const prompt = `You are a creative director expanding an approved opening hook into a full scene-by-scene script plan.
+
+PROJECT:
+- Name: ${project.name}
+- Channel preset: ${intake.channelPreset}
+- Purpose: ${intake.purpose ?? "Not specified"}
+- Target duration: ${intake.targetDurationSec ?? 300} seconds
+- Visual style: ${intake.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audience: ${intake.audience ?? "Not specified"}
+- Desired viewer action: ${intake.viewerAction ?? "Not specified"}
+- Working title: ${intake.workingTitle || "Not provided"}
+- Thumbnail promise: ${intake.thumbnailPromise || "Not provided"}
+- Concept: ${intake.concept}
+
+APPROVED OPENING HOOK:
+- Headline: ${openingHook.headline}
+- Narration: ${openingHook.narration}
+- Visual direction: ${openingHook.visualDirection}
+
+RECENT WORKSHOP CONTEXT:
+${historyBlock || "No prior chat context."}
+
+${
+	feedback
+		? `USER DIRECTION FOR THIS SCENE PLAN:
+${feedback}
+`
+		: ""
+}
+TASK:
+- Generate the full scene breakdown now.
+- Start from the approved opening hook and make the first scene match it.
+- Each scene should represent a distinct progression beat in the story, not repetitive rewording.
+- Scene descriptions must be production-ready visual descriptions that can later be broken into shots.
+- Keep each scene description specific about what appears on screen, lighting, framing, action, and narration/audio when relevant.
+- Do not ask another question. Do not return only hook edits.
+
+Return a short note plus this exact fenced JSON block:
+
+\`\`\`scenes
+[
+  {
+    "sceneNumber": 1,
+    "title": "Short scene title",
+    "description": "Detailed scene description with visuals, action, camera/framing, and narration/audio when relevant.",
+    "durationSec": 8,
+    "beat": "Hook / Problem / Proof / Payoff / CTA",
+    "hookRole": "hook"
+  }
+]
+\`\`\``;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 4096, temperature: 0.6 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const assistantContent = chunks.join("").trim();
+			if (!assistantContent) {
+				throw new Error("AI returned an empty scene plan — please try again");
+			}
+			if (!parseSceneProposal(assistantContent)) {
+				throw new Error("AI did not return a valid scene plan");
+			}
+
+			await db.transaction(async (tx) => {
+				if (feedback) {
+					await tx.insert(messages).values({
+						projectId,
+						role: "user",
+						content: feedback,
+					});
+				}
+				await tx.insert(messages).values({
+					projectId,
+					role: "assistant",
+					content: assistantContent,
+				});
+			});
+
+			return { content: assistantContent };
 		} finally {
 			clearTimeout(timeout);
 		}
