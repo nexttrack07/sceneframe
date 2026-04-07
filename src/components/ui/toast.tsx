@@ -53,11 +53,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 				toastOptions={{
 					classNames: {
 						toast:
-							"group rounded-[4px] border border-border/80 bg-background text-foreground shadow-lg",
-						title: "text-sm font-medium",
+							"group rounded-[10px] border border-border/60 bg-background/95 text-foreground shadow-[0_10px_28px_rgba(15,23,42,0.10)] backdrop-blur-sm",
+						title: "text-sm font-medium tracking-[-0.01em]",
 						description: "text-xs text-muted-foreground",
 						closeButton:
-							"border-border bg-background text-muted-foreground hover:text-foreground",
+							"border-border/70 bg-background/90 text-muted-foreground hover:text-foreground",
 					},
 				}}
 				icons={{

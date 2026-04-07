@@ -64,13 +64,13 @@ export const Route = createFileRoute("/_auth/projects/$projectId/")({
 
 function ProjectPage() {
 	const { projectId } = Route.useParams();
+	const loaderData = Route.useLoaderData();
 	const { data } = useQuery({
 		queryKey: projectKeys.project(projectId),
 		queryFn: () => loadProject({ data: projectId }),
+		initialData: loaderData,
 	});
-	// data is always defined since loader seeded it
-	// biome-ignore lint/style/noNonNullAssertion: loader always seeds this value before component renders
-	const data_ = data!;
+	const data_ = data ?? loaderData;
 	const {
 		project,
 		scenes: projectScenes,

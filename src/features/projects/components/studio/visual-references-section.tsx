@@ -76,9 +76,18 @@ export function VisualReferencesSection({
 			</div>
 
 			{/* Upload area */}
-			<div
+			<button
+				type="button"
 				onDrop={handleDrop}
 				onDragOver={handleDragOver}
+				onKeyDown={(e) => {
+					if (!canAddMore) return;
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						inputRef.current?.click();
+					}
+				}}
+				disabled={!canAddMore}
 				className={`relative rounded-lg border-2 border-dashed transition-colors ${
 					canAddMore
 						? "border-border/60 hover:border-border hover:bg-muted/30 cursor-pointer"
@@ -93,16 +102,39 @@ export function VisualReferencesSection({
 					disabled={!canAddMore}
 					className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
 				/>
-				<div className="flex items-center gap-3 p-3">
-					{/* Thumbnail previews */}
-					{referenceUrls.length > 0 && (
-						<div className="flex gap-1.5">
+				<div className="space-y-3 p-3">
+					<div className="flex items-center gap-2">
+						<div className="flex h-9 w-9 items-center justify-center rounded-md border border-border/60 bg-background">
+							{isUploading ? (
+								<Loader2 size={16} className="animate-spin text-primary" />
+							) : (
+								<ImagePlus size={16} className="text-muted-foreground" />
+							)}
+						</div>
+						<div className="min-w-0 flex-1">
+							<p className="text-xs font-medium text-foreground">
+								{isUploading
+									? "Uploading reference image..."
+									: canAddMore
+										? "Add reference images"
+										: "Reference images added"}
+							</p>
+							<p className="text-[10px] text-muted-foreground">
+								{canAddMore
+									? `JPEG/PNG/WebP/GIF, ${MAX_SIZE_MB}MB max`
+									: "Maximum references reached"}
+							</p>
+						</div>
+					</div>
+
+					{referenceUrls.length > 0 ? (
+						<div className="flex flex-wrap gap-2">
 							{referenceUrls.map((url) => (
 								<div key={url} className="relative group/thumb">
 									<img
 										src={url}
 										alt="Reference"
-										className="w-10 h-10 rounded object-cover"
+										className="h-11 w-11 rounded-md object-cover ring-1 ring-border/60"
 									/>
 									<button
 										type="button"
@@ -111,44 +143,16 @@ export function VisualReferencesSection({
 											e.stopPropagation();
 											onRemove(url);
 										}}
-										className="absolute -top-1 -right-1 bg-destructive text-white rounded-full p-0.5 opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+										className="absolute -top-1 -right-1 rounded-full bg-destructive p-0.5 text-white opacity-0 transition-opacity group-hover/thumb:opacity-100"
 									>
 										<X size={10} />
 									</button>
 								</div>
 							))}
 						</div>
-					)}
-
-					{/* Add button / info */}
-					<div className="flex-1 flex items-center gap-2 min-w-0">
-						{isUploading ? (
-							<>
-								<Loader2 size={16} className="animate-spin text-primary" />
-								<span className="text-xs text-muted-foreground">
-									Uploading...
-								</span>
-							</>
-						) : canAddMore ? (
-							<>
-								<ImagePlus size={16} className="text-muted-foreground" />
-								<div className="min-w-0">
-									<p className="text-xs font-medium text-foreground/80">
-										Add visual references
-									</p>
-									<p className="text-[10px] text-muted-foreground truncate">
-										JPEG/PNG/WebP/GIF, {MAX_SIZE_MB}MB max
-									</p>
-								</div>
-							</>
-						) : (
-							<p className="text-xs text-muted-foreground">
-								Maximum references reached
-							</p>
-						)}
-					</div>
+					) : null}
 				</div>
-			</div>
+			</button>
 		</div>
 	);
 }

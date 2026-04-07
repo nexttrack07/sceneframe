@@ -49,8 +49,18 @@ export type VideoExecution = ReplicateExecution | FalExecution;
  * Set to "replicate" to use Replicate, "fal" to use fal.ai
  * Default: "replicate"
  */
-const VIDEO_PROVIDER: "replicate" | "fal" =
-	(process.env.VIDEO_PROVIDER as "replicate" | "fal") || "replicate";
+function getVideoProvider(): "replicate" | "fal" {
+	if (typeof process === "undefined") {
+		return "replicate";
+	}
+
+	const provider = process.env.VIDEO_PROVIDER;
+	return provider === "fal" || provider === "replicate"
+		? provider
+		: "replicate";
+}
+
+const VIDEO_PROVIDER = getVideoProvider();
 
 export interface VideoModelDefinition {
 	id: string;

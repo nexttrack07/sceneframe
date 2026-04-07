@@ -1,8 +1,8 @@
-import type { Character } from "../../project-types";
+import type { Location } from "../../project-types";
 import { ReferenceEntityForm } from "../references/reference-entity-form";
 
-interface CharacterFormProps {
-	character?: Character;
+interface LocationFormProps {
+	location?: Location;
 	editingImageUrl?: string | null;
 	onClearEditingImage?: () => void;
 	referenceSection?: React.ReactNode;
@@ -22,8 +22,8 @@ interface CharacterFormProps {
 	}) => Promise<string>;
 }
 
-export function CharacterForm({
-	character,
+export function LocationForm({
+	location,
 	editingImageUrl,
 	onClearEditingImage,
 	referenceSection,
@@ -34,21 +34,21 @@ export function CharacterForm({
 	submitLabel,
 	settingsSection,
 	onGeneratePrompt,
-}: CharacterFormProps) {
-	const isEditing = !!character;
+}: LocationFormProps) {
+	const isEditing = Boolean(location);
 	return (
 		<ReferenceEntityForm
 			nameLabel="Name"
-			contextLabel="Character context"
-			namePlaceholder="e.g., Alex the Explorer"
-			descriptionPlaceholder="Physical appearance, personality traits, backstory..."
-			descriptionHelp="Detailed character description for your reference."
+			contextLabel="Location context"
+			namePlaceholder="e.g., Mossy twilight forest"
+			descriptionPlaceholder="Key environmental details, mood, materials, weather..."
+			descriptionHelp="Detailed location notes for your reference."
 			promptLabel="Reference Prompt"
-			promptPlaceholder="Describe the exact character reference image to generate..."
-			promptHelp="Use this to describe the exact reference image you want generated. Be specific about silhouette, wardrobe, facial features, and styling."
+			promptPlaceholder="Describe the exact location reference image to generate..."
+			promptHelp="Use this to describe the exact reference environment you want generated, including materials, lighting, weather, and atmosphere."
 			referenceSection={referenceSection}
-			nameValue={character?.name}
-			descriptionValue={character?.description}
+			nameValue={location?.name}
+			descriptionValue={location?.description}
 			promptValue={promptValue}
 			onPromptValueChange={onPromptValueChange}
 			editingImageUrl={editingImageUrl}
@@ -56,7 +56,7 @@ export function CharacterForm({
 			onSubmit={onSubmit}
 			isSubmitting={isSubmitting}
 			submitLabel={
-				submitLabel ?? (isEditing ? "Save changes" : "Create character")
+				submitLabel ?? (isEditing ? "Save changes" : "Create location")
 			}
 			settingsSection={settingsSection}
 			onGeneratePrompt={onGeneratePrompt}

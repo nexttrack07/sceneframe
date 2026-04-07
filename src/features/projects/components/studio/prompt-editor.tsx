@@ -23,6 +23,9 @@ export function PromptEditor({
 	detectedAssetType,
 	promptTypeSelection,
 	onPromptTypeSelectionChange,
+	label = "Image Prompt",
+	placeholder = "Describe the image to generate...",
+	showPromptTypeControls = true,
 }: {
 	prompt: string;
 	onPromptChange: (value: string) => void;
@@ -34,6 +37,9 @@ export function PromptEditor({
 	detectedAssetType?: PromptAssetType | null;
 	promptTypeSelection?: PromptAssetTypeSelection;
 	onPromptTypeSelectionChange?: (value: PromptAssetTypeSelection) => void;
+	label?: string;
+	placeholder?: string;
+	showPromptTypeControls?: boolean;
 }) {
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const textareaId = useId();
@@ -44,7 +50,7 @@ export function PromptEditor({
 					htmlFor={textareaId}
 					className="text-xs font-medium text-muted-foreground"
 				>
-					Image Prompt
+					{label}
 				</label>
 				<div className="flex items-center gap-1">
 					<CopyPromptButton value={prompt} />
@@ -92,37 +98,39 @@ export function PromptEditor({
 					)}
 				</div>
 			</div>
-			<div className="flex items-center justify-between gap-2">
-				<div className="flex items-center gap-2">
-					<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-						Prompt type
-					</span>
-					{detectedAssetType && (
-						<span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">
-							Detected: {getPromptAssetTypeLabel(detectedAssetType)}
+			{showPromptTypeControls && (
+				<div className="flex items-center justify-between gap-2">
+					<div className="flex items-center gap-2">
+						<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+							Prompt type
 						</span>
+						{detectedAssetType && (
+							<span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">
+								Detected: {getPromptAssetTypeLabel(detectedAssetType)}
+							</span>
+						)}
+					</div>
+					{onPromptTypeSelectionChange && (
+						<select
+							value={promptTypeSelection ?? "auto"}
+							onChange={(e) =>
+								onPromptTypeSelectionChange(
+									e.target.value as PromptAssetTypeSelection,
+								)
+							}
+							className="h-7 rounded-md border border-border bg-background px-2 text-[10px] font-medium text-foreground"
+						>
+							<option value="auto">Auto detect</option>
+							<option value="cinematic">Cinematic</option>
+							<option value="documentary">Documentary</option>
+							<option value="infographic">Infographic</option>
+							<option value="text_graphic">Text Graphic</option>
+							<option value="talking_head">Talking Head</option>
+							<option value="transition">Transition</option>
+						</select>
 					)}
 				</div>
-				{onPromptTypeSelectionChange && (
-					<select
-						value={promptTypeSelection ?? "auto"}
-						onChange={(e) =>
-							onPromptTypeSelectionChange(
-								e.target.value as PromptAssetTypeSelection,
-							)
-						}
-						className="h-7 rounded-md border border-border bg-background px-2 text-[10px] font-medium text-foreground"
-					>
-						<option value="auto">Auto detect</option>
-						<option value="cinematic">Cinematic</option>
-						<option value="documentary">Documentary</option>
-						<option value="infographic">Infographic</option>
-						<option value="text_graphic">Text Graphic</option>
-						<option value="talking_head">Talking Head</option>
-						<option value="transition">Transition</option>
-					</select>
-				)}
-			</div>
+			)}
 			<textarea
 				id={textareaId}
 				value={prompt}
@@ -130,8 +138,8 @@ export function PromptEditor({
 				onBlur={onPromptBlur}
 				rows={10}
 				disabled={isBusy}
-				className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent bg-background disabled:opacity-50"
-				placeholder="Describe the image to generate..."
+				className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm transition-colors focus:border-ring focus:outline-none disabled:opacity-50"
+				placeholder={placeholder}
 			/>
 		</div>
 	);

@@ -136,6 +136,7 @@ export function useVideoStudio({
 	const cancelPollingRef = useRef(false);
 	const isPollingRef = useRef(false);
 	const completedRunIdsRef = useRef<Set<string>>(new Set());
+	const autoPromptPairKeysRef = useRef<Set<string>>(new Set());
 	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
@@ -179,19 +180,21 @@ export function useVideoStudio({
 				tv.fromShotId === selectedTransitionPair.fromShotId &&
 				tv.toShotId === selectedTransitionPair.toShotId,
 		);
-		const promptVideos = pairVideos.filter((tv) => tv.prompt);
+		const latestPromptVideo =
+			[...pairVideos].reverse().find((tv) => tv.prompt && !tv.stale) ??
+			[...pairVideos].reverse().find((tv) => tv.prompt);
 		const selectedVideo = pairVideos.find((tv) => tv.isSelected);
 		const draftPrompt = readTransitionDraft(selectedTransitionPair);
 		const initialPrompt =
-			draftPrompt ?? selectedVideo?.prompt ?? promptVideos[0]?.prompt ?? "";
+			latestPromptVideo?.prompt ?? draftPrompt ?? selectedVideo?.prompt ?? "";
 		const draftSettings = readTransitionSettings();
 		const initialSettings =
 			draftSettings ??
 			normalizeVideoDefaults({
-				model: selectedVideo?.model ?? promptVideos[0]?.model,
+				model: selectedVideo?.model ?? latestPromptVideo?.model,
 				modelOptions:
 					selectedVideo?.modelSettings ??
-					promptVideos[0]?.modelSettings ??
+					latestPromptVideo?.modelSettings ??
 					null,
 			});
 
@@ -218,6 +221,70 @@ export function useVideoStudio({
 		stopPolling();
 		cancelPollingRef.current = false;
 	}, [selectedTransitionPair, stopPolling, projectId]);
+
+	useEffect(() => {
+		const pair = selectedTransitionPair;
+		if (
+			!pair ||
+			videoPrompt.trim() ||
+			isGeneratingVideoPrompt ||
+			isEnhancingVideoPrompt
+		) {
+			return;
+		}
+
+		const pairKey = `${pair.fromShotId}:${pair.toShotId}`;
+		if (autoPromptPairKeysRef.current.has(pairKey)) {
+			return;
+		}
+		autoPromptPairKeysRef.current.add(pairKey);
+
+		let cancelled = false;
+		setIsGeneratingVideoPrompt(true);
+		setError(null);
+
+		void generateTransitionVideoPrompt({
+			data: {
+				fromShotId: pair.fromShotId,
+				toShotId: pair.toShotId,
+				useProjectContext,
+				usePrevShotContext,
+				assetTypeOverride: promptTypeSelection,
+			},
+		})
+			.then((result) => {
+				if (cancelled) return;
+				setVideoPrompt((currentPrompt) =>
+					currentPrompt.trim() ? currentPrompt : result.prompt,
+				);
+				setDetectedPromptAssetType(result.assetType);
+			})
+			.catch((err) => {
+				autoPromptPairKeysRef.current.delete(pairKey);
+				if (cancelled) return;
+				setError(
+					err instanceof Error ? err.message : "Failed to generate prompt",
+				);
+			})
+			.finally(() => {
+				if (!cancelled) {
+					setIsGeneratingVideoPrompt(false);
+				}
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		isEnhancingVideoPrompt,
+		isGeneratingVideoPrompt,
+		promptTypeSelection,
+		selectedTransitionPair,
+		setError,
+		usePrevShotContext,
+		useProjectContext,
+		videoPrompt,
+	]);
 
 	useEffect(() => {
 		if (!selectedTransitionPair) return;

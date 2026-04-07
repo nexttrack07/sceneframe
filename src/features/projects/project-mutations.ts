@@ -23,9 +23,11 @@ import { assertProjectOwner } from "@/lib/assert-project-owner.server";
 import { deleteObject } from "@/lib/r2.server";
 import {
 	buildShotBreakdownPrompt,
+	buildShotImagePromptPrompt,
 	buildSystemPrompt,
 	getUserApiKey,
 	parseShotBreakdownResponse,
+	parseShotImagePromptResponse,
 } from "./image-generation-helpers.server";
 import { parseOpeningHook, parseSceneProposal } from "./lib/script-helpers";
 import { normalizeProjectSettings } from "./project-normalize";
@@ -242,6 +244,7 @@ CREATIVE BRIEF:
 - Visual style: ${intake.style?.join(", ") ?? "Not specified"}
 - Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
 - Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake.audioMode ?? "Not specified"}
 - Audience: ${intake.audience ?? "Not specified"}
 - Desired viewer action: ${intake.viewerAction ?? "Not specified"}
 - Working title: ${intake.workingTitle || "Not provided"}
@@ -251,9 +254,12 @@ CREATIVE BRIEF:
 TASK:
 - Generate only the opening hook for the first 3-10 seconds.
 - Do not outline the full script or scene plan.
-- The hook should be specific, visually direct, and strong enough to build the rest of the script around.
-- The visual direction must describe what the viewer sees, not generic placeholders.
+- The hook must be specific and visual. Describe what the viewer literally sees on screen, not abstract ideas or generic placeholders.
+- The visual direction should include environment, lighting, subject positioning, mood, and any motion or action happening in the frame.
+- Match the visual style specified in the brief. Let that style shape your vocabulary and the concrete details you describe.
 - The narration should be concise and usable as spoken or on-screen hook copy.
+- If the audio direction is "Background music only" or "No narration or music", keep narration empty or minimal and make the visual hook carry the storytelling instead of relying on spoken explanation.
+- The visualDirection must be 3-5 sentences minimum so the opening frame has enough production detail to expand into a full scene plan.
 
 ${
 	existingHook
@@ -274,8 +280,8 @@ Return only this fenced block:
 \`\`\`opening_hook
 {
   "headline": "Short internal label for the hook",
-  "narration": "1-2 lines of opening narration or on-screen hook copy",
-  "visualDirection": "Specific visual direction for what appears on screen in the hook"
+  "narration": "1-2 lines of opening narration or on-screen hook copy, or an empty string if the selected audio direction should not use narration",
+  "visualDirection": "Detailed visual direction for what appears on screen in the hook. Include environment, subject, lighting, framing, mood, and style-specific details. 3-5 sentences minimum."
 }
 \`\`\``;
 
@@ -298,9 +304,33 @@ Return only this fenced block:
 					openingHook,
 				},
 			};
+			const styleLabel = intake.style?.length
+				? intake.style.join(", ")
+				: "a clear visual style";
+			const moodLabel = intake.mood?.length
+				? intake.mood.join(", ")
+				: "the right tone";
 			const assistantContent = feedback
-				? "I updated the opening hook in the workspace. Tell me what to sharpen next."
-				: "I drafted an opening hook in the workspace. Tell me what to change before we expand it.";
+				? `I updated the opening hook in the workspace and sharpened the visual direction around ${styleLabel}. If you want, we can push it further in one of these directions:
+
+- More visually specific and production-ready
+- More ${moodLabel.toLowerCase()} and emotionally pointed
+- More surprising in the first 3 seconds
+
+\`\`\`suggestions
+["Make it more visually specific", "Push the emotion further", "Make the first 3 seconds more surprising"]
+\`\`\``
+				: `Sharper version of your idea: ${intake.concept.trim()}
+
+I drafted an opening hook in the workspace using a ${styleLabel.toLowerCase()} direction. Three possible ways to shape it from here:
+
+- Make it more scientific and explanatory
+- Make it more cinematic and emotionally immersive
+- Make it more playful and stylized
+
+\`\`\`suggestions
+["Make it more scientific", "Make it more cinematic", "Make it more playful"]
+\`\`\``;
 
 			await db.transaction(async (tx) => {
 				if (feedback) {
@@ -373,6 +403,7 @@ PROJECT:
 - Visual style: ${intake.style?.join(", ") ?? "Not specified"}
 - Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
 - Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake.audioMode ?? "Not specified"}
 - Audience: ${intake.audience ?? "Not specified"}
 - Desired viewer action: ${intake.viewerAction ?? "Not specified"}
 - Working title: ${intake.workingTitle || "Not provided"}
@@ -395,11 +426,16 @@ ${feedback}
 		: ""
 }
 TASK:
-- Generate the full scene breakdown now.
-- Start from the approved opening hook and make the first scene match it.
-- Each scene should represent a distinct progression beat in the story, not repetitive rewording.
-- Scene descriptions must be production-ready visual descriptions that can later be broken into shots.
-- Keep each scene description specific about what appears on screen, lighting, framing, action, and narration/audio when relevant.
+- Generate a full breakdown of 3-7 scenes covering the entire video duration.
+- Start from the approved opening hook and make Scene 1 match it.
+- Each scene must represent a distinct progression beat in the story, not a repetitive rewording of the same idea.
+- Each scene description must be a rich, detailed visual narrative with 4-6 sentences minimum.
+- Describe the environment in detail: what the space looks like, what objects are present, what the lighting is doing, and what colors dominate.
+- Describe the subject(s) in detail: what they are doing, their body language or facial expression, and where they are positioned in the frame.
+- Describe the mood and energy of the scene and the key motion or action that changes from the start of the scene to the end.
+- Think of each scene as a short chapter with enough visual information that a cinematographer can break it into 2-4 distinct shots without inventing missing details.
+- Match the visual style from the brief throughout. If the style is cartoon, describe cartoon-appropriate color, character expressiveness, and painterly lighting. If cinematic, describe lens feel, depth of field, and practical or natural lighting. If 3D render, describe materials, reflections, and volumetric effects. If anime, describe linework, cel shading, and dramatic highlights.
+- Respect the selected audio direction. If narration is included, embed concise narration or spoken beats into the scene descriptions where relevant. If the format is music-only or silent, do not write narration-dependent scenes; make the visual action and atmosphere self-sufficient.
 - Do not ask another question. Do not return only hook edits.
 
 Return a short note plus this exact fenced JSON block:
@@ -409,7 +445,7 @@ Return a short note plus this exact fenced JSON block:
   {
     "sceneNumber": 1,
     "title": "Short scene title",
-    "description": "Detailed scene description with visuals, action, camera/framing, and narration/audio when relevant.",
+    "description": "Rich, detailed scene description with environment, subjects, lighting, mood, action, and style-specific details. 4-6 sentences minimum. Include narration, on-screen text, music cues, or silence cues only when they match the selected audio direction so that context carries into the shot breakdown.",
     "durationSec": 8,
     "beat": "Hook / Problem / Proof / Payoff / CTA",
     "hookRole": "hook"
@@ -771,7 +807,8 @@ export const approveScenes = createServerFn({ method: "POST" })
 	)
 	.handler(
 		async ({ data: { projectId, parsedScenes, targetDurationSec = 300 } }) => {
-			const { userId } = await assertProjectOwner(projectId, "error");
+			const { userId, project } = await assertProjectOwner(projectId, "error");
+			const settings = normalizeProjectSettings(project.settings);
 
 			// ---------------------------------------------------------------
 			// 1. OUTSIDE transaction: call AI to generate shot breakdown
@@ -787,6 +824,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 						durationSec: s.durationSec,
 					})),
 					targetDurationSec,
+					settings?.intake,
 				);
 
 				const replicate = new Replicate({ auth: apiKey });
@@ -816,6 +854,13 @@ export const approveScenes = createServerFn({ method: "POST" })
 				} finally {
 					clearTimeout(timeout);
 				}
+
+				shotPlan = await populateShotImagePrompts({
+					replicate,
+					shotPlan,
+					parsedScenes,
+					intake: settings?.intake,
+				});
 			} catch {
 				// AI failed entirely — fall back to 1 shot per scene
 				shotPlan = buildFallbackShotPlan(parsedScenes);
@@ -1003,6 +1048,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 					sceneId: string;
 					order: number;
 					description: string;
+					imagePrompt: string;
 					shotType: "talking" | "visual";
 					shotSize:
 						| "extreme-wide"
@@ -1024,6 +1070,7 @@ export const approveScenes = createServerFn({ method: "POST" })
 							sceneId: sceneRow.id,
 							order: i + 1,
 							description: shot.description,
+							imagePrompt: shot.imagePrompt?.trim() || shot.description,
 							shotType: shot.shotType,
 							shotSize: shot.shotSize,
 							durationSec: shot.durationSec,
@@ -1137,6 +1184,28 @@ export const deleteProject = createServerFn({ method: "POST" })
 function buildFallbackShotPlan(
 	parsedScenes: ScenePlanEntry[],
 ): ShotPlanEntry[] {
+	const shotProgression = [
+		{
+			shotSize: "wide" as const,
+			prefix:
+				"Opening keyframe: establish the scene's baseline state with the main environment and subject anchors clearly visible.",
+		},
+		{
+			shotSize: "medium" as const,
+			prefix:
+				"Progression keyframe: move closer to the primary subject or action and show the scene's central change becoming visibly stronger.",
+		},
+		{
+			shotSize: "close-up" as const,
+			prefix:
+				"Payoff keyframe: isolate the clearest visual consequence of that change in a tighter detail-focused frame while preserving the scene's main continuity anchor.",
+		},
+		{
+			shotSize: "insert" as const,
+			prefix:
+				"Detail cutaway keyframe: focus on one tactile object, texture, or action detail that reinforces the same scene state and transitions smoothly from the previous frame.",
+		},
+	];
 	const result: ShotPlanEntry[] = [];
 	for (let i = 0; i < parsedScenes.length; i++) {
 		const scene = parsedScenes[i];
@@ -1144,21 +1213,79 @@ function buildFallbackShotPlan(
 		const shotCount = Math.max(1, Math.ceil(sceneDuration / 5));
 		const shotDuration = Math.round(sceneDuration / shotCount);
 		for (let j = 0; j < shotCount; j++) {
+			const fallbackShot = shotProgression[j] ?? shotProgression[3];
 			result.push({
 				sceneIndex: i,
-				description:
-					j === 0
-						? scene.description
-						: `${scene.description} (continuation ${j + 1})`,
+				description: `${fallbackShot.prefix} Scene context: ${scene.description}`,
 				shotType: "visual" as const,
-				shotSize:
-					(["wide", "medium", "close-up", "insert"] as const)[j % 4] ??
-					"medium",
+				shotSize: fallbackShot.shotSize,
 				durationSec: shotDuration,
 			});
 		}
 	}
 	return result;
+}
+
+async function populateShotImagePrompts({
+	replicate,
+	shotPlan,
+	parsedScenes,
+	intake,
+}: {
+	replicate: Replicate;
+	shotPlan: ShotPlanEntry[];
+	parsedScenes: ScenePlanEntry[];
+	intake?: IntakeAnswers | null;
+}) {
+	const shotsByScene = new Map<number, ShotPlanEntry[]>();
+	for (const shot of shotPlan) {
+		const sceneShots = shotsByScene.get(shot.sceneIndex) ?? [];
+		sceneShots.push(shot);
+		shotsByScene.set(shot.sceneIndex, sceneShots);
+	}
+
+	for (const [sceneIndex, sceneShots] of shotsByScene) {
+		const scene = parsedScenes[sceneIndex];
+		if (!scene || sceneShots.length === 0) continue;
+
+		const prompt = buildShotImagePromptPrompt(
+			{
+				title: scene.title || "",
+				description: scene.description,
+				durationSec: scene.durationSec,
+			},
+			sceneShots,
+			intake,
+		);
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 4096, temperature: 0.5 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const imagePrompts = parseShotImagePromptResponse(
+				chunks.join(""),
+				sceneShots.length,
+			);
+			if (!imagePrompts) continue;
+
+			sceneShots.forEach((shot, index) => {
+				shot.imagePrompt = imagePrompts[index];
+			});
+		} catch {
+			// Keep shot descriptions as fallback image prompts for this scene only.
+		} finally {
+			clearTimeout(timeout);
+		}
+	}
+
+	return shotPlan;
 }
 
 function buildFallbackOpeningHook(

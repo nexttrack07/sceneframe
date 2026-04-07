@@ -11,7 +11,12 @@ function getProjectAspectRatioStorageKey(projectId: string) {
 function toCanonicalAspectRatio(value: unknown): CanonicalAspectRatio | null {
 	if (typeof value !== "string") return null;
 	if (value === "landscape") return "16:9";
+	if (value === "landscape_16_9") return "16:9";
+	if (value === "landscape_4_3") return "4:3";
 	if (value === "portrait") return "9:16";
+	if (value === "portrait_16_9") return "9:16";
+	if (value === "portrait_4_3") return "3:4";
+	if (value === "square" || value === "square_hd") return "1:1";
 	return value.length > 0 ? value : null;
 }
 
@@ -52,8 +57,26 @@ function mapCanonicalAspectRatioToEnumValue(
 	if (canonical === "16:9" && enumValues.includes("landscape")) {
 		return "landscape";
 	}
+	if (canonical === "16:9" && enumValues.includes("landscape_16_9")) {
+		return "landscape_16_9";
+	}
+	if (canonical === "4:3" && enumValues.includes("landscape_4_3")) {
+		return "landscape_4_3";
+	}
 	if (canonical === "9:16" && enumValues.includes("portrait")) {
 		return "portrait";
+	}
+	if (canonical === "9:16" && enumValues.includes("portrait_16_9")) {
+		return "portrait_16_9";
+	}
+	if (canonical === "3:4" && enumValues.includes("portrait_4_3")) {
+		return "portrait_4_3";
+	}
+	if (canonical === "1:1" && enumValues.includes("square_hd")) {
+		return "square_hd";
+	}
+	if (canonical === "1:1" && enumValues.includes("square")) {
+		return "square";
 	}
 	return null;
 }
@@ -63,17 +86,31 @@ export function applyCanonicalAspectRatioToImageDefaults(
 	canonical: CanonicalAspectRatio,
 ) {
 	const model = getImageModelDefinition(settings.model);
-	const mapped = mapCanonicalAspectRatioToEnumValue(
+	const aspectRatioMapped = mapCanonicalAspectRatioToEnumValue(
 		canonical,
 		model.schema.properties.aspect_ratio?.enum,
 	);
-	if (!mapped) return settings;
+	if (aspectRatioMapped) {
+		return {
+			...settings,
+			modelOptions: {
+				...settings.modelOptions,
+				aspect_ratio: aspectRatioMapped,
+			},
+		};
+	}
+
+	const imageSizeMapped = mapCanonicalAspectRatioToEnumValue(
+		canonical,
+		model.schema.properties.image_size?.enum,
+	);
+	if (!imageSizeMapped) return settings;
 
 	return {
 		...settings,
 		modelOptions: {
 			...settings.modelOptions,
-			aspect_ratio: mapped,
+			image_size: imageSizeMapped,
 		},
 	};
 }
@@ -105,7 +142,10 @@ export function getPreferredProjectAspectRatio(projectId: string) {
 export function getPreferredAspectRatioFromImageDefaults(
 	settings: ImageDefaults,
 ): CanonicalAspectRatio | null {
-	return toCanonicalAspectRatio(settings.modelOptions.aspect_ratio);
+	return (
+		toCanonicalAspectRatio(settings.modelOptions.aspect_ratio) ??
+		toCanonicalAspectRatio(settings.modelOptions.image_size)
+	);
 }
 
 export function getPreferredAspectRatioFromVideoDefaults(

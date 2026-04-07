@@ -1,4 +1,6 @@
 import type { ImageDefaults, ImageSettingValue } from "../project-types";
+import { flux2FlexSchema } from "./schemas/flux-2-flex";
+import { nanoBananaSchema } from "./schemas/nano-banana";
 
 type ImageSettingPrimitive = string | number | boolean;
 
@@ -34,8 +36,18 @@ export interface ImageModelControlDefinition {
  * Set via IMAGE_PROVIDER environment variable: "replicate" or "fal"
  * Defaults to "replicate" for production stability.
  */
-const IMAGE_PROVIDER: "replicate" | "fal" =
-	(process.env.IMAGE_PROVIDER as "replicate" | "fal") || "replicate";
+function getImageProvider(): "replicate" | "fal" {
+	if (typeof process === "undefined") {
+		return "replicate";
+	}
+
+	const provider = process.env.IMAGE_PROVIDER;
+	return provider === "fal" || provider === "replicate"
+		? provider
+		: "replicate";
+}
+
+const IMAGE_PROVIDER = getImageProvider();
 
 /**
  * Replicate execution configuration for image models.
@@ -80,7 +92,13 @@ export interface ImageModelDefinition {
 	accentClassName?: string;
 	schema: ImageSchema;
 	supportsReferenceImages: boolean;
-	referenceInputField?: "image_url" | "image_urls" | "input_images";
+	referenceInputField?:
+		| "image_prompt"
+		| "image_url"
+		| "image_urls"
+		| "image_input"
+		| "images"
+		| "input_images";
 	visibleSettings: readonly string[];
 	hiddenDefaults?: Record<string, ImageSettingPrimitive>;
 }
@@ -152,31 +170,67 @@ function coercePropertyValue(
 	return typeof value === "string" ? value : fallback;
 }
 
-// fal.ai native schemas
+function normalizeLegacyAspectRatio(value: unknown) {
+	if (value === "landscape_16_9" || value === "landscape") return "16:9";
+	if (value === "portrait_16_9" || value === "portrait") return "9:16";
+	if (value === "landscape_4_3") return "4:3";
+	if (value === "portrait_4_3") return "3:4";
+	if (value === "square_hd" || value === "square") return "1:1";
+	return typeof value === "string" ? value : null;
+}
+
 const fluxProSchema = {
 	type: "object",
 	title: "Input",
 	required: ["prompt"],
 	properties: {
 		prompt: { type: "string", title: "Prompt" },
-		image_size: {
+		image_prompt: {
 			type: "string",
-			title: "Image Size",
-			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
-			default: "landscape_16_9",
+			title: "Image Prompt",
+			description: "Reference image used with Flux Redux to guide composition.",
 		},
-		num_images: {
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: [
+				"custom",
+				"1:1",
+				"16:9",
+				"3:2",
+				"2:3",
+				"4:5",
+				"5:4",
+				"9:16",
+				"3:4",
+				"4:3",
+			],
+			default: "1:1",
+		},
+		width: {
 			type: "integer",
-			title: "Number of Images",
-			default: 1,
-			minimum: 1,
-			maximum: 4,
+			title: "Width",
+			minimum: 256,
+			maximum: 1440,
+		},
+		height: {
+			type: "integer",
+			title: "Height",
+			minimum: 256,
+			maximum: 1440,
 		},
 		output_format: {
 			type: "string",
 			title: "Output Format",
-			enum: ["jpeg", "png"],
-			default: "png",
+			enum: ["webp", "jpg", "png"],
+			default: "webp",
+		},
+		output_quality: {
+			type: "integer",
+			title: "Output Quality",
+			default: 80,
+			minimum: 0,
+			maximum: 100,
 		},
 		safety_tolerance: {
 			type: "integer",
@@ -185,47 +239,68 @@ const fluxProSchema = {
 			minimum: 1,
 			maximum: 6,
 		},
+		prompt_upsampling: {
+			type: "boolean",
+			title: "Prompt Upsampling",
+			default: false,
+		},
 	},
 } as const;
 
-const fluxDevSchema = {
+const fluxProUltraSchema = {
 	type: "object",
 	title: "Input",
 	required: ["prompt"],
 	properties: {
 		prompt: { type: "string", title: "Prompt" },
-		image_size: {
+		image_prompt: {
 			type: "string",
-			title: "Image Size",
-			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
-			default: "landscape_16_9",
+			title: "Image Prompt",
+			description: "Reference image used with Flux Redux to guide composition.",
 		},
-		num_inference_steps: {
-			type: "integer",
-			title: "Steps",
-			default: 28,
-			minimum: 1,
-			maximum: 50,
+		aspect_ratio: {
+			type: "string",
+			title: "Aspect Ratio",
+			enum: [
+				"21:9",
+				"16:9",
+				"3:2",
+				"4:3",
+				"5:4",
+				"1:1",
+				"4:5",
+				"3:4",
+				"2:3",
+				"9:16",
+				"9:21",
+			],
+			default: "1:1",
 		},
-		guidance_scale: {
-			type: "number",
-			title: "Guidance Scale",
-			default: 3.5,
-			minimum: 1,
-			maximum: 20,
-		},
-		num_images: {
-			type: "integer",
-			title: "Number of Images",
-			default: 1,
-			minimum: 1,
-			maximum: 4,
+		raw: {
+			type: "boolean",
+			title: "Raw",
+			description: "Generate less processed, more natural-looking images.",
+			default: false,
 		},
 		output_format: {
 			type: "string",
 			title: "Output Format",
-			enum: ["jpeg", "png"],
-			default: "png",
+			enum: ["jpg", "png"],
+			default: "jpg",
+		},
+		safety_tolerance: {
+			type: "integer",
+			title: "Safety Tolerance",
+			default: 2,
+			minimum: 1,
+			maximum: 6,
+		},
+		image_prompt_strength: {
+			type: "number",
+			title: "Image Prompt Strength",
+			default: 0.1,
+			minimum: 0,
+			maximum: 1,
 		},
 	},
 } as const;
@@ -239,7 +314,14 @@ const fluxSchnellSchema = {
 		image_size: {
 			type: "string",
 			title: "Image Size",
-			enum: ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			enum: [
+				"square_hd",
+				"square",
+				"portrait_4_3",
+				"portrait_16_9",
+				"landscape_4_3",
+				"landscape_16_9",
+			],
 			default: "landscape_16_9",
 		},
 		num_inference_steps: {
@@ -274,13 +356,26 @@ const recraftV3Schema = {
 		image_size: {
 			type: "string",
 			title: "Image Size",
-			enum: ["square", "square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			enum: [
+				"square",
+				"square_hd",
+				"portrait_4_3",
+				"portrait_16_9",
+				"landscape_4_3",
+				"landscape_16_9",
+			],
 			default: "landscape_16_9",
 		},
 		style: {
 			type: "string",
 			title: "Style",
-			enum: ["any", "realistic_image", "digital_illustration", "vector_illustration", "icon"],
+			enum: [
+				"any",
+				"realistic_image",
+				"digital_illustration",
+				"vector_illustration",
+				"icon",
+			],
 			default: "realistic_image",
 		},
 	},
@@ -323,7 +418,14 @@ const sd35LargeSchema = {
 		image_size: {
 			type: "string",
 			title: "Image Size",
-			enum: ["square", "square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+			enum: [
+				"square",
+				"square_hd",
+				"portrait_4_3",
+				"portrait_16_9",
+				"landscape_4_3",
+				"landscape_16_9",
+			],
 			default: "landscape_16_9",
 		},
 		num_inference_steps: {
@@ -352,7 +454,23 @@ const nanoBanana2Schema = {
 		aspect_ratio: {
 			type: "string",
 			title: "Aspect Ratio",
-			enum: ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"],
+			enum: [
+				"auto",
+				"21:9",
+				"16:9",
+				"3:2",
+				"4:3",
+				"5:4",
+				"1:1",
+				"4:5",
+				"3:4",
+				"2:3",
+				"9:16",
+				"4:1",
+				"1:4",
+				"8:1",
+				"1:8",
+			],
 			default: "16:9",
 		},
 		resolution: {
@@ -385,7 +503,19 @@ const nanoBananaProSchema = {
 		aspect_ratio: {
 			type: "string",
 			title: "Aspect Ratio",
-			enum: ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+			enum: [
+				"auto",
+				"21:9",
+				"16:9",
+				"3:2",
+				"4:3",
+				"5:4",
+				"1:1",
+				"4:5",
+				"3:4",
+				"2:3",
+				"9:16",
+			],
 			default: "16:9",
 		},
 		resolution: {
@@ -418,11 +548,6 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			provider: "replicate",
 			model: "black-forest-labs/flux-1.1-pro",
 		},
-		falExecution: {
-			provider: "fal",
-			textToImage: "fal-ai/flux-pro/v1.1",
-			imageToImage: "fal-ai/flux-pro/v1.1/redux",
-		},
 		description:
 			"High-quality FLUX Pro model with excellent prompt following and detail.",
 		logoText: "F",
@@ -432,11 +557,13 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			"bg-[linear-gradient(135deg,#111827_0%,#7c2d12_35%,#f59e0b_65%,#ffedd5_100%)]",
 		schema: fluxProSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "image_url",
+		referenceInputField: "image_prompt",
 		visibleSettings: [
-			"image_size",
+			"aspect_ratio",
 			"output_format",
+			"output_quality",
 			"safety_tolerance",
+			"prompt_upsampling",
 		],
 	},
 	{
@@ -447,54 +574,47 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			provider: "replicate",
 			model: "black-forest-labs/flux-1.1-pro-ultra",
 		},
-		falExecution: {
-			provider: "fal",
-			textToImage: "fal-ai/flux-pro/v1.1-ultra",
-			imageToImage: "fal-ai/flux-pro/v1.1-ultra/redux",
-		},
-		description:
-			"Ultra high-resolution FLUX for maximum detail and clarity.",
+		description: "Ultra high-resolution FLUX for maximum detail and clarity.",
 		logoText: "F",
 		logoImageUrl: "/model-media/bfl-logo.png",
 		previewImageUrl: "/model-media/flux-2-max-cover.jpg",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#111827_0%,#3b0764_30%,#c084fc_65%,#f5d0fe_100%)]",
-		schema: fluxProSchema,
+		schema: fluxProUltraSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "image_url",
+		referenceInputField: "image_prompt",
 		visibleSettings: [
-			"image_size",
+			"aspect_ratio",
+			"raw",
 			"output_format",
 			"safety_tolerance",
+			"image_prompt_strength",
 		],
 	},
 	{
 		id: "fal-ai/flux/dev",
-		label: "FLUX Dev",
+		label: "FLUX 2 Flex",
 		provider: "BFL",
 		replicateExecution: {
 			provider: "replicate",
-			model: "black-forest-labs/flux-dev",
-		},
-		falExecution: {
-			provider: "fal",
-			textToImage: "fal-ai/flux/dev",
-			imageToImage: "fal-ai/flux/dev/image-to-image",
+			model: "black-forest-labs/flux-2-flex",
 		},
 		description:
-			"Balanced FLUX model for development and iteration with good quality.",
+			"Flexible FLUX 2 image generation and editing with strong prompt control.",
 		logoText: "F",
 		logoImageUrl: "/model-media/bfl-logo.png",
 		previewImageUrl: "/model-media/flux-2-flex-cover.webp",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#0f172a_0%,#115e59_30%,#34d399_62%,#d1fae5_100%)]",
-		schema: fluxDevSchema,
+		schema: flux2FlexSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "image_url",
+		referenceInputField: "input_images",
 		visibleSettings: [
-			"image_size",
-			"num_inference_steps",
-			"guidance_scale",
+			"aspect_ratio",
+			"resolution",
+			"steps",
+			"guidance",
+			"prompt_upsampling",
 		],
 	},
 	{
@@ -509,8 +629,7 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			provider: "fal",
 			textToImage: "fal-ai/flux/schnell",
 		},
-		description:
-			"Fast FLUX model for rapid iteration and quick previews.",
+		description: "Fast FLUX model for rapid iteration and quick previews.",
 		logoText: "F",
 		logoImageUrl: "/model-media/bfl-logo.png",
 		previewImageUrl: "/model-media/flux-2-flex-cover.webp",
@@ -518,10 +637,7 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			"bg-[linear-gradient(135deg,#0f172a_0%,#0891b2_35%,#22d3ee_65%,#cffafe_100%)]",
 		schema: fluxSchnellSchema,
 		supportsReferenceImages: false,
-		visibleSettings: [
-			"image_size",
-			"num_inference_steps",
-		],
+		visibleSettings: ["image_size", "num_inference_steps"],
 	},
 	{
 		id: "fal-ai/recraft-v3",
@@ -578,21 +694,48 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			textToImage: "fal-ai/stable-diffusion-v35-large",
 			imageToImage: "fal-ai/stable-diffusion-v35-large/image-to-image",
 		},
-		description:
-			"Stable Diffusion 3.5 Large with strong coherence and detail.",
+		description: "Stable Diffusion 3.5 Large with strong coherence and detail.",
 		logoText: "S",
 		accentClassName:
 			"bg-[linear-gradient(135deg,#1f2937_0%,#6d28d9_30%,#a78bfa_65%,#ede9fe_100%)]",
 		schema: sd35LargeSchema,
 		supportsReferenceImages: true,
 		referenceInputField: "image_url",
-		visibleSettings: ["image_size", "num_inference_steps", "guidance_scale", "negative_prompt"],
+		visibleSettings: [
+			"image_size",
+			"num_inference_steps",
+			"guidance_scale",
+			"negative_prompt",
+		],
 	},
 	{
-		id: "fal-ai/nano-banana-2",
+		id: "google/nano-banana",
+		label: "Nano Banana",
+		provider: "Google",
+		replicateExecution: {
+			provider: "replicate",
+			model: "google/nano-banana",
+		},
+		description:
+			"Google's versatile image generation and editing model on Replicate.",
+		logoText: "G",
+		logoImageUrl: "/model-media/google-logo.png",
+		previewImageUrl: "/model-media/nano-banana-2-cover.jpeg",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#1e3a5f_0%,#4285f4_30%,#34a853_50%,#fbbc05_70%,#ea4335_100%)]",
+		schema: nanoBananaSchema,
+		supportsReferenceImages: true,
+		referenceInputField: "image_input",
+		visibleSettings: ["aspect_ratio", "output_format"],
+	},
+	{
+		id: "google/nano-banana-2",
 		label: "Nano Banana 2",
 		provider: "Google",
-		// Google Imagen models are only available on fal.ai
+		replicateExecution: {
+			provider: "replicate",
+			model: "google/nano-banana-2",
+		},
 		falExecution: {
 			provider: "fal",
 			textToImage: "fal-ai/nano-banana-2",
@@ -607,14 +750,22 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			"bg-[linear-gradient(135deg,#1e3a5f_0%,#4285f4_30%,#34a853_50%,#fbbc05_70%,#ea4335_100%)]",
 		schema: nanoBanana2Schema,
 		supportsReferenceImages: true,
-		referenceInputField: "image_urls",
-		visibleSettings: ["aspect_ratio", "resolution", "output_format", "safety_tolerance"],
+		referenceInputField: "image_input",
+		visibleSettings: [
+			"aspect_ratio",
+			"resolution",
+			"output_format",
+			"safety_tolerance",
+		],
 	},
 	{
-		id: "fal-ai/nano-banana-pro",
+		id: "google/nano-banana-pro",
 		label: "Nano Banana Pro",
 		provider: "Google",
-		// Google Imagen models are only available on fal.ai
+		replicateExecution: {
+			provider: "replicate",
+			model: "google/nano-banana-pro",
+		},
 		falExecution: {
 			provider: "fal",
 			textToImage: "fal-ai/nano-banana-pro",
@@ -629,8 +780,13 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			"bg-[linear-gradient(135deg,#0f172a_0%,#4285f4_25%,#34a853_50%,#fbbc05_75%,#ea4335_100%)]",
 		schema: nanoBananaProSchema,
 		supportsReferenceImages: true,
-		referenceInputField: "image_urls",
-		visibleSettings: ["aspect_ratio", "resolution", "output_format", "safety_tolerance"],
+		referenceInputField: "image_input",
+		visibleSettings: [
+			"aspect_ratio",
+			"resolution",
+			"output_format",
+			"safety_tolerance",
+		],
 	},
 ] as const;
 
@@ -760,7 +916,8 @@ export function buildImageModelInput({
 
 	// Handle reference images for fal.ai models
 	// Different endpoints have different input schemas
-	const hasReferenceImages = referenceImageUrls && referenceImageUrls.length > 0;
+	const hasReferenceImages =
+		referenceImageUrls && referenceImageUrls.length > 0;
 	const isImageToImage = mode === "image-to-image" || hasReferenceImages;
 
 	if (isImageToImage && hasReferenceImages && model.supportsReferenceImages) {
@@ -768,6 +925,17 @@ export function buildImageModelInput({
 		if (model.referenceInputField === "image_urls") {
 			// Models that accept an array of images (e.g., Nano Banana)
 			input.image_urls = referenceImageUrls;
+		} else if (model.referenceInputField === "image_input") {
+			input.image_input = referenceImageUrls;
+		} else if (model.referenceInputField === "images") {
+			// Replicate image-edit models that accept an ordered image array.
+			input.images = referenceImageUrls;
+		} else if (model.referenceInputField === "input_images") {
+			// FLUX 2 models that accept an ordered reference image array.
+			input.input_images = referenceImageUrls;
+		} else if (model.referenceInputField === "image_prompt") {
+			// FLUX Pro models use image_prompt for Redux-style reference guidance.
+			input.image_prompt = referenceImageUrls[0];
 		} else {
 			// Models that accept a single image URL (e.g., FLUX, SD)
 			input.image_url = referenceImageUrls[0];
@@ -834,14 +1002,31 @@ export function normalizeImageDefaults(value: unknown): ImageDefaults {
 	const legacyMappedOptions: Record<string, unknown> = {
 		...rawModelOptions,
 	};
-	if (typeof raw.aspectRatio === "string") {
-		legacyMappedOptions.aspect_ratio = raw.aspectRatio;
+	const legacyAspectRatio = normalizeLegacyAspectRatio(
+		raw.aspectRatio ??
+			rawModelOptions.aspect_ratio ??
+			rawModelOptions.image_size,
+	);
+	if (legacyAspectRatio) {
+		legacyMappedOptions.aspect_ratio = legacyAspectRatio;
 	}
 	if (typeof raw.resolution === "string") {
 		legacyMappedOptions.resolution = raw.resolution;
 	}
 	if (typeof raw.outputFormat === "string") {
 		legacyMappedOptions.output_format = raw.outputFormat;
+	}
+	if (
+		legacyMappedOptions.steps === undefined &&
+		typeof rawModelOptions.num_inference_steps === "number"
+	) {
+		legacyMappedOptions.steps = rawModelOptions.num_inference_steps;
+	}
+	if (
+		legacyMappedOptions.guidance === undefined &&
+		typeof rawModelOptions.guidance_scale === "number"
+	) {
+		legacyMappedOptions.guidance = rawModelOptions.guidance_scale;
 	}
 
 	return {

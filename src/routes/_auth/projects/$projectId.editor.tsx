@@ -24,12 +24,13 @@ export const Route = createFileRoute("/_auth/projects/$projectId/editor")({
 
 function EditorPage() {
 	const { projectId } = Route.useParams();
+	const loaderData = Route.useLoaderData();
 	const { data } = useQuery({
 		queryKey: projectKeys.project(projectId),
 		queryFn: () => loadProject({ data: projectId }),
+		initialData: loaderData,
 	});
-	// biome-ignore lint/style/noNonNullAssertion: loader always seeds this value before component renders
-	const data_ = data!;
+	const data_ = data ?? loaderData;
 
 	return (
 		<div className="h-screen flex flex-col bg-zinc-950">

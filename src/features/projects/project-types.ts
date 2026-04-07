@@ -25,6 +25,7 @@ export interface IntakeAnswers {
 	style?: string[];
 	mood?: string[];
 	setting?: string[];
+	audioMode?: string;
 	audience?: string;
 	viewerAction?: string;
 	workingTitle?: string;
@@ -79,6 +80,7 @@ export type ShotSize =
 
 export interface ShotPlanEntry {
 	description: string;
+	imagePrompt?: string;
 	shotType: ShotType;
 	shotSize: ShotSize;
 	durationSec: number;
@@ -102,11 +104,47 @@ export interface Character {
 	description: string;
 	visualPromptFragment: string;
 	referenceImageIds?: string[];
+	primaryImageId?: string | null;
+	defaultEnabled?: boolean;
+}
+
+export interface ProjectReferenceImageInfo {
+	id: string;
+	url: string;
+	label?: string | null;
+	storageKey?: string | null;
+}
+
+export interface CharacterWithImages extends Character {
+	images?: ProjectReferenceImageInfo[];
+}
+
+export interface Location {
+	id: string;
+	name: string;
+	description: string;
+	visualPromptFragment: string;
+	images?: ProjectReferenceImageInfo[];
+	primaryImageId?: string | null;
+	defaultEnabled?: boolean;
+}
+
+export interface LocationWithImages extends Location {
+	images?: ProjectReferenceImageInfo[];
+}
+
+export interface ShotPromptContextSettings {
+	useProjectCharacters?: boolean;
+	excludedCharacterIds?: string[];
+	useProjectLocations?: boolean;
+	excludedLocationIds?: string[];
 }
 
 export interface ProjectSettings {
 	intake?: IntakeAnswers;
 	characters?: Character[];
+	locations?: Location[];
+	shotPromptContext?: Record<string, ShotPromptContextSettings>;
 	workshop?: {
 		openingHook?: OpeningHookDraft | null;
 	};

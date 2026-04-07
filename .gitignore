@@ -20,3 +20,11 @@ todos.json
 # OMC plugin state
 .omc/
 src/**/.omc/
+.claude
+.pnpm-store
+.agent
+.agent/*
+.agent-workspace
+.agent-workspace/*
+.agent-workspace-local
+.agent-workspace-local/*

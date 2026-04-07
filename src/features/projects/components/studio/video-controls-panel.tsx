@@ -31,6 +31,7 @@ import {
 } from "../../video-models";
 import { ModelPickerModal } from "../model-picker-modal";
 import { CopyPromptButton } from "./copy-prompt-button";
+import { ProjectVisualReferenceSelector } from "./project-visual-reference-selector";
 
 function updateVideoOption(
 	settings: VideoDefaults,
@@ -308,6 +309,13 @@ export function VideoControlsPanel({
 	onUseProjectContextChange,
 	usePrevShotContext,
 	onUsePrevShotContextChange,
+	projectId,
+	selectedCharacterIds,
+	onSelectedCharacterIdsChange,
+	projectCharacterCount = 0,
+	selectedLocationIds,
+	onSelectedLocationIdsChange,
+	projectLocationCount = 0,
 	isGenerating,
 	isQueueing = isGenerating,
 	onGenerate,
@@ -337,6 +345,13 @@ export function VideoControlsPanel({
 	onUseProjectContextChange: (v: boolean) => void;
 	usePrevShotContext: boolean;
 	onUsePrevShotContextChange: (v: boolean) => void;
+	projectId: string;
+	selectedCharacterIds?: string[];
+	onSelectedCharacterIdsChange?: (ids: string[]) => void;
+	projectCharacterCount?: number;
+	selectedLocationIds?: string[];
+	onSelectedLocationIdsChange?: (ids: string[]) => void;
+	projectLocationCount?: number;
 	isGenerating: boolean;
 	isQueueing?: boolean;
 	onGenerate: () => void;
@@ -506,6 +521,36 @@ export function VideoControlsPanel({
 						</button>
 					</div>
 				</div>
+
+				{projectCharacterCount > 0 &&
+					selectedCharacterIds &&
+					onSelectedCharacterIdsChange && (
+						<ProjectVisualReferenceSelector
+							projectId={projectId}
+							kind="characters"
+							selectedIds={selectedCharacterIds}
+							onSelectedIdsChange={onSelectedCharacterIdsChange}
+							totalSelectedCount={
+								(selectedCharacterIds?.length ?? 0) +
+								(selectedLocationIds?.length ?? 0)
+							}
+						/>
+					)}
+
+				{projectLocationCount > 0 &&
+					selectedLocationIds &&
+					onSelectedLocationIdsChange && (
+						<ProjectVisualReferenceSelector
+							projectId={projectId}
+							kind="locations"
+							selectedIds={selectedLocationIds}
+							onSelectedIdsChange={onSelectedLocationIdsChange}
+							totalSelectedCount={
+								(selectedCharacterIds?.length ?? 0) +
+								(selectedLocationIds?.length ?? 0)
+							}
+						/>
+					)}
 
 				{prevShotReferenceImage && onUsePrevShotReferenceImageChange && (
 					<div className="space-y-2">

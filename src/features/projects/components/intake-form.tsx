@@ -17,6 +17,25 @@ const DURATION_PRESETS = [
 	{ label: "30 min", seconds: 1800 },
 ] as const;
 
+const VISUAL_STYLE_OPTIONS = [
+	"Photorealistic cinematic",
+	"Documentary naturalism",
+	"Studio Ghibli-inspired animation",
+	"Anime",
+	"Painterly 2D cartoon",
+	"Stylized 3D animation",
+	"Clean motion graphics",
+	"Graphic novel illustration",
+	"Retro film / VHS",
+] as const;
+
+const AUDIO_MODE_OPTIONS = [
+	"Narration + background music",
+	"Narration only",
+	"Background music only",
+	"No narration or music",
+] as const;
+
 function deriveLengthLabel(seconds: number): string {
 	if (seconds <= 20) return "15 seconds";
 	if (seconds <= 45) return "30 seconds";
@@ -78,6 +97,22 @@ const STEPS = [
 		options: [],
 	},
 	{
+		key: "style" as const,
+		question: "What visual style should this video use?",
+		subtitle:
+			"This choice will be carried into every scene, image prompt, and video prompt.",
+		type: "single" as const,
+		options: VISUAL_STYLE_OPTIONS,
+	},
+	{
+		key: "audioMode" as const,
+		question: "What audio format should this video have?",
+		subtitle:
+			"This will guide whether scenes include narration, music cues, both, or stay silent.",
+		type: "single" as const,
+		options: AUDIO_MODE_OPTIONS,
+	},
+	{
 		key: "concept" as const,
 		question: "Describe your video idea",
 		subtitle: "The more detail the better — we'll refine it together.",
@@ -109,6 +144,7 @@ export function IntakeForm({
 		style: [],
 		mood: [],
 		setting: [],
+		audioMode: "",
 		audience: "",
 		viewerAction: "",
 		workingTitle: "",
@@ -144,6 +180,9 @@ export function IntakeForm({
 					mood: preset?.mood ?? prev.mood ?? [],
 				};
 			}
+			if (step.key === "style") {
+				return { ...prev, style: [value] };
+			}
 			return { ...prev, [step.key]: value };
 		});
 		setTimeout(advanceStep, 300);
@@ -169,6 +208,7 @@ export function IntakeForm({
 					style: answers.style ?? [],
 					mood: answers.mood ?? [],
 					setting: answers.setting ?? [],
+					audioMode: answers.audioMode ?? "",
 					audience: answers.audience ?? "",
 					viewerAction: answers.viewerAction ?? "",
 					workingTitle: answers.workingTitle ?? "",
@@ -235,7 +275,11 @@ export function IntakeForm({
 					{step.type === "single" && (
 						<SingleSelect
 							options={step.options}
-							selected={(answers[step.key] as string) ?? ""}
+							selected={
+								step.key === "style"
+									? (answers.style?.[0] ?? "")
+									: ((answers[step.key] as string) ?? "")
+							}
 							onSelect={handleSingleSelect}
 						/>
 					)}
@@ -308,6 +352,13 @@ function isStepValid(key: StepKey, answers: Partial<IntakeAnswers>): boolean {
 	}
 	if (key === "channelPreset") {
 		const val = answers.channelPreset;
+		return typeof val === "string" && val.length > 0;
+	}
+	if (key === "style") {
+		return Array.isArray(answers.style) && answers.style.length > 0;
+	}
+	if (key === "audioMode") {
+		const val = answers.audioMode;
 		return typeof val === "string" && val.length > 0;
 	}
 	return false;
