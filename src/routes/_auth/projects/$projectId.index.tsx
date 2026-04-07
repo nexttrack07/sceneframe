@@ -125,11 +125,11 @@ function ProjectPage() {
 	useEffect(() => {
 		if (!committedEditDraft) return;
 		const scenesApplied = committedEditDraft.sceneUpdates.every((update) => {
-			const scene = projectScenes.find((entry) => entry.id === update.sceneId);
+			const scene = projectScenes.find((entry: any) => entry.id === update.sceneId);
 			return scene?.description === update.description;
 		});
 		const shotsApplied = committedEditDraft.shotUpdates.every((update) => {
-			const shot = projectShots.find((entry) => entry.id === update.shotId);
+			const shot = projectShots.find((entry: any) => entry.id === update.shotId);
 			return shot?.description === update.description;
 		});
 		if (scenesApplied && shotsApplied) {
@@ -246,12 +246,12 @@ function ProjectPage() {
 						setCommittedEditDraft(draft);
 					}}
 					onDraftApplyStateChange={setPendingEditApply}
-					scenes={projectScenes.map((scene) => ({
+					scenes={projectScenes.map((scene: any) => ({
 						id: scene.id,
 						title: scene.title,
 						order: scene.order,
 					}))}
-					shots={projectShots.map((shot) => ({
+					shots={projectShots.map((shot: any) => ({
 						id: shot.id,
 						sceneId: shot.sceneId,
 						order: shot.order,
