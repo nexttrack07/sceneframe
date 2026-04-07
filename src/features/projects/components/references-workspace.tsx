@@ -1,7 +1,7 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, MapPinned, Plus, Trash2, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -58,6 +58,11 @@ type ReferenceSelection =
 	| { kind: "location"; mode: "existing"; id: string }
 	| { kind: "character"; mode: "create" }
 	| { kind: "location"; mode: "create" };
+
+const CHARACTER_QUERY_KEY = (projectId: string) =>
+	["project-references", projectId, "characters"] as const;
+const LOCATION_QUERY_KEY = (projectId: string) =>
+	["project-references", projectId, "locations"] as const;
 
 function fileToBase64(file: File) {
 	return new Promise<string>((resolve, reject) => {
@@ -125,41 +130,30 @@ export function ReferencesWorkspace({
 	const [pendingImagesBySelection, setPendingImagesBySelection] = useState<
 		Record<string, PendingReferenceImage[]>
 	>({});
-	const [rawCharacters, setRawCharacters] =
-		useState<CharacterWithImages[]>(initialCharacters);
-	const [rawLocations, setRawLocations] =
-		useState<LocationWithImages[]>(initialLocations);
-
-	const loadCharacters = useCallback(async () => {
-		try {
-			const result = await listCharacters({ data: { projectId } });
-			setRawCharacters(result);
-		} catch (err) {
-			console.error("Failed to load characters", err);
-		}
-	}, [projectId]);
-
-	const loadLocations = useCallback(async () => {
-		try {
-			const result = await listLocations({ data: { projectId } });
-			setRawLocations(result);
-		} catch (err) {
-			console.error("Failed to load locations", err);
-		}
-	}, [projectId]);
-
-	useEffect(() => {
-		void loadCharacters();
-		void loadLocations();
-	}, [loadCharacters, loadLocations]);
+	const charactersQuery = useQuery({
+		queryKey: CHARACTER_QUERY_KEY(projectId),
+		queryFn: () => listCharacters({ data: { projectId } }),
+		initialData: initialCharacters,
+	});
+	const locationsQuery = useQuery({
+		queryKey: LOCATION_QUERY_KEY(projectId),
+		queryFn: () => listLocations({ data: { projectId } }),
+		initialData: initialLocations,
+	});
 
 	const characters = useMemo(
-		() => [...rawCharacters].sort((a, b) => a.name.localeCompare(b.name)),
-		[rawCharacters],
+		() =>
+			[...(charactersQuery.data ?? [])].sort((a, b) =>
+				a.name.localeCompare(b.name),
+			),
+		[charactersQuery.data],
 	);
 	const locations = useMemo(
-		() => [...rawLocations].sort((a, b) => a.name.localeCompare(b.name)),
-		[rawLocations],
+		() =>
+			[...(locationsQuery.data ?? [])].sort((a, b) =>
+				a.name.localeCompare(b.name),
+			),
+		[locationsQuery.data],
 	);
 
 	const selectedCharacter =
@@ -217,7 +211,6 @@ export function ReferencesWorkspace({
 		selectedCharacter?.visualPromptFragment,
 		selectedLocation?.visualPromptFragment,
 	]);
-
 	function addPendingImage(label: string) {
 		const pending: PendingReferenceImage = {
 			id: crypto.randomUUID(),
@@ -240,8 +233,12 @@ export function ReferencesWorkspace({
 
 	async function refreshReferences() {
 		await Promise.all([
-			loadCharacters(),
-			loadLocations(),
+			queryClient.invalidateQueries({
+				queryKey: CHARACTER_QUERY_KEY(projectId),
+			}),
+			queryClient.invalidateQueries({
+				queryKey: LOCATION_QUERY_KEY(projectId),
+			}),
 			queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			}),

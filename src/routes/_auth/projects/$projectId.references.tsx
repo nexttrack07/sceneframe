@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ReferencesWorkspace } from "@/features/projects/components/references-workspace";
 import { listCharacters } from "@/features/projects/character-actions";
@@ -27,15 +28,21 @@ export const Route = createFileRoute("/_auth/projects/$projectId/references")({
 });
 
 function ProjectReferencesPage() {
-	const data = Route.useLoaderData();
-	const project = data.project;
+	const { projectId } = Route.useParams();
+	const loaderData = Route.useLoaderData();
+	const { data } = useQuery({
+		queryKey: projectKeys.project(projectId),
+		queryFn: () => loadProject({ data: projectId }),
+	});
+	// biome-ignore lint/style/noNonNullAssertion: route loader preloads the query
+	const project = data!.project;
 
 	return (
 		<ReferencesWorkspace
 			projectId={project.id}
 			projectName={project.name}
-			initialCharacters={data.characters}
-			initialLocations={data.locations}
+			initialCharacters={loaderData.characters}
+			initialLocations={loaderData.locations}
 		/>
 	);
 }
