@@ -6,7 +6,13 @@ import { runs } from "@trigger.dev/sdk";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, scenes, shots, transitionVideos } from "@/db/schema";
+import {
+	assets,
+	referenceImages,
+	scenes,
+	shots,
+	transitionVideos,
+} from "@/db/schema";
 import {
 	assertAssetOwnerViaShot,
 	assertSceneOwner,
@@ -41,8 +47,8 @@ import {
 import { isPendingVideoStatus } from "./video-status";
 
 const REPLICATE_TIMEOUT_MS = 60_000;
-const REFERENCE_IMAGE_ANALYSIS_TIMEOUT_MS = 45_000;
-const PROMPT_MODEL = "openai/gpt-4o-mini";
+const PROMPT_MODEL = "google/gemini-2.5-flash";
+const PROMPT_MAX_OUTPUT_TOKENS = 8192;
 const STALE_IMAGE_GENERATION_MS = 6 * 60 * 1000;
 const ORPHANED_IMAGE_GENERATION_ERROR =
 	"Image generation stopped before completion. Please try again.";
@@ -54,45 +60,10 @@ async function describeReferenceImage(args: {
 	shotDescription: string;
 	goal: "image" | "video";
 }) {
-	const controller = new AbortController();
-	const timeout = setTimeout(
-		() => controller.abort(),
-		REFERENCE_IMAGE_ANALYSIS_TIMEOUT_MS,
-	);
+	void args.replicate;
+	void args.shotDescription;
 
-	try {
-		const chunks: string[] = [];
-		for await (const event of args.replicate.stream(PROMPT_MODEL, {
-			input: {
-				image_input: [args.imageUrl],
-				max_completion_tokens: 300,
-				system_prompt:
-					args.goal === "video"
-						? "You analyze a reference image for writing a grounded video generation prompt."
-						: "You analyze a reference image for writing a grounded image generation prompt.",
-				temperature: 0.3,
-				prompt: `This is a ${args.label} reference image for a ${args.goal} generation prompt.
-
-Shot description:
-${args.shotDescription}
-
-Describe only the concrete visual information that should guide prompt writing:
-- subject appearance, pose, and placement
-- framing and camera distance
-- environment and key props
-- lighting, mood, and visual style
-
-Return 2-4 short sentences. Be specific and visual. Do not speculate beyond what is visible.`,
-			},
-			signal: controller.signal,
-		})) {
-			chunks.push(String(event));
-		}
-
-		return chunks.join("").trim();
-	} finally {
-		clearTimeout(timeout);
-	}
+	return `${args.label} reference image is attached as a Gemini image input for this ${args.goal} prompt. Use the visible subject, framing, setting, and lighting from that image directly.`;
 }
 
 async function buildReferenceImageContext(args: {
@@ -126,6 +97,82 @@ async function buildReferenceImageContext(args: {
 	).then((results) =>
 		results.filter((value): value is string => Boolean(value)),
 	);
+}
+
+async function loadCharacterPromptContext(args: {
+	projectId: string;
+	characters: Array<{
+		id: string;
+		name: string;
+		visualPromptFragment: string;
+		primaryImageId?: string | null;
+		referenceImageIds?: string[];
+	}>;
+	excludedCharacterIds?: string[];
+}) {
+	const activeCharacters = args.characters.filter(
+		(character) => !args.excludedCharacterIds?.includes(character.id),
+	);
+	if (activeCharacters.length === 0) {
+		return { imageUrls: [] as string[] };
+	}
+
+	// Only use the primary image for each character (user's explicit selection)
+	const preferredImageIds = activeCharacters
+		.map((character) => character.primaryImageId)
+		.filter((id): id is string => Boolean(id))
+		.slice(0, 4);
+
+	const images =
+		preferredImageIds.length === 0
+			? []
+			: await db.query.referenceImages.findMany({
+					where: and(
+						eq(referenceImages.projectId, args.projectId),
+						inArray(referenceImages.id, preferredImageIds),
+						isNull(referenceImages.deletedAt),
+					),
+				});
+
+	const imageMap = new Map(images.map((image) => [image.id, image.url]));
+	return {
+		imageUrls: preferredImageIds
+			.map((id) => imageMap.get(id))
+			.filter((url): url is string => Boolean(url))
+			.slice(0, 4),
+	};
+}
+
+function loadLocationPromptContext(args: {
+	locations: Array<{
+		id: string;
+		name: string;
+		visualPromptFragment: string;
+		primaryImageId?: string | null;
+		images?: Array<{ id: string; url: string }>;
+	}>;
+	excludedLocationIds?: string[];
+}) {
+	const activeLocations = args.locations.filter(
+		(location) => !args.excludedLocationIds?.includes(location.id),
+	);
+	if (activeLocations.length === 0) {
+		return { imageUrls: [] as string[] };
+	}
+
+	const preferredImageUrls = activeLocations
+		.flatMap((location) => {
+			const images = location.images ?? [];
+			const primaryImage =
+				images.find((image) => image.id === location.primaryImageId) ??
+				images[0];
+			return primaryImage?.url ? [primaryImage.url] : [];
+		})
+		.slice(0, 4);
+
+	return {
+		imageUrls: preferredImageUrls,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +738,8 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 			shotId: string;
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
+			useProjectCharacters?: boolean;
+			useProjectLocations?: boolean;
 			referenceImageUrls?: string[];
 			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
@@ -725,10 +774,6 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 				shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null;
 
 			const intake = settings?.intake;
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
 			const projectContext = [
 				intake?.concept ? `Project concept: ${intake.concept}` : null,
 				intake?.purpose ? `Purpose: ${intake.purpose}` : null,
@@ -736,11 +781,11 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 					? `Visual style: ${intake.style.join(", ")}`
 					: null,
 				intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+				intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 				intake?.audience ? `Target audience: ${intake.audience}` : null,
 				intake?.viewerAction
 					? `Viewer action goal: ${intake.viewerAction}`
 					: null,
-				characterContext,
 			]
 				.filter(Boolean)
 				.join("\n");
@@ -751,22 +796,24 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 
 			const systemPrompt = `You are an expert prompt writer for modern text-to-image models.
 
-Write a concise, production-quality prompt for a single still image based on the current shot.
+Write a rich, production-quality prompt for a single still image based on the current shot.
 Write the result as 1 to 4 natural-language sentences, not a labeled template.
 
 Prompt priorities:
-- the main subject and exact frozen pose/expression visible in frame
+- framing and composition first, then the main subject and exact frozen pose/expression visible in frame
 - the environment and key props/background elements
 - framing/composition/camera angle only when it materially improves the image
-- lighting, mood, and visual style
+- lighting and what it is doing, color palette, atmosphere, mood, and visual style
 - any essential visible text, calligraphy, or graphic elements
 
 Rules:
 ${consistencyRules}
 - This is a still image prompt, not a video prompt
 - Do NOT describe camera movement, motion over time, transitions, animation, or what happens next
-- Use adjacent shots only for continuity of wardrobe, environment, props, and composition
-- Keep it specific but compact; avoid overly verbose taxonomies and stacked adjectives
+- Use adjacent shots as implicit transition-pair context: the current shot should remain visually compatible with the previous and next shot while still showing a clear, concrete state change
+- Make the prompt detailed enough that the image model does not need to invent subject placement, environment layout, lighting behavior, or style-specific rendering details
+- Do not keep it artificially short; precision is more important than brevity
+- Use the audio direction as context: if narration is present, leave visual room for spoken explanation or on-screen text; if music-only or silent, make the still frame carry more of the story visually.
 - If scale matters (tiny subject, huge environment, distant silhouette), state it clearly
 - Do NOT include meta-instructions like "generate an image of"
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
@@ -834,10 +881,13 @@ Return ONLY the final prompt, nothing else.`;
 				const chunks: string[] = [];
 				for await (const event of replicate.stream(PROMPT_MODEL, {
 					input: {
+						images: referenceImageUrls,
 						prompt: `${systemPrompt}\n\n${userMessage}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern text-to-image models.",
-						max_completion_tokens: 1024,
+						max_output_tokens: PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.8,
 					},
 					signal: controller.signal,
@@ -887,6 +937,8 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 			userPrompt: string;
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
+			useProjectCharacters?: boolean;
+			useProjectLocations?: boolean;
 			referenceImageUrls?: string[];
 			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
@@ -922,17 +974,13 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 				shotIdx < sceneShots.length - 1 ? sceneShots[shotIdx + 1] : null;
 
 			const intake = settings?.intake;
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
 			const projectContext = [
 				intake?.concept ? `Project concept: ${intake.concept}` : null,
 				intake?.style?.length
 					? `Visual style: ${intake.style.join(", ")}`
 					: null,
 				intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
-				characterContext,
+				intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 			]
 				.filter(Boolean)
 				.join("\n");
@@ -944,10 +992,11 @@ Write the result as 1 to 4 natural-language sentences, not a labeled template.
 
 Rules:
 - Preserve all visually important elements the user mentioned
-- Improve clarity, composition, lighting, and style wording only where it helps
+- Improve clarity, composition, subject placement, environment detail, lighting behavior, color palette, and style-specific rendering language
 - Keep it strictly as a still image prompt: no camera movement, animation, transitions, or sequential action
-- If adjacent-shot context is present, use it only for continuity of wardrobe, environment, props, and composition
-- Keep it specific but compact; remove fluff and avoid over-explaining
+- If adjacent-shot context is present, use it to preserve continuity anchors and make the current frame a believable bridge between neighboring shots
+- Do not keep it artificially short; make it concrete enough that the image model does not need to invent missing visual details
+- Use the audio direction as context so the rewritten still frame either supports narration/on-screen text or carries the story visually in music-only/silent scenes.
 - If the user mentioned visible text, calligraphy, signage, or graphics, preserve that explicitly
 - If scale matters, preserve it exactly
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
@@ -991,14 +1040,17 @@ Return ONLY the final prompt, nothing else.`;
 				const chunks: string[] = [];
 				for await (const event of replicate.stream(PROMPT_MODEL, {
 					input: {
+						images: referenceImageUrls,
 						prompt: `${systemPrompt}${
 							referenceImageContext.length > 0
 								? `\n\nReference images:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
 								: ""
 						}\n\nUser's prompt to enhance:\n${userPrompt}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern text-to-image models.",
-						max_completion_tokens: 1024,
+						max_output_tokens: PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.7,
 					},
 					signal: controller.signal,
@@ -1043,6 +1095,10 @@ export const generateShotImages = createServerFn({ method: "POST" })
 			lane: "start" | "end";
 			promptOverride?: string;
 			settingsOverrides?: unknown;
+			useProjectCharacters?: boolean;
+			excludedCharacterIds?: string[];
+			useProjectLocations?: boolean;
+			excludedLocationIds?: string[];
 			referenceImageUrls?: string[];
 		}) => {
 			const lane = data.lane === "end" ? ("end" as const) : ("start" as const);
@@ -1051,6 +1107,10 @@ export const generateShotImages = createServerFn({ method: "POST" })
 				lane,
 				promptOverride: data.promptOverride?.trim() || undefined,
 				settingsOverrides: data.settingsOverrides,
+				useProjectCharacters: data.useProjectCharacters ?? true,
+				excludedCharacterIds: data.excludedCharacterIds?.filter(Boolean) ?? [],
+				useProjectLocations: data.useProjectLocations ?? true,
+				excludedLocationIds: data.excludedLocationIds?.filter(Boolean) ?? [],
 				referenceImageUrls: data.referenceImageUrls?.filter(Boolean) ?? [],
 			};
 		},
@@ -1062,11 +1122,42 @@ export const generateShotImages = createServerFn({ method: "POST" })
 				lane,
 				promptOverride,
 				settingsOverrides,
+				useProjectCharacters,
+				excludedCharacterIds,
+				useProjectLocations,
+				excludedLocationIds,
 				referenceImageUrls,
 			},
 		}) => {
 			const { userId, shot, scene, project } = await assertShotOwner(shotId);
 			const settings = normalizeProjectSettings(project.settings);
+			const [characterPromptContext, locationPromptContext] = await Promise.all(
+				[
+					useProjectCharacters
+						? loadCharacterPromptContext({
+								projectId: project.id,
+								characters: settings?.characters ?? [],
+								excludedCharacterIds,
+							})
+						: Promise.resolve({ imageUrls: [] as string[] }),
+					useProjectLocations
+						? Promise.resolve(
+								loadLocationPromptContext({
+									locations: settings?.locations ?? [],
+									excludedLocationIds,
+								}),
+							)
+						: Promise.resolve({ imageUrls: [] as string[] }),
+				],
+			);
+			const effectiveReferenceImageUrls = [
+				...referenceImageUrls,
+				...characterPromptContext.imageUrls,
+				...locationPromptContext.imageUrls,
+			]
+				.filter(Boolean)
+				.filter((url, index, all) => all.indexOf(url) === index)
+				.slice(0, 4);
 
 			// Default settings from last-used asset for this shot, then fallback to app defaults
 			const lastAsset = await db.query.assets.findFirst({
@@ -1117,7 +1208,9 @@ export const generateShotImages = createServerFn({ method: "POST" })
 							batchCount: generationCount,
 							generationLane: lane,
 							referenceImageUrls:
-								referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
+								effectiveReferenceImageUrls.length > 0
+									? effectiveReferenceImageUrls
+									: undefined,
 						},
 						status: "generating" as const,
 						isSelected: false,
@@ -1148,7 +1241,7 @@ export const generateShotImages = createServerFn({ method: "POST" })
 						prompt: finalPrompt,
 						model: imageDefaults.model,
 						modelOptions: imageDefaults.modelOptions,
-						referenceImageUrls,
+						referenceImageUrls: effectiveReferenceImageUrls,
 					});
 
 					await db
@@ -1279,11 +1372,25 @@ export const generateShotVideoPrompt = createServerFn({ method: "POST" })
 		(data: {
 			shotId: string;
 			referenceImageIds?: string[];
+			useProjectCharacters?: boolean;
+			excludedCharacterIds?: string[];
+			useProjectLocations?: boolean;
+			excludedLocationIds?: string[];
 			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
 	.handler(
-		async ({ data: { shotId, referenceImageIds = [], assetTypeOverride } }) => {
+		async ({
+			data: {
+				shotId,
+				referenceImageIds = [],
+				useProjectCharacters = true,
+				excludedCharacterIds = [],
+				useProjectLocations = true,
+				excludedLocationIds = [],
+				assetTypeOverride,
+			},
+		}) => {
 			const { userId, shot, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
@@ -1292,10 +1399,19 @@ export const generateShotVideoPrompt = createServerFn({ method: "POST" })
 				text: `${shot.description}`,
 				medium: "video",
 			});
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
+			const characterPromptContext = useProjectCharacters
+				? await loadCharacterPromptContext({
+						projectId: project.id,
+						characters: settings?.characters ?? [],
+						excludedCharacterIds,
+					})
+				: { imageUrls: [] as string[] };
+			const locationPromptContext = useProjectLocations
+				? loadLocationPromptContext({
+						locations: settings?.locations ?? [],
+						excludedLocationIds,
+					})
+				: { imageUrls: [] as string[] };
 
 			const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
 Given a shot description, write a concise motion prompt for a short video clip.
@@ -1319,7 +1435,7 @@ Rules:
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "video" })}
 ${settings?.intake?.style?.length ? `- Visual style: ${settings.intake.style.join(", ")}` : ""}
 ${settings?.intake?.mood?.length ? `- Mood: ${settings.intake.mood.join(", ")}` : ""}
-${characterContext ? `- ${characterContext}` : ""}
+${settings?.intake?.audioMode ? `- Audio direction: ${settings.intake.audioMode}` : ""}
 
 Return ONLY the final prompt, nothing else.`;
 
@@ -1335,12 +1451,17 @@ Return ONLY the final prompt, nothing else.`;
 							),
 						})
 					: [];
+			const effectiveReferenceImageUrls = [
+				...referenceAssets
+					.map((asset) => asset.url)
+					.filter((url): url is string => Boolean(url)),
+				...characterPromptContext.imageUrls,
+				...locationPromptContext.imageUrls,
+			].slice(0, 4);
 			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
 				buildReferenceImageContext({
 					replicate,
-					imageUrls: referenceAssets
-						.map((asset) => asset.url)
-						.filter((url): url is string => Boolean(url)),
+					imageUrls: effectiveReferenceImageUrls,
 					shotDescription: shot.description,
 					goal: "video",
 				}),
@@ -1360,7 +1481,9 @@ Return ONLY the final prompt, nothing else.`;
 						settings?.intake?.mood?.length
 							? `Mood: ${settings.intake.mood.join(", ")}`
 							: null,
-						characterContext,
+						settings?.intake?.audioMode
+							? `Audio direction: ${settings.intake.audioMode}`
+							: null,
 					]
 						.filter(Boolean)
 						.join("\n"),
@@ -1386,10 +1509,13 @@ Return ONLY the final prompt, nothing else.`;
 				const chunks: string[] = [];
 				for await (const event of replicate.stream(PROMPT_MODEL, {
 					input: {
+						images: effectiveReferenceImageUrls,
 						prompt: `${systemPrompt}\n\n${userMessage}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern video generation models like Kling.",
-						max_completion_tokens: 1024,
+						max_output_tokens: PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.7,
 					},
 					signal: controller.signal,
@@ -1568,8 +1694,84 @@ export const selectShotAsset = createServerFn({ method: "POST" })
 						eq(transitionVideos.stale, false),
 					),
 				);
+
+			void generateAdjacentTransitionPromptsForShot(asset.shotId).catch(
+				(error) => {
+					console.error(
+						`Failed to regenerate adjacent transition prompts for shot ${asset.shotId}`,
+						error,
+					);
+				},
+			);
 		}
 	});
+
+async function hasSelectedShotImage(shotId: string) {
+	const selectedImage = await db.query.assets.findFirst({
+		where: and(
+			eq(assets.shotId, shotId),
+			inArray(assets.type, ["start_image", "end_image", "image"]),
+			eq(assets.isSelected, true),
+			eq(assets.status, "done"),
+			isNull(assets.deletedAt),
+		),
+	});
+	return Boolean(selectedImage?.url);
+}
+
+async function generateAdjacentTransitionPromptsForShot(shotId: string) {
+	const shotRow = await db.query.shots.findFirst({
+		where: and(eq(shots.id, shotId), isNull(shots.deletedAt)),
+	});
+	if (!shotRow) return;
+
+	const sceneShots = await db.query.shots.findMany({
+		where: and(eq(shots.sceneId, shotRow.sceneId), isNull(shots.deletedAt)),
+		orderBy: asc(shots.order),
+	});
+	const shotIndex = sceneShots.findIndex(
+		(sceneShot) => sceneShot.id === shotId,
+	);
+	if (shotIndex < 0) return;
+
+	const adjacentPairs = [
+		shotIndex > 0
+			? {
+					fromShotId: sceneShots[shotIndex - 1].id,
+					toShotId: shotId,
+				}
+			: null,
+		shotIndex < sceneShots.length - 1
+			? {
+					fromShotId: shotId,
+					toShotId: sceneShots[shotIndex + 1].id,
+				}
+			: null,
+	].filter(
+		(pair): pair is { fromShotId: string; toShotId: string } => pair !== null,
+	);
+
+	await Promise.allSettled(
+		adjacentPairs.map(async (pair) => {
+			const [hasFromImage, hasToImage] = await Promise.all([
+				hasSelectedShotImage(pair.fromShotId),
+				hasSelectedShotImage(pair.toShotId),
+			]);
+			if (!hasFromImage || !hasToImage) return;
+
+			const { generateAndSaveTransitionPromptForPair } = await import(
+				"./transition-prompt-drafts.server"
+			);
+			await generateAndSaveTransitionPromptForPair({
+				fromShotId: pair.fromShotId,
+				toShotId: pair.toShotId,
+				useProjectContext: true,
+				usePrevShotContext: true,
+				assetTypeOverride: "auto",
+			});
+		}),
+	);
+}
 
 // ---------------------------------------------------------------------------
 // uploadShotReferenceImage
@@ -1629,6 +1831,10 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 			useProjectContext?: boolean;
 			usePrevShotContext?: boolean;
 			referenceImageIds?: string[];
+			useProjectCharacters?: boolean;
+			excludedCharacterIds?: string[];
+			useProjectLocations?: boolean;
+			excludedLocationIds?: string[];
 			assetTypeOverride?: PromptAssetTypeSelection;
 		}) => data,
 	)
@@ -1640,6 +1846,10 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 				useProjectContext = true,
 				usePrevShotContext = true,
 				referenceImageIds = [],
+				useProjectCharacters = true,
+				excludedCharacterIds = [],
+				useProjectLocations = true,
+				excludedLocationIds = [],
 				assetTypeOverride,
 			},
 		}) => {
@@ -1653,10 +1863,19 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 			});
 
 			const intake = settings?.intake;
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
+			const characterPromptContext = useProjectCharacters
+				? await loadCharacterPromptContext({
+						projectId: project.id,
+						characters: settings?.characters ?? [],
+						excludedCharacterIds,
+					})
+				: { imageUrls: [] as string[] };
+			const locationPromptContext = useProjectLocations
+				? loadLocationPromptContext({
+						locations: settings?.locations ?? [],
+						excludedLocationIds,
+					})
+				: { imageUrls: [] as string[] };
 			const styleCtx =
 				useProjectContext && intake?.style?.length
 					? `Visual style: ${intake.style.join(", ")}`
@@ -1668,7 +1887,7 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
 						styleCtx || null,
 						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
-						characterContext,
+						intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 					]
 						.filter(Boolean)
 						.join("\n")
@@ -1709,6 +1928,8 @@ Rules:
 - Write in present tense
 - Keep every section compact
 - The start frame image already establishes appearance, so focus on motion
+- If narration is part of the audio direction, keep the rewritten motion prompt compatible with spoken timing; if music-only or silent, make the visual motion itself carry the beat.
+- If narration is part of the audio direction, leave room for the spoken beat; if music-only or silent, make the action and camera move communicate the idea without relying on dialogue.
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "video" })}
 
 Shot context:
@@ -1728,12 +1949,17 @@ Return ONLY the final prompt, nothing else.`;
 							),
 						})
 					: [];
+			const effectiveReferenceImageUrls = [
+				...referenceAssets
+					.map((asset) => asset.url)
+					.filter((url): url is string => Boolean(url)),
+				...characterPromptContext.imageUrls,
+				...locationPromptContext.imageUrls,
+			].slice(0, 4);
 			const [referenceImageContext, sceneVisualBrief] = await Promise.all([
 				buildReferenceImageContext({
 					replicate,
-					imageUrls: referenceAssets
-						.map((asset) => asset.url)
-						.filter((url): url is string => Boolean(url)),
+					imageUrls: effectiveReferenceImageUrls,
 					shotDescription: shot.description,
 					goal: "video",
 				}),
@@ -1756,14 +1982,17 @@ Return ONLY the final prompt, nothing else.`;
 				const chunks: string[] = [];
 				for await (const event of replicate.stream(PROMPT_MODEL, {
 					input: {
+						images: effectiveReferenceImageUrls,
 						prompt: `${systemPrompt}${
 							referenceImageContext.length > 0
 								? `\n\nReference images:\n${referenceImageContext.map((entry, index) => `Reference ${index + 1}: ${entry}`).join("\n\n")}`
 								: ""
 						}\n\nUser's prompt to enhance:\n${userPrompt}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern video generation models like Kling.",
-						max_completion_tokens: 1024,
+						max_output_tokens: PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.7,
 					},
 					signal: controller.signal,

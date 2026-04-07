@@ -56,7 +56,7 @@ export const generateBackgroundMusicAsset = task({
 		const apiKey = decryptUserApiKey(user.providerKeyEnc, user.providerKeyDek);
 		const replicate = new Replicate({ auth: apiKey });
 		const output = await replicate.run(
-			"meta/musicgen" as `${string}/${string}`,
+			"meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
 			{
 				input: {
 					prompt: payload.prompt,

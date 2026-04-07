@@ -53,7 +53,7 @@ export function parseOpeningHook(content: string): OpeningHookDraft | null {
 		const headline = String(parsed.headline ?? "").trim();
 		const narration = String(parsed.narration ?? "").trim();
 		const visualDirection = String(parsed.visualDirection ?? "").trim();
-		if (!headline || !narration || !visualDirection) return null;
+		if (!headline || !visualDirection) return null;
 		return { headline, narration, visualDirection };
 	} catch {
 		return null;
@@ -75,6 +75,7 @@ export function composeBrief(intake: IntakeAnswers): string {
 	if (intake.mood?.length) parts.push(`Mood: ${intake.mood.join(", ")}.`);
 	if (intake.setting?.length)
 		parts.push(`Setting: ${intake.setting.join(", ")}.`);
+	if (intake.audioMode) parts.push(`Audio direction: ${intake.audioMode}.`);
 	if (intake.audience) parts.push(`Audience: ${intake.audience}.`);
 	if (intake.viewerAction)
 		parts.push(`Desired viewer action: ${intake.viewerAction}.`);

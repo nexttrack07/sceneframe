@@ -6,7 +6,7 @@ import {
 	Mic,
 	Music,
 	Play,
-	RotateCcw,
+	Sparkles,
 	Square,
 	Trash2,
 	Volume2,
@@ -14,6 +14,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { Scene } from "@/db/schema";
 import type {
 	BackgroundMusicAssetSummary,
@@ -24,10 +29,10 @@ import { projectKeys } from "../query-keys";
 import {
 	deleteVoiceoverAsset,
 	fetchElevenLabsVoices,
+	generateAudioPrompt,
 	generateBackgroundMusic,
 	generateSoundEffectAudio,
 	generateVoiceoverAudio,
-	generateVoiceoverScript,
 	getAudioRunStatuses,
 	pollAudioAssets,
 	selectVoiceover,
@@ -409,10 +414,14 @@ function VoiceoverTab({
 	const handleGenerateScript = useCallback(async () => {
 		setIsGeneratingScript(true);
 		try {
-			const result = await generateVoiceoverScript({
-				data: { sceneId: scene.id, targetDurationSec: targetDuration },
+			const result = await generateAudioPrompt({
+				data: {
+					sceneId: scene.id,
+					mode: "voiceover",
+					targetDurationSec: targetDuration,
+				},
 			});
-			setScript(result.script);
+			setScript(result.prompt);
 		} catch (err) {
 			toast(
 				err instanceof Error ? err.message : "Failed to generate script",
@@ -596,20 +605,34 @@ function VoiceoverTab({
 					</p>
 					<div className="flex items-center gap-1">
 						<CopyPromptButton value={script} label="Copy narration script" />
-						<Button
-							size="sm"
-							variant="ghost"
-							className="h-6 text-xs gap-1"
-							disabled={isGeneratingScript}
-							onClick={handleGenerateScript}
-						>
-							{isGeneratingScript ? (
-								<Loader2 size={10} className="animate-spin" />
-							) : (
-								<RotateCcw size={10} />
-							)}
-							{script ? "Regenerate" : "Auto-generate"}
-						</Button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={handleGenerateScript}
+									disabled={isGeneratingScript}
+									className="rounded-md bg-foreground p-1.5 text-background transition-colors hover:bg-foreground/80 disabled:opacity-50"
+									aria-label={
+										script
+											? "Regenerate narration script"
+											: "Generate narration script"
+									}
+								>
+									{isGeneratingScript ? (
+										<Loader2 size={13} className="animate-spin" />
+									) : (
+										<Sparkles size={13} />
+									)}
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								<p>
+									{script
+										? "Regenerate narration script"
+										: "Generate narration script"}
+								</p>
+							</TooltipContent>
+						</Tooltip>
 					</div>
 				</div>
 				<textarea
@@ -692,6 +715,7 @@ function SoundEffectsTab({
 	const [provider, setProvider] = useState<SfxProvider>("elevenlabs");
 	const [prompt, setPrompt] = useState("");
 	const [duration, setDuration] = useState(8);
+	const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
 		Record<string, TriggerRunSummary>
@@ -781,6 +805,27 @@ function SoundEffectsTab({
 		};
 	}, []);
 
+	const handleGeneratePrompt = useCallback(async () => {
+		setIsGeneratingPrompt(true);
+		try {
+			const result = await generateAudioPrompt({
+				data: {
+					sceneId: scene.id,
+					mode: provider === "musicgen" ? "music" : "sfx",
+					targetDurationSec: duration,
+				},
+			});
+			setPrompt(result.prompt);
+		} catch (err) {
+			toast(
+				err instanceof Error ? err.message : "Failed to generate audio prompt",
+				"error",
+			);
+		} finally {
+			setIsGeneratingPrompt(false);
+		}
+	}, [duration, provider, scene.id, toast]);
+
 	const handleGenerate = useCallback(async () => {
 		if (!prompt.trim()) {
 			toast("Describe the sound you want to generate", "error");
@@ -866,7 +911,37 @@ function SoundEffectsTab({
 					<p className="text-xs font-medium text-muted-foreground">
 						Description
 					</p>
-					<CopyPromptButton value={prompt} label="Copy audio prompt" />
+					<div className="flex items-center gap-1">
+						<CopyPromptButton value={prompt} label="Copy audio prompt" />
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={handleGeneratePrompt}
+									disabled={isGeneratingPrompt}
+									className="rounded-md bg-foreground p-1.5 text-background transition-colors hover:bg-foreground/80 disabled:opacity-50"
+									aria-label={
+										provider === "musicgen"
+											? "Generate background music prompt"
+											: "Generate sound effect prompt"
+									}
+								>
+									{isGeneratingPrompt ? (
+										<Loader2 size={13} className="animate-spin" />
+									) : (
+										<Sparkles size={13} />
+									)}
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								<p>
+									{provider === "musicgen"
+										? "Generate background music prompt"
+										: "Generate sound effect prompt"}
+								</p>
+							</TooltipContent>
+						</Tooltip>
+					</div>
 				</div>
 				<textarea
 					value={prompt}

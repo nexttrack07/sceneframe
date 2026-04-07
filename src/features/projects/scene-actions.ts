@@ -44,7 +44,12 @@ import {
 
 const MAX_MESSAGE_LENGTH = 5_000;
 const REPLICATE_TIMEOUT_MS = 60_000;
-const PROMPT_MODEL = "openai/gpt-4o-mini";
+const PROMPT_MODEL = "google/gemini-2.5-flash";
+const PROMPT_MAX_OUTPUT_TOKENS = 8192;
+const AUDIO_PROMPT_MODEL = "google/gemini-2.5-flash";
+const AUDIO_PROMPT_MAX_OUTPUT_TOKENS = 2048;
+const ELEVENLABS_SFX_MAX_PROMPT_CHARS = 450;
+const SCENE_REWRITE_MAX_OUTPUT_TOKENS = 16_384;
 const STALE_IMAGE_GENERATION_MS = 6 * 60 * 1000;
 const ORPHANED_IMAGE_GENERATION_ERROR =
 	"Image generation stopped before completion. Please try again.";
@@ -57,6 +62,23 @@ function extractJsonBlock<T>(response: string): T | null {
 	} catch {
 		return null;
 	}
+}
+
+function clampAudioPrompt(prompt: string, maxLength: number) {
+	const trimmed = prompt.trim();
+	if (trimmed.length <= maxLength) return trimmed;
+
+	const clipped = trimmed.slice(0, maxLength).trimEnd();
+	const sentenceBreak = Math.max(
+		clipped.lastIndexOf("."),
+		clipped.lastIndexOf("!"),
+		clipped.lastIndexOf("?"),
+	);
+	if (sentenceBreak >= Math.floor(maxLength * 0.6)) {
+		return clipped.slice(0, sentenceBreak + 1).trim();
+	}
+
+	return clipped;
 }
 
 export const updateScene = createServerFn({ method: "POST" })
@@ -195,6 +217,7 @@ export const regenerateSceneAndShots = createServerFn({ method: "POST" })
 			intake?.purpose ? `Purpose: ${intake.purpose}` : null,
 			intake?.style?.length ? `Style: ${intake.style.join(", ")}` : null,
 			intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+			intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 			intake?.audience ? `Audience: ${intake.audience}` : null,
 		]
 			.filter(Boolean)
@@ -271,9 +294,11 @@ Return ONLY JSON in this shape:
 			for await (const event of replicate.stream(PROMPT_MODEL, {
 				input: {
 					prompt: rewritePrompt,
-					system_prompt:
+					system_instruction:
 						"You rewrite scene descriptions and shot plans with precise, production-ready visual language. Return only JSON.",
-					max_completion_tokens: 2048,
+					max_output_tokens: SCENE_REWRITE_MAX_OUTPUT_TOKENS,
+					dynamic_thinking: false,
+					thinking_budget: 0,
 					temperature: 0.6,
 				},
 				signal: controller.signal,
@@ -408,6 +433,7 @@ Prompt priorities:
 Rules:
 - This must describe a single still image, not a video shot
 - Do NOT describe camera movement, animation, transitions, or how the scene changes over time
+- Use the audio direction as context: if narration is included, leave visual room for spoken or on-screen text beats; if music-only or no-audio, make the frame carry more of the story visually.
 - Keep it specific but compact; avoid bloated lists of adjectives
 - Include only details that are visually important
 - The prompt must stand alone and should read cleanly if sent directly to an image model
@@ -433,6 +459,9 @@ Return ONLY the final prompt, nothing else.`;
 				settings?.intake?.mood?.length
 					? `Mood: ${settings.intake.mood.join(", ")}`
 					: null,
+				settings?.intake?.audioMode
+					? `Audio direction: ${settings.intake.audioMode}`
+					: null,
 				settings?.intake?.audience
 					? `Target audience: ${settings.intake.audience}`
 					: null,
@@ -456,12 +485,14 @@ Return ONLY the final prompt, nothing else.`;
 
 			try {
 				const chunks: string[] = [];
-				for await (const event of replicate.stream("openai/gpt-4o-mini", {
+				for await (const event of replicate.stream(PROMPT_MODEL, {
 					input: {
 						prompt: `${systemPrompt}\n\n${userMessage}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern text-to-image models.",
-						max_completion_tokens: 1024,
+						max_output_tokens: PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.8,
 					},
 					signal: controller.signal,
@@ -1055,6 +1086,152 @@ export const fetchElevenLabsVoices = createServerFn({ method: "POST" })
 		return listVoices(apiKey);
 	});
 
+export const generateAudioPrompt = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			sceneId: string;
+			mode: "voiceover" | "sfx" | "music";
+			targetDurationSec?: number;
+		}) => {
+			if (
+				data.targetDurationSec != null &&
+				(data.targetDurationSec < 1 || data.targetDurationSec > 300)
+			) {
+				throw new Error("Target duration must be between 1 and 300 seconds");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { sceneId, mode, targetDurationSec } }) => {
+		const { userId, scene, project } = await assertSceneOwner(sceneId);
+		const apiKey = await getUserApiKey(userId);
+		const settings = normalizeProjectSettings(project.settings);
+		const intake = settings?.intake;
+
+		const sceneShots = await db.query.shots.findMany({
+			where: and(eq(shots.sceneId, sceneId), isNull(shots.deletedAt)),
+			orderBy: asc(shots.order),
+		});
+
+		const totalDurationSec =
+			targetDurationSec ??
+			sceneShots.reduce((sum, currentShot) => sum + currentShot.durationSec, 0);
+
+		const shotDescriptions =
+			sceneShots
+				.map(
+					(currentShot, index) =>
+						`Shot ${index + 1} (${currentShot.shotType}, ${currentShot.durationSec}s): ${currentShot.description}`,
+				)
+				.join("\n") || "No shot breakdown is available yet.";
+
+		const projectContext = [
+			`Project title: ${project.name}`,
+			intake?.concept ? `Concept: ${intake.concept}` : null,
+			intake?.purpose ? `Purpose: ${intake.purpose}` : null,
+			intake?.style?.length ? `Visual style: ${intake.style.join(", ")}` : null,
+			intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
+			intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
+			intake?.audience ? `Audience: ${intake.audience}` : null,
+			intake?.viewerAction
+				? `Desired viewer action: ${intake.viewerAction}`
+				: null,
+			`Scene title: ${scene.title ?? "Untitled"}`,
+			`Scene description: ${scene.description}`,
+			`Scene duration target: ${totalDurationSec || 8} seconds`,
+			`Scene shots:\n${shotDescriptions}`,
+		]
+			.filter(Boolean)
+			.join("\n");
+
+		const systemPrompt =
+			mode === "voiceover"
+				? `You are a professional narration writer for short-form and long-form video.
+
+Write a narration script for this ONE scene using the project and scene context below.
+
+${projectContext}
+
+Rules:
+- Write narration that complements the visuals and adds meaning, not a literal shot-by-shot description of what is already visible.
+- Match the project's visual style, mood, concept, and intended audience.
+- Keep the narration paced for about ${totalDurationSec || 8} seconds of spoken audio.
+- Strictly stay under ${Math.max(12, Math.round((totalDurationSec || 8) * 2.5))} words.
+- Do not include timestamps, labels, speaker directions, markdown, or quotes.
+- If the project's audio direction says no narration, still return one optional narration draft that could work if narration is later enabled.
+
+Return ONLY the narration text, nothing else.`
+				: mode === "music"
+					? `You are an expert prompt writer for background music generation models.
+
+Write one concise but highly specific background music prompt for this scene using the project and scene context below.
+
+${projectContext}
+
+Rules:
+- Describe genre, instrumentation, tempo/energy, mood, sonic texture, and how the music should support the scene's emotional progression.
+- Keep it instrumental unless the project explicitly calls for vocals.
+- Match the project's visual style, mood, audience, and concept.
+- Do not mention scene numbers, timestamps, or implementation notes.
+- Return one polished prompt in a single paragraph, not a list.
+
+Return ONLY the music prompt text, nothing else.`
+					: `You are an expert prompt writer for sound effect and ambience generation models.
+
+Write one concise but highly specific SFX/ambience prompt for this scene using the project and scene context below.
+
+${projectContext}
+
+Rules:
+- Describe the concrete environmental sounds, foley details, spatial feel, and intensity changes that should be heard in this scene.
+- Anchor the prompt to the scene and shot visuals, but describe sound only.
+- Keep the final prompt under ${ELEVENLABS_SFX_MAX_PROMPT_CHARS} characters because the ElevenLabs Sound Generation API rejects longer text.
+- Do not ask for music, melody, vocals, narration, timestamps, or implementation notes.
+- Return one polished prompt in a single paragraph, not a list.
+
+Return ONLY the sound prompt text, nothing else.`;
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const output: unknown = await replicate.run(AUDIO_PROMPT_MODEL, {
+				input: {
+					prompt: systemPrompt,
+					system_instruction:
+						"You are an expert prompt writer for scene-aware audio generation.",
+					max_output_tokens: AUDIO_PROMPT_MAX_OUTPUT_TOKENS,
+					dynamic_thinking: false,
+					thinking_budget: 0,
+					temperature: 0.7,
+				},
+				signal: controller.signal,
+				wait: { mode: "block", timeout: 60 },
+			});
+
+			const prompt = Array.isArray(output)
+				? output
+						.map((event) => String(event))
+						.join("")
+						.trim()
+				: String(output ?? "").trim();
+
+			if (!prompt) {
+				throw new Error("AI returned an empty audio prompt — please try again");
+			}
+
+			return {
+				prompt:
+					mode === "sfx"
+						? clampAudioPrompt(prompt, ELEVENLABS_SFX_MAX_PROMPT_CHARS)
+						: prompt,
+			};
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
 // ---------------------------------------------------------------------------
 // generateVoiceoverScript — LLM generates narration text for a scene
 // ---------------------------------------------------------------------------
@@ -1392,9 +1569,9 @@ export const generateSoundEffectAudio = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: { sceneId: string; prompt: string; durationSeconds?: number }) => {
 			if (!data.prompt?.trim()) throw new Error("Prompt cannot be empty");
-			if (data.prompt.length > MAX_MESSAGE_LENGTH) {
+			if (data.prompt.length > ELEVENLABS_SFX_MAX_PROMPT_CHARS) {
 				throw new Error(
-					`Prompt too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+					`Prompt too long for ElevenLabs sound generation (max ${ELEVENLABS_SFX_MAX_PROMPT_CHARS} characters)`,
 				);
 			}
 			if (

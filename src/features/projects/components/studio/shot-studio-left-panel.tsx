@@ -8,6 +8,7 @@ import type {
 	ScenePlanEntry,
 } from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
+import { ProjectVisualReferenceSelector } from "./project-visual-reference-selector";
 import { PromptEditor } from "./prompt-editor";
 import { SceneContextSection } from "./scene-context-section";
 import { ShotContextSection } from "./shot-context-section";
@@ -84,6 +85,13 @@ export function ShotStudioLeftPanel({
 	onUseProjectContextChange,
 	usePrevShotContext,
 	onUsePrevShotContextChange,
+	projectId,
+	selectedCharacterIds,
+	onSelectedCharacterIdsChange,
+	projectCharacterCount = 0,
+	selectedLocationIds,
+	onSelectedLocationIdsChange,
+	projectLocationCount = 0,
 	editingReferenceUrl,
 	onClearEditingReference,
 	userReferenceUrls,
@@ -117,6 +125,13 @@ export function ShotStudioLeftPanel({
 	onUseProjectContextChange?: (v: boolean) => void;
 	usePrevShotContext?: boolean;
 	onUsePrevShotContextChange?: (v: boolean) => void;
+	projectId: string;
+	selectedCharacterIds?: string[];
+	onSelectedCharacterIdsChange?: (ids: string[]) => void;
+	projectCharacterCount?: number;
+	selectedLocationIds?: string[];
+	onSelectedLocationIdsChange?: (ids: string[]) => void;
+	projectLocationCount?: number;
 	editingReferenceUrl?: string | null;
 	onClearEditingReference?: () => void;
 	userReferenceUrls?: string[];
@@ -183,6 +198,36 @@ export function ShotStudioLeftPanel({
 							/>
 						)}
 					</div>
+
+					{projectCharacterCount > 0 &&
+						selectedCharacterIds &&
+						onSelectedCharacterIdsChange && (
+							<ProjectVisualReferenceSelector
+								projectId={projectId}
+								kind="characters"
+								selectedIds={selectedCharacterIds}
+								onSelectedIdsChange={onSelectedCharacterIdsChange}
+								totalSelectedCount={
+									(selectedCharacterIds?.length ?? 0) +
+									(selectedLocationIds?.length ?? 0)
+								}
+							/>
+						)}
+
+					{projectLocationCount > 0 &&
+						selectedLocationIds &&
+						onSelectedLocationIdsChange && (
+							<ProjectVisualReferenceSelector
+								projectId={projectId}
+								kind="locations"
+								selectedIds={selectedLocationIds}
+								onSelectedIdsChange={onSelectedLocationIdsChange}
+								totalSelectedCount={
+									(selectedCharacterIds?.length ?? 0) +
+									(selectedLocationIds?.length ?? 0)
+								}
+							/>
+						)}
 
 					{/* Editing reference image banner */}
 					{editingReferenceUrl && (

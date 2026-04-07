@@ -56,11 +56,11 @@ function renderGenerationToast(record: GenerationToastRecord) {
 	};
 
 	return (
-		<div className="pointer-events-auto flex w-full items-center gap-4 p-[14px]">
-			<div className={`shrink-0 ${statusTone}`}>
+		<div className="pointer-events-auto flex w-full items-center gap-3 p-3">
+			<div className={`mt-0.5 shrink-0 ${statusTone}`}>
 				<Icon
-					size={38}
-					strokeWidth={1.75}
+					size={30}
+					strokeWidth={1.9}
 					className={record.phase === "loading" ? "animate-spin" : ""}
 				/>
 			</div>
@@ -71,25 +71,25 @@ function renderGenerationToast(record: GenerationToastRecord) {
 						onClick={handleNavigate}
 						className="group pointer-events-auto relative z-10 block min-w-0 cursor-pointer text-left"
 					>
-						<p className="truncate text-[15px] font-semibold text-foreground transition-colors group-hover:text-blue-600 group-hover:underline">
+						<p className="truncate text-[14px] font-semibold leading-tight text-foreground transition-colors group-hover:text-blue-600 group-hover:underline">
 							{primaryLine}
 						</p>
-						<p className="truncate text-[14px] text-muted-foreground transition-colors group-hover:text-blue-500">
+						<p className="truncate pt-0.5 text-[12px] font-medium tracking-[0.01em] text-muted-foreground/90 transition-colors group-hover:text-blue-500">
 							{secondaryLine}
 						</p>
 					</a>
 				) : (
 					<div className="min-w-0">
-						<p className="truncate text-[15px] font-semibold text-foreground">
+						<p className="truncate text-[14px] font-semibold leading-tight text-foreground">
 							{primaryLine}
 						</p>
-						<p className="truncate text-[14px] text-muted-foreground">
+						<p className="truncate pt-0.5 text-[12px] font-medium tracking-[0.01em] text-muted-foreground/90">
 							{secondaryLine}
 						</p>
 					</div>
 				)}
 				{normalizedMessage && record.phase === "error" ? (
-					<p className="mt-1 text-xs text-muted-foreground">
+					<p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
 						{normalizedMessage}
 					</p>
 				) : null}

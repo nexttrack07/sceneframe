@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Film,
@@ -45,6 +46,7 @@ import type {
 	ScriptEditDraft,
 	ScriptEditSelection,
 } from "../project-types";
+import { projectKeys } from "../query-keys";
 import { ChatBubble } from "./chat-bubble";
 import { IntakeForm } from "./intake-form";
 
@@ -84,6 +86,7 @@ export function ScriptWorkshop({
 	shots?: Pick<Shot, "id" | "sceneId" | "order">[];
 }) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages);
 	const [input, setInput] = useState("");
 	const [isSending, setIsSending] = useState(false);
@@ -526,6 +529,9 @@ export function ScriptWorkshop({
 					parsedScenes: effectiveProposal,
 					targetDurationSec: intake?.targetDurationSec,
 				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
 			});
 			await router.invalidate();
 		} catch (err) {

@@ -18,6 +18,7 @@ import { Route as AuthDashboardRouteImport } from './routes/_auth/dashboard'
 import { Route as AuthProjectsNewRouteImport } from './routes/_auth/projects/new'
 import { Route as AuthProjectsProjectIdRouteImport } from './routes/_auth/projects/$projectId'
 import { Route as AuthProjectsProjectIdIndexRouteImport } from './routes/_auth/projects/$projectId.index'
+import { Route as AuthProjectsProjectIdReferencesRouteImport } from './routes/_auth/projects/$projectId.references'
 import { Route as AuthProjectsProjectIdEditorRouteImport } from './routes/_auth/projects/$projectId.editor'
 
 const SignInRoute = SignInRouteImport.update({
@@ -65,6 +66,12 @@ const AuthProjectsProjectIdIndexRoute =
     path: '/',
     getParentRoute: () => AuthProjectsProjectIdRoute,
   } as any)
+const AuthProjectsProjectIdReferencesRoute =
+  AuthProjectsProjectIdReferencesRouteImport.update({
+    id: '/references',
+    path: '/references',
+    getParentRoute: () => AuthProjectsProjectIdRoute,
+  } as any)
 const AuthProjectsProjectIdEditorRoute =
   AuthProjectsProjectIdEditorRouteImport.update({
     id: '/editor',
@@ -81,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/projects/new': typeof AuthProjectsNewRoute
   '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -91,6 +99,7 @@ export interface FileRoutesByTo {
   '/sign-in/$': typeof SignInSplatRoute
   '/projects/new': typeof AuthProjectsNewRoute
   '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/projects/$projectId': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
@@ -104,6 +113,7 @@ export interface FileRoutesById {
   '/_auth/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/_auth/projects/new': typeof AuthProjectsNewRoute
   '/_auth/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
+  '/_auth/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/_auth/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/projects/new'
     | '/projects/$projectId/editor'
+    | '/projects/$projectId/references'
     | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -127,6 +138,7 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/projects/new'
     | '/projects/$projectId/editor'
+    | '/projects/$projectId/references'
     | '/projects/$projectId'
   id:
     | '__root__'
@@ -139,6 +151,7 @@ export interface FileRouteTypes {
     | '/_auth/projects/$projectId'
     | '/_auth/projects/new'
     | '/_auth/projects/$projectId/editor'
+    | '/_auth/projects/$projectId/references'
     | '/_auth/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
@@ -213,6 +226,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthProjectsProjectIdIndexRouteImport
       parentRoute: typeof AuthProjectsProjectIdRoute
     }
+    '/_auth/projects/$projectId/references': {
+      id: '/_auth/projects/$projectId/references'
+      path: '/references'
+      fullPath: '/projects/$projectId/references'
+      preLoaderRoute: typeof AuthProjectsProjectIdReferencesRouteImport
+      parentRoute: typeof AuthProjectsProjectIdRoute
+    }
     '/_auth/projects/$projectId/editor': {
       id: '/_auth/projects/$projectId/editor'
       path: '/editor'
@@ -225,11 +245,13 @@ declare module '@tanstack/react-router' {
 
 interface AuthProjectsProjectIdRouteChildren {
   AuthProjectsProjectIdEditorRoute: typeof AuthProjectsProjectIdEditorRoute
+  AuthProjectsProjectIdReferencesRoute: typeof AuthProjectsProjectIdReferencesRoute
   AuthProjectsProjectIdIndexRoute: typeof AuthProjectsProjectIdIndexRoute
 }
 
 const AuthProjectsProjectIdRouteChildren: AuthProjectsProjectIdRouteChildren = {
   AuthProjectsProjectIdEditorRoute: AuthProjectsProjectIdEditorRoute,
+  AuthProjectsProjectIdReferencesRoute: AuthProjectsProjectIdReferencesRoute,
   AuthProjectsProjectIdIndexRoute: AuthProjectsProjectIdIndexRoute,
 }
 

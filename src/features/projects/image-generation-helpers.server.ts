@@ -95,6 +95,7 @@ export function buildLanePrompt(
 					: null,
 				intake.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
 				intake.setting?.length ? `Setting: ${intake.setting.join(", ")}` : null,
+				intake.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 				intake.audience ? `Target audience: ${intake.audience}` : null,
 				intake.workingTitle ? `Working title: ${intake.workingTitle}` : null,
 				intake.thumbnailPromise
@@ -113,9 +114,10 @@ ${sceneDescription}
 Creative brief hints:
 ${intakeHints}
 
-Write a concise prompt for a single still image.
-Keep it specific but compact, focused on the subject, environment, framing, and lighting.
-This is a frozen image, not a video prompt: do not describe camera movement, animation, transitions, or how the scene changes over time.`;
+Write a rich text-to-image prompt for a single still image.
+Describe in this order: framing and composition, subject(s) and their exact state/action/expression, environment and setting details, lighting and what it is doing, color palette and atmosphere, and style-specific rendering details from the creative brief.
+Make the prompt concrete and visually complete enough that the image model does not need to invent missing layout or subject details.
+This is a frozen image, not a video prompt: do not describe camera movement, animation, transitions, or temporal progression.`;
 }
 
 export function buildSystemPrompt(
@@ -132,6 +134,7 @@ CREATIVE BRIEF (from structured intake):
 - Visual style: ${intake.style?.join(", ") ?? "Not specified"}
 - Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
 - Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake.audioMode ?? "Not specified"}
 - Audience: ${intake.audience ?? "Not specified"}
 - Desired viewer action: ${intake.viewerAction ?? "Not specified"}
 - Working title: ${intake.workingTitle || "Not provided"}
@@ -151,7 +154,7 @@ ${intakeBlock}
 CONVERSATION RULES:
 ${firstResponseRule}
 - In your first meaningful response after brief confirmation, propose an explicit opening hook that is optimized for the first 3-10 seconds.
-- Ask clarifying questions about mood, tone, audience, and visual style — but keep it conversational, not interrogative. Ask ONLY ONE question per message, never two.
+- Ask clarifying questions about mood, tone, audience, visual style, and audio approach — but keep it conversational, not interrogative. Ask ONLY ONE question per message, never two.
 ${intake ? `- The scenes you propose MUST sum to approximately ${intake.targetDurationSec ?? 300} seconds total. For example, a ${intake.targetDurationSec ?? 300}s video with 6 scenes needs each scene averaging ${Math.round((intake.targetDurationSec ?? 300) / 6)}s. Do NOT default to 10-15s per scene regardless of video length.` : ""}
 - At the end of every response (except when proposing scenes), include a suggestions block with 2-4 concrete quick-reply options the user can pick from:
 
@@ -192,6 +195,7 @@ export function qualityPresetToSteps(
 export function buildShotBreakdownPrompt(
 	scenes: { title: string; description: string; durationSec?: number }[],
 	targetDurationSec: number,
+	intake?: IntakeAnswers | null,
 ): string {
 	const sceneList = scenes
 		.map((s, i) => {
@@ -202,20 +206,26 @@ export function buildShotBreakdownPrompt(
 		})
 		.join("\n");
 
-	return `You are an award-winning cinematographer breaking scenes into visually distinct shots.
+	return `You are a cinematographer breaking scenes into sequential keyframes for a video production pipeline.
 
-Each shot is a SEQUENTIAL KEYFRAME in the same scene, designed to become a still image first and then connect naturally to the next shot through a transition video.
+CREATIVE BRIEF CONTEXT:
+- Visual style: ${intake?.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake?.mood?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake?.audioMode ?? "Not specified"}
 
-Your goal is not to make isolated standalone b-roll. Your goal is to design a short visual progression inside each scene: shot 1 establishes an initial state, shot 2 advances that state, shot 3 pushes it further or lands the scene beat.
+IMPORTANT CONTEXT — HOW THIS PIPELINE WORKS:
+Each shot you create becomes a still image first. Then the image from shot N and the image from shot N+1 are used together as start/end frames for a transition video. That means adjacent shots must work as implicit image pairs even though they are stored as individual shots in the current app.
+
+Your goal is not to make isolated standalone b-roll. Your goal is to design a short visual progression inside each scene: shot 1 establishes an initial state, shot 2 advances that state, shot 3 pushes it further or lands the scene beat. The change between shot N and shot N+1 must be specific enough that a transition model can visibly animate from one image to the next.
 
 Adjacent shots must preserve enough shared visual anchors to transition smoothly (same subject, environment, key object, or directional motion), while changing one or two clear state variables such as intensity, subject pose, weather force, camera distance, or focus target.
 
-Each shot must still capture a decisive instant, but it should feel like the next frame in a coherent sequence. Light should DO something (rake, rim, silhouette, bloom). Include one tactile texture detail.
+Each shot must still be a strong standalone frame, but it should feel like the next image in a coherent sequence. Light should DO something (rake, rim, silhouette, bloom). Include tactile texture and style-specific visual detail.
 
 SCENES TO BREAK DOWN:
 ${sceneList}
 
-SHOT SIZE OPTIONS (adjacent shots MUST use different sizes):
+SHOT SIZE OPTIONS (choose what serves the story beat; no forced rotation rule):
 - extreme-wide: landscape establishing, subject small in frame
 - wide: full scene, subject in environment
 - medium: waist-up, balance of context and detail
@@ -234,8 +244,9 @@ NEVER USE: beautiful, stunning, amazing, high quality, 4K, highly detailed, cine
 CRITICAL RULES:
 - shotType is either "talking" (person speaking to camera) or "visual" (b-roll, graphics, environment).
 - shotSize is REQUIRED and must be one of the six values above.
-- Adjacent shots must not reuse the same shotSize.
-- Each imagePrompt must be 15-25 words and describe: shot size, specific subject moment, light doing something, and one texture or atmosphere detail.
+- Choose shotSize based on what best serves the story and continuity. If two consecutive shots should both be wide, use two wide shots.
+- If consecutive shots use the same shotSize, make the subject state, environmental force, lighting, or focus target clearly evolve so the sequence still progresses.
+- Do NOT write the final image-generation prompt in this stage. This stage only creates shot descriptions and continuity structure. A second prompt-engineering pass will turn each shot description into an image prompt.
 - Each shot description must describe a distinct state in a connected visual progression, not a disconnected new setup.
 - For every scene, choose a clear progression axis and make it visible across shots. Examples:
   - calm wind -> stronger wind -> violent sand gusts against the same dunes and vegetation
@@ -243,6 +254,9 @@ CRITICAL RULES:
   - intact object -> first sign of stress -> dramatic close-up of the critical detail
 - Keep continuity anchors stable enough that a transition video between shot N and shot N+1 can plausibly animate from one image to the next.
 - Do not make consecutive shots near-duplicates. The change between shots must be concrete and visible, but continuous.
+- Do not make consecutive shots so different that the transition video would need to hallucinate an entirely new environment or subject.
+- Match the visual style implied by the scene and upstream creative brief language. Weave style into the description naturally instead of appending generic tags.
+- If the audio direction includes narration, make sure shot descriptions leave room for narration-driven story beats; if it is music-only or no-audio, make the visual progression carry the scene more strongly without leaning on spoken explanation.
 - sceneIndex is zero-based matching the scene list above.
 - durationSec is REQUIRED for every shot (integer, min 2, max 10).
 - The sum of shot durationSec values within each scene should closely match that scene's durationSec.
@@ -257,14 +271,13 @@ Return a JSON block with this exact format:
       "shotSize": "wide",
       "shotType": "visual",
       "durationSec": 5,
-      "description": "Brief shot description",
-      "imagePrompt": "15-25 words: [size], [subject in specific moment], [light doing something], [texture/atmosphere detail]"
+      "description": "Detailed description of this keyframe as a still image in a sequential shot progression. Mention the continuity anchor it shares with adjacent shots and the specific visual state it represents."
     }
   ]
 }
 \`\`\`
 
-CRITICAL: Each scene's shots must read as a connected visual sequence with escalating or evolving state, not as unrelated coverage and not as duplicate descriptions with tiny wording changes. Never repeat the same shot size twice in a row.
+CRITICAL: Each scene's shots must read as connected implicit shot pairs: shot 1 should transition naturally into shot 2, shot 2 into shot 3, and so on. The sequence must show an escalating or evolving state, not unrelated coverage and not duplicate descriptions with tiny wording changes.
 
 Return ONLY the JSON block.`;
 }
@@ -274,12 +287,82 @@ export function parseShotBreakdownResponse(
 	sceneCount: number,
 ): ShotPlanEntry[] | null {
 	try {
-		// Extract JSON from fenced code block
-		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-		const jsonStr = fenceMatch ? fenceMatch[1] : response;
+		const parseCandidate = (candidate: string) => {
+			try {
+				return JSON.parse(candidate.trim()) as unknown;
+			} catch {
+				return null;
+			}
+		};
 
-		const parsed = JSON.parse(jsonStr.trim());
-		const rawShots = Array.isArray(parsed) ? parsed : parsed?.shots;
+		const extractBalancedJson = (text: string) => {
+			const objectStart = text.indexOf("{");
+			const arrayStart = text.indexOf("[");
+			const start =
+				objectStart === -1
+					? arrayStart
+					: arrayStart === -1
+						? objectStart
+						: Math.min(objectStart, arrayStart);
+			if (start === -1) return null;
+
+			const opening = text[start];
+			const closing = opening === "{" ? "}" : "]";
+			let depth = 0;
+			let inString = false;
+			let isEscaped = false;
+
+			for (let index = start; index < text.length; index += 1) {
+				const char = text[index];
+
+				if (inString) {
+					if (isEscaped) {
+						isEscaped = false;
+						continue;
+					}
+					if (char === "\\") {
+						isEscaped = true;
+						continue;
+					}
+					if (char === '"') {
+						inString = false;
+					}
+					continue;
+				}
+
+				if (char === '"') {
+					inString = true;
+					continue;
+				}
+
+				if (char === opening) {
+					depth += 1;
+					continue;
+				}
+
+				if (char === closing) {
+					depth -= 1;
+					if (depth === 0) {
+						return text.slice(start, index + 1);
+					}
+				}
+			}
+
+			return null;
+		};
+
+		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+		const fencedBody = fenceMatch?.[1]?.trim();
+		const parsed =
+			(fencedBody ? parseCandidate(fencedBody) : null) ??
+			parseCandidate(response) ??
+			parseCandidate(extractBalancedJson(fencedBody ?? response) ?? "");
+
+		const rawShots = Array.isArray(parsed)
+			? parsed
+			: parsed && typeof parsed === "object"
+				? (parsed as { shots?: unknown }).shots
+				: null;
 		if (!Array.isArray(rawShots) || rawShots.length === 0) return null;
 
 		const validShotTypes: ShotType[] = ["talking", "visual"];
@@ -318,14 +401,9 @@ export function parseShotBreakdownResponse(
 				const rawDuration = Number(s.durationSec ?? 5);
 				const durationSec =
 					rawDuration >= 1 && rawDuration <= 10 ? rawDuration : 5;
-				const imagePrompt =
-					typeof s.imagePrompt === "string" && s.imagePrompt.trim().length > 0
-						? s.imagePrompt.trim()
-						: null;
-
 				return {
 					sceneIndex: Number(s.sceneIndex),
-					description: imagePrompt ?? (s.description as string).trim(),
+					description: (s.description as string).trim(),
 					shotType,
 					shotSize,
 					durationSec,
@@ -333,6 +411,153 @@ export function parseShotBreakdownResponse(
 			});
 
 		return result.length > 0 ? result : null;
+	} catch {
+		return null;
+	}
+}
+
+export function buildShotImagePromptPrompt(
+	scene: { title: string; description: string; durationSec?: number },
+	sceneShots: ShotPlanEntry[],
+	intake?: IntakeAnswers | null,
+): string {
+	const shotList = sceneShots
+		.map(
+			(shot, index) => `Shot ${index + 1}
+- Shot size: ${shot.shotSize}
+- Shot type: ${shot.shotType}
+- Duration: ${shot.durationSec}s
+- Shot description: ${shot.description}`,
+		)
+		.join("\n\n");
+
+	return `You are a visual prompt engineer writing production-ready text-to-image prompts from approved shot descriptions.
+
+CREATIVE BRIEF CONTEXT:
+- Visual style: ${intake?.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake?.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake?.setting?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake?.audioMode ?? "Not specified"}
+- Project concept: ${intake?.concept ?? "Not specified"}
+
+SCENE CONTEXT:
+- Title: ${scene.title || "Untitled scene"}
+- Description: ${scene.description}
+
+SHOT DESCRIPTIONS TO EXPAND:
+${shotList}
+
+TASK:
+Write one detailed still-image prompt for each shot, in the same order.
+
+Rules:
+- Each image prompt must be more specific and production-ready than the shot description. Do not merely paraphrase the shot description.
+- Write each prompt as a single frozen-frame text-to-image prompt, not a video prompt.
+- Describe in this order: framing/composition, subject(s) and exact pose/action/expression, environment and key objects, lighting and what it is doing, color palette and atmosphere, style-specific rendering details from the creative brief.
+- Make continuity anchors explicit enough that adjacent shot images still feel connected.
+- Do not use camera movement verbs or temporal progression language like "then", "starts", "begins", "camera pans", "dolly", or "zoom".
+- Do not use filler quality tags like beautiful, stunning, amazing, high quality, 4K, masterpiece, professional.
+- Match the chosen visual style naturally in the description language.
+
+Return ONLY a JSON object in this exact shape:
+{
+  "imagePrompts": [
+    {
+      "shotNumber": 1,
+      "imagePrompt": "Detailed text-to-image prompt for shot 1"
+    }
+  ]
+}`;
+}
+
+export function parseShotImagePromptResponse(
+	response: string,
+	expectedCount: number,
+): string[] | null {
+	try {
+		const parseCandidate = (candidate: string) => {
+			try {
+				return JSON.parse(candidate.trim()) as unknown;
+			} catch {
+				return null;
+			}
+		};
+
+		const extractBalancedJsonObject = (text: string) => {
+			const start = text.indexOf("{");
+			if (start === -1) return null;
+
+			let depth = 0;
+			let inString = false;
+			let isEscaped = false;
+
+			for (let index = start; index < text.length; index += 1) {
+				const char = text[index];
+
+				if (inString) {
+					if (isEscaped) {
+						isEscaped = false;
+						continue;
+					}
+					if (char === "\\") {
+						isEscaped = true;
+						continue;
+					}
+					if (char === '"') {
+						inString = false;
+					}
+					continue;
+				}
+
+				if (char === '"') {
+					inString = true;
+					continue;
+				}
+
+				if (char === "{") {
+					depth += 1;
+					continue;
+				}
+
+				if (char === "}") {
+					depth -= 1;
+					if (depth === 0) {
+						return text.slice(start, index + 1);
+					}
+				}
+			}
+
+			return null;
+		};
+
+		const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+		const fencedBody = fenceMatch?.[1]?.trim();
+		const parsed =
+			(fencedBody ? parseCandidate(fencedBody) : null) ??
+			parseCandidate(response) ??
+			parseCandidate(extractBalancedJsonObject(fencedBody ?? response) ?? "");
+
+		const rawPrompts =
+			parsed && typeof parsed === "object"
+				? (parsed as { imagePrompts?: unknown }).imagePrompts
+				: null;
+		if (!Array.isArray(rawPrompts) || rawPrompts.length === 0) return null;
+
+		const prompts = rawPrompts
+			.slice(0, expectedCount)
+			.map((entry) =>
+				entry &&
+				typeof entry === "object" &&
+				typeof (entry as { imagePrompt?: unknown }).imagePrompt === "string"
+					? (entry as { imagePrompt: string }).imagePrompt.trim() || null
+					: null,
+			);
+
+		if (prompts.length !== expectedCount || prompts.some((prompt) => !prompt)) {
+			return null;
+		}
+
+		return prompts as string[];
 	} catch {
 		return null;
 	}

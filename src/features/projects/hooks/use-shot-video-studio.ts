@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
+import { updateShotPromptContext } from "../character-actions";
 import { buildShotLabelMap, formatShotLocation } from "../generation-labels";
 import {
 	beginGenerationToast,
@@ -14,6 +15,7 @@ import {
 } from "../project-aspect-ratio";
 import { normalizeVideoDefaults } from "../project-normalize";
 import type {
+	ProjectSettings,
 	PromptAssetType,
 	PromptAssetTypeSelection,
 	SceneAssetSummary,
@@ -95,6 +97,7 @@ export function useShotVideoStudio({
 	storyShots,
 	assetsByShotId,
 	allShotVideos,
+	projectSettings,
 	toast,
 	setError,
 }: {
@@ -103,6 +106,7 @@ export function useShotVideoStudio({
 	storyShots: Shot[];
 	assetsByShotId: Map<string, SceneAssetSummary[]>;
 	allShotVideos: ShotVideoSummary[];
+	projectSettings: ProjectSettings | null;
 	toast: ToastFn;
 	setError: (msg: string | null) => void;
 }) {
@@ -119,6 +123,12 @@ export function useShotVideoStudio({
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
 	const [useProjectContext, setUseProjectContext] = useState(true);
 	const [usePrevShotContext, setUsePrevShotContext] = useState(true);
+	const [useProjectCharacters, setUseProjectCharacters] = useState(true);
+	const [useProjectLocations, setUseProjectLocations] = useState(true);
+	const [excludedCharacterIds, setExcludedCharacterIds] = useState<string[]>(
+		[],
+	);
+	const [excludedLocationIds, setExcludedLocationIds] = useState<string[]>([]);
 	const [usePrevShotImage, setUsePrevShotImage] = useState(true);
 	// Reference images for video generation selected manually in the slider.
 	const [referenceImageIds, setReferenceImageIds] = useState<string[]>([]);
@@ -140,6 +150,14 @@ export function useShotVideoStudio({
 	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
 		Record<string, TriggerRunSummary>
 	>({});
+	const allCharacterIds = useMemo(
+		() => projectSettings?.characters?.map((character) => character.id) ?? [],
+		[projectSettings?.characters],
+	);
+	const allLocationIds = useMemo(
+		() => projectSettings?.locations?.map((location) => location.id) ?? [],
+		[projectSettings?.locations],
+	);
 	const setVideoSettings = useCallback(
 		(next: VideoDefaults) => {
 			const explicitAspectRatio =
@@ -206,6 +224,32 @@ export function useShotVideoStudio({
 		setDeletingVideoId(null);
 		setUseProjectContext(true);
 		setUsePrevShotContext(true);
+		setUseProjectCharacters(
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.useProjectCharacters ?? true,
+		);
+		const savedExcludedCharacterIds =
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.excludedCharacterIds ?? [];
+		setExcludedCharacterIds(
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.useProjectCharacters === false
+				? allCharacterIds
+				: savedExcludedCharacterIds,
+		);
+		setUseProjectLocations(
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.useProjectLocations ?? true,
+		);
+		const savedExcludedLocationIds =
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.excludedLocationIds ?? [];
+		setExcludedLocationIds(
+			projectSettings?.shotPromptContext?.[selectedShotId]
+				?.useProjectLocations === false
+				? allLocationIds
+				: savedExcludedLocationIds,
+		);
 		setUsePrevShotImage(false);
 		setReferenceImageIds([]);
 		setDetectedPromptAssetType(null);
@@ -214,7 +258,21 @@ export function useShotVideoStudio({
 		completedRunIdsRef.current.clear();
 		stopPolling();
 		cancelPollingRef.current = false;
-	}, [selectedShotId, stopPolling, projectId]);
+	}, [
+		selectedShotId,
+		stopPolling,
+		projectId,
+		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
+			?.useProjectCharacters,
+		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
+			?.excludedCharacterIds,
+		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
+			?.useProjectLocations,
+		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
+			?.excludedLocationIds,
+		allCharacterIds,
+		allLocationIds,
+	]);
 
 	// Persist draft prompt
 	useEffect(() => {
@@ -460,6 +518,10 @@ export function useShotVideoStudio({
 				data: {
 					shotId: selectedShotId,
 					referenceImageIds: effectiveReferenceImageIds,
+					useProjectCharacters,
+					excludedCharacterIds,
+					useProjectLocations,
+					excludedLocationIds,
 					assetTypeOverride: promptTypeSelection,
 				},
 			});
@@ -494,6 +556,10 @@ export function useShotVideoStudio({
 					useProjectContext,
 					usePrevShotContext,
 					referenceImageIds: effectiveReferenceImageIds,
+					useProjectCharacters,
+					excludedCharacterIds,
+					useProjectLocations,
+					excludedLocationIds,
 					assetTypeOverride: promptTypeSelection,
 				},
 			});
@@ -608,6 +674,128 @@ export function useShotVideoStudio({
 		}
 	}
 
+	async function handleUseProjectCharactersChange(value: boolean) {
+		setUseProjectCharacters(value);
+		const nextExcludedCharacterIds = value ? [] : allCharacterIds;
+		setExcludedCharacterIds(nextExcludedCharacterIds);
+		if (!selectedShotId) return;
+		try {
+			await updateShotPromptContext({
+				data: {
+					projectId,
+					shotId: selectedShotId,
+					settings: {
+						useProjectCharacters: value,
+						excludedCharacterIds: nextExcludedCharacterIds,
+					},
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			const msg =
+				err instanceof Error
+					? err.message
+					: "Failed to update character prompt settings";
+			setError(msg);
+			toast(msg, "error");
+		}
+	}
+
+	async function handleUseProjectLocationsChange(value: boolean) {
+		setUseProjectLocations(value);
+		const nextExcludedLocationIds = value ? [] : allLocationIds;
+		setExcludedLocationIds(nextExcludedLocationIds);
+		if (!selectedShotId) return;
+		try {
+			await updateShotPromptContext({
+				data: {
+					projectId,
+					shotId: selectedShotId,
+					settings: {
+						useProjectLocations: value,
+						excludedLocationIds: nextExcludedLocationIds,
+					},
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			const msg =
+				err instanceof Error
+					? err.message
+					: "Failed to update location prompt settings";
+			setError(msg);
+			toast(msg, "error");
+		}
+	}
+
+	async function handleSelectedCharacterIdsChange(ids: string[]) {
+		const nextExcludedCharacterIds = allCharacterIds.filter(
+			(id) => !ids.includes(id),
+		);
+		const nextUseProjectCharacters = ids.length > 0;
+		setExcludedCharacterIds(nextExcludedCharacterIds);
+		setUseProjectCharacters(nextUseProjectCharacters);
+		if (!selectedShotId) return;
+		try {
+			await updateShotPromptContext({
+				data: {
+					projectId,
+					shotId: selectedShotId,
+					settings: {
+						useProjectCharacters: nextUseProjectCharacters,
+						excludedCharacterIds: nextExcludedCharacterIds,
+					},
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			const msg =
+				err instanceof Error
+					? err.message
+					: "Failed to update character reference settings";
+			setError(msg);
+			toast(msg, "error");
+		}
+	}
+
+	async function handleSelectedLocationIdsChange(ids: string[]) {
+		const nextExcludedLocationIds = allLocationIds.filter(
+			(id) => !ids.includes(id),
+		);
+		const nextUseProjectLocations = ids.length > 0;
+		setExcludedLocationIds(nextExcludedLocationIds);
+		setUseProjectLocations(nextUseProjectLocations);
+		if (!selectedShotId) return;
+		try {
+			await updateShotPromptContext({
+				data: {
+					projectId,
+					shotId: selectedShotId,
+					settings: {
+						useProjectLocations: nextUseProjectLocations,
+						excludedLocationIds: nextExcludedLocationIds,
+					},
+				},
+			});
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			const msg =
+				err instanceof Error
+					? err.message
+					: "Failed to update location reference settings";
+			setError(msg);
+			toast(msg, "error");
+		}
+	}
+
 	return {
 		videoPrompt,
 		setVideoPrompt,
@@ -622,6 +810,18 @@ export function useShotVideoStudio({
 		setUseProjectContext,
 		usePrevShotContext,
 		setUsePrevShotContext,
+		useProjectCharacters,
+		setUseProjectCharacters: handleUseProjectCharactersChange,
+		selectedCharacterIds: allCharacterIds.filter(
+			(id) => !excludedCharacterIds.includes(id),
+		),
+		setSelectedCharacterIds: handleSelectedCharacterIdsChange,
+		useProjectLocations,
+		setUseProjectLocations: handleUseProjectLocationsChange,
+		selectedLocationIds: allLocationIds.filter(
+			(id) => !excludedLocationIds.includes(id),
+		),
+		setSelectedLocationIds: handleSelectedLocationIdsChange,
 		usePrevShotImage,
 		setUsePrevShotImage,
 		prevShotSelectedImage,

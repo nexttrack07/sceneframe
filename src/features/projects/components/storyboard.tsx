@@ -8,6 +8,7 @@ import {
 	Film,
 	Info,
 	Loader2,
+	MapPinned,
 	Mic,
 	Play,
 	Plus,
@@ -66,7 +67,6 @@ import {
 	reorderShot,
 } from "../scene-actions";
 import { isPendingVideoStatus } from "../video-status";
-import { CharactersPanel } from "./characters";
 import { ResetDialog } from "./reset-dialog";
 import { SceneHeader } from "./scene-header";
 import { SceneImageStudio } from "./scene-image-studio";
@@ -343,7 +343,6 @@ export function Storyboard({
 	}, [allMotionGraphics]);
 
 	const [voiceoverSceneId, setVoiceoverSceneId] = useState<string | null>(null);
-	const [showCharactersPanel, setShowCharactersPanel] = useState(false);
 	const [isGeneratingMotionGraphicPreset, setIsGeneratingMotionGraphicPreset] =
 		useState<MotionGraphicPreset | null>(null);
 	const [importingMotionGraphicId, setImportingMotionGraphicId] = useState<
@@ -378,6 +377,7 @@ export function Storyboard({
 		selectedShotId,
 		storyShots: previewShots,
 		assetsByShotId,
+		projectSettings,
 		toast,
 		setError,
 	});
@@ -397,6 +397,7 @@ export function Storyboard({
 		storyShots: previewShots,
 		assetsByShotId,
 		allShotVideos: allShotVideoAssets,
+		projectSettings,
 		toast,
 		setError,
 	});
@@ -1450,6 +1451,15 @@ export function Storyboard({
 								onUseProjectContextChange={imageStudio.setUseProjectContext}
 								usePrevShotContext={imageStudio.usePrevShotContext}
 								onUsePrevShotContextChange={imageStudio.setUsePrevShotContext}
+								projectId={projectId}
+								selectedCharacterIds={imageStudio.selectedCharacterIds}
+								onSelectedCharacterIdsChange={
+									imageStudio.setSelectedCharacterIds
+								}
+								projectCharacterCount={projectSettings?.characters?.length ?? 0}
+								selectedLocationIds={imageStudio.selectedLocationIds}
+								onSelectedLocationIdsChange={imageStudio.setSelectedLocationIds}
+								projectLocationCount={projectSettings?.locations?.length ?? 0}
 								isGeneratingPrompt={imageStudio.isGeneratingPrompt}
 								settingsOverrides={imageStudio.settingsOverrides}
 								onSettingsChange={imageStudio.setSettingsOverrides}
@@ -1494,6 +1504,17 @@ export function Storyboard({
 								onUsePrevShotContextChange={
 									shotVideoStudio.setUsePrevShotContext
 								}
+								projectId={projectId}
+								selectedCharacterIds={shotVideoStudio.selectedCharacterIds}
+								onSelectedCharacterIdsChange={
+									shotVideoStudio.setSelectedCharacterIds
+								}
+								projectCharacterCount={projectSettings?.characters?.length ?? 0}
+								selectedLocationIds={shotVideoStudio.selectedLocationIds}
+								onSelectedLocationIdsChange={
+									shotVideoStudio.setSelectedLocationIds
+								}
+								projectLocationCount={projectSettings?.locations?.length ?? 0}
 								isGenerating={shotVideoStudio.isGeneratingVideo}
 								isQueueing={shotVideoStudio.isQueueingVideo}
 								onGenerate={shotVideoStudio.handleGenerateVideo}
@@ -1630,6 +1651,7 @@ export function Storyboard({
 							onUseProjectContextChange={videoStudio.setUseProjectContext}
 							usePrevShotContext={videoStudio.usePrevShotContext}
 							onUsePrevShotContextChange={videoStudio.setUsePrevShotContext}
+							projectId={projectId}
 							isGenerating={videoStudio.isGeneratingVideo}
 							isQueueing={videoStudio.isQueueingVideo}
 							onGenerate={videoStudio.handleGenerateVideo}
@@ -1755,23 +1777,42 @@ export function Storyboard({
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
-						<Button
-							size="sm"
-							variant={showCharactersPanel ? "default" : "outline"}
-							onClick={() => setShowCharactersPanel(!showCharactersPanel)}
-							className="gap-1.5"
+						<Link
+							to="/projects/$projectId/references"
+							params={{ projectId }}
+							className="inline-flex"
 						>
-							<Users size={12} />
-							Characters
-							{projectSettings?.characters?.length ? (
-								<Badge
-									variant="secondary"
-									className="ml-1 h-4 px-1 text-[10px]"
-								>
-									{projectSettings.characters.length}
-								</Badge>
-							) : null}
-						</Button>
+							<Button size="sm" variant="outline" className="gap-1.5">
+								<Users size={12} />
+								Characters
+								{projectSettings?.characters?.length ? (
+									<Badge
+										variant="secondary"
+										className="ml-1 h-4 px-1 text-[10px]"
+									>
+										{projectSettings.characters.length}
+									</Badge>
+								) : null}
+							</Button>
+						</Link>
+						<Link
+							to="/projects/$projectId/references"
+							params={{ projectId }}
+							className="inline-flex"
+						>
+							<Button size="sm" variant="outline" className="gap-1.5">
+								<MapPinned size={12} />
+								Locations
+								{projectSettings?.locations?.length ? (
+									<Badge
+										variant="secondary"
+										className="ml-1 h-4 px-1 text-[10px]"
+									>
+										{projectSettings.locations.length}
+									</Badge>
+								) : null}
+							</Button>
+						</Link>
 						<Link
 							to="/projects/$projectId/editor"
 							params={{ projectId }}
@@ -1861,20 +1902,6 @@ export function Storyboard({
 						>
 							✕
 						</button>
-					</div>
-				)}
-
-				{showCharactersPanel && (
-					<div className="mb-4 p-4 rounded-lg border bg-card">
-						<CharactersPanel
-							projectId={projectId}
-							characters={projectSettings?.characters ?? []}
-							onCharactersChanged={() => {
-								queryClient.invalidateQueries({
-									queryKey: projectKeys.project(projectId),
-								});
-							}}
-						/>
 					</div>
 				)}
 

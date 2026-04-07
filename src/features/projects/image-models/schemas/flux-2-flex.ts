@@ -12,7 +12,19 @@ export const flux2FlexSchema = {
 		aspect_ratio: {
 			type: "string",
 			title: "Aspect Ratio",
-			enum: ["1:1", "16:9", "9:16", "4:5", "5:4", "3:2", "2:3"],
+			enum: [
+				"match_input_image",
+				"custom",
+				"1:1",
+				"16:9",
+				"3:2",
+				"2:3",
+				"4:5",
+				"5:4",
+				"9:16",
+				"3:4",
+				"4:3",
+			],
 			default: "1:1",
 		},
 		resolution: {
@@ -20,6 +32,32 @@ export const flux2FlexSchema = {
 			title: "Resolution",
 			enum: ["match_input_image", "0.5 MP", "1 MP", "2 MP", "4 MP"],
 			default: "1 MP",
+		},
+		width: {
+			type: "integer",
+			title: "Width",
+			minimum: 256,
+			maximum: 2048,
+		},
+		height: {
+			type: "integer",
+			title: "Height",
+			minimum: 256,
+			maximum: 2048,
+		},
+		steps: {
+			type: "integer",
+			title: "Steps",
+			default: 30,
+			minimum: 1,
+			maximum: 50,
+		},
+		guidance: {
+			type: "number",
+			title: "Guidance",
+			default: 4.5,
+			minimum: 1.5,
+			maximum: 10,
 		},
 		output_format: {
 			type: "string",
@@ -37,14 +75,14 @@ export const flux2FlexSchema = {
 		prompt_upsampling: {
 			type: "boolean",
 			title: "Prompt Upsampling",
-			default: false,
+			default: true,
 		},
 		safety_tolerance: {
 			type: "integer",
 			title: "Safety Tolerance",
 			default: 2,
-			minimum: 0,
-			maximum: 6,
+			minimum: 1,
+			maximum: 5,
 		},
 	},
 } as const;

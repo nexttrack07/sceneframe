@@ -28,6 +28,7 @@ import {
 	getPrecisionPromptInstructions,
 	resolvePromptAssetType,
 } from "./prompt-strategy";
+import { generateAndSaveTransitionPromptForPair } from "./transition-prompt-drafts.server";
 import {
 	getVideoGenerationStatus,
 	getVideoProviderApiKey,
@@ -35,11 +36,11 @@ import {
 import { isPendingVideoStatus } from "./video-status";
 
 const REPLICATE_TIMEOUT_MS = 60_000;
-const TRANSITION_IMAGE_ANALYSIS_TIMEOUT_MS = 45_000;
 const STALE_TRANSITION_VIDEO_MS = 15 * 60 * 1000;
 const ORPHANED_TRANSITION_VIDEO_ERROR =
 	"Video generation stopped before completion. Please try again.";
-const TRANSITION_PROMPT_MODEL = "openai/gpt-4o-mini";
+const TRANSITION_PROMPT_MODEL = "google/gemini-2.5-flash";
+const TRANSITION_PROMPT_MAX_OUTPUT_TOKENS = 8192;
 
 const TRANSITION_MOVEMENT_RULES = `Camera movement is required for transition prompts unless the user explicitly asks for a locked shot.
 
@@ -89,43 +90,9 @@ async function describeTransitionFrameImage(args: {
 	shotLabel: "start" | "end";
 	shotDescription: string;
 }) {
-	const controller = new AbortController();
-	const timeout = setTimeout(
-		() => controller.abort(),
-		TRANSITION_IMAGE_ANALYSIS_TIMEOUT_MS,
-	);
+	void args.replicate;
 
-	try {
-		const chunks: string[] = [];
-		for await (const event of args.replicate.stream(TRANSITION_PROMPT_MODEL, {
-			input: {
-				image_input: [args.imageUrl],
-				max_completion_tokens: 300,
-				system_prompt:
-					"You analyze a selected frame image for video prompt writing.",
-				temperature: 0.3,
-				prompt: `This is the ${args.shotLabel} frame for a transition video.
-
-Shot description:
-${args.shotDescription}
-
-Describe only the concrete visual information that matters for a motion transition:
-- subject pose and placement
-- framing and camera distance
-- environment and visible motion cues
-- lighting and mood
-
-Return 2-4 short sentences. Be specific and visual. Do not speculate beyond what is visible.`,
-			},
-			signal: controller.signal,
-		})) {
-			chunks.push(String(event));
-		}
-
-		return chunks.join("").trim();
-	} finally {
-		clearTimeout(timeout);
-	}
+	return `Selected ${args.shotLabel} frame image is attached as a Gemini image input. Use the visible subject placement, framing, environment, lighting, and any motion cues from that image directly. Shot description: ${args.shotDescription}`;
 }
 
 async function buildTransitionImageContext(args: {
@@ -171,9 +138,71 @@ async function buildTransitionImageContext(args: {
 	);
 
 	return {
+		fromFrameImageId: fromImage?.id ?? null,
+		fromFrameImageUrl: fromImage?.url ?? null,
 		fromFrameVisual,
+		toFrameImageId: toImage?.id ?? null,
+		toFrameImageUrl: toImage?.url ?? null,
 		toFrameVisual,
 	};
+}
+
+function buildFallbackTransitionPrompt(args: {
+	fromShotDescription: string;
+	toShotDescription: string;
+	sceneDescription: string;
+	fromFrameVisual?: string | null;
+	toFrameVisual?: string | null;
+	userPrompt?: string;
+}) {
+	const startFrame =
+		args.fromFrameVisual?.trim() || `Start frame: ${args.fromShotDescription}`;
+	const endFrame =
+		args.toFrameVisual?.trim() || `End frame: ${args.toShotDescription}`;
+	const userMotion = args.userPrompt?.trim();
+
+	return `[Motion]: ${userMotion ? `${userMotion} ` : ""}Carry the viewer from ${args.fromShotDescription.trim()} into ${args.toShotDescription.trim()}, preserving the shared subject and environment while making the visual state change clearly readable. Anchor the transition to these frame cues: ${startFrame} ${endFrame}
+
+[Camera]: Use a deliberate push-in, pull-back, pan, tilt, or lateral drift that bridges the start and end framing in one continuous move, with the camera path chosen to make the shift between the two shots feel physically connected.
+
+[Style]: Keep the scene's visual language consistent with ${args.sceneDescription.trim()}, maintaining coherent lighting, atmosphere, color palette, and texture across the transition.`;
+}
+
+async function runTransitionPromptModel(args: {
+	replicate: Replicate;
+	input: {
+		images: string[];
+		prompt: string;
+		system_instruction: string;
+		max_output_tokens: number;
+		dynamic_thinking: boolean;
+		thinking_budget: number;
+		temperature: number;
+	};
+	signal: AbortSignal;
+}) {
+	const output: unknown = await args.replicate.run(TRANSITION_PROMPT_MODEL, {
+		input: args.input,
+		signal: args.signal,
+		wait: { mode: "block", timeout: 60 },
+	});
+
+	if (Array.isArray(output)) {
+		return output
+			.map((event) => String(event))
+			.join("")
+			.trim();
+	}
+
+	if (typeof output === "string") {
+		return output.trim();
+	}
+
+	if (output == null) {
+		return "";
+	}
+
+	return String(output).trim();
 }
 
 export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
@@ -220,10 +249,6 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 				medium: "transition",
 			});
 			const intake = settings?.intake;
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
 			const styleCtx =
 				useProjectContext && intake?.style?.length
 					? `Visual style: ${intake.style.join(", ")}`
@@ -235,31 +260,33 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
 						styleCtx || null,
 						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
-						characterContext,
+						intake?.audioMode ? `Audio direction: ${intake.audioMode}` : null,
 					]
 						.filter(Boolean)
 						.join("\n")
 				: null;
 			const replicate = new Replicate({ auth: apiKey });
-			const [{ fromFrameVisual, toFrameVisual }, sceneVisualBrief] =
-				await Promise.all([
-					buildTransitionImageContext({
-						replicate,
-						fromShotId,
-						toShotId,
-						fromShotDescription: fromShot.description,
-						toShotDescription: toShot.description,
-					}),
-					buildSceneVisualBrief({
-						replicate,
-						medium: "transition",
-						projectName: project.name,
-						sceneTitle: scene.title,
-						sceneDescription: scene.description,
-						projectContext: projectContextBlock,
-						shotContext: `Start shot: ${fromShot.description}\nEnd shot: ${toShot.description}`,
-					}),
-				]);
+			const [
+				{ fromFrameImageUrl, fromFrameVisual, toFrameImageUrl, toFrameVisual },
+				sceneVisualBrief,
+			] = await Promise.all([
+				buildTransitionImageContext({
+					replicate,
+					fromShotId,
+					toShotId,
+					fromShotDescription: fromShot.description,
+					toShotDescription: toShot.description,
+				}),
+				buildSceneVisualBrief({
+					replicate,
+					medium: "transition",
+					projectName: project.name,
+					sceneTitle: scene.title,
+					sceneDescription: scene.description,
+					projectContext: projectContextBlock,
+					shotContext: `Start shot: ${fromShot.description}\nEnd shot: ${toShot.description}`,
+				}),
+			]);
 
 			const sceneCtx =
 				usePrevShotContext && scene.description
@@ -283,23 +310,28 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 				.join("\n\n");
 
 			const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
-The user wrote a motion idea for a transition video. Rewrite it into a strong, concise prompt while preserving the user's intent.
+The user wrote a motion idea for a transition video. Rewrite it into a strong, concrete prompt while preserving the user's intent.
+
+IMPORTANT CONTEXT — HOW THIS PIPELINE WORKS:
+The selected start-frame image and end-frame image are effectively one implicit shot pair. The transition prompt must tell the video model exactly how to animate from the start image state to the end image state without losing continuity.
 
 Use this exact lightweight structure:
 
-[Motion]: Describe the main visual change from the start frame to the end frame in 1-2 short sentences.
+[Motion]: Describe the main visual change from the start frame to the end frame in 1-2 specific sentences. Name what moves, how it moves, and what visible state change occurs.
 
-[Camera]: Describe the camera behavior in 1 short sentence. A real camera move is required unless the user explicitly asked for a locked shot.
+[Camera]: Describe the camera behavior in 1 specific sentence. A real camera move is required unless the user explicitly asked for a locked shot.
 
-[Style]: Describe mood, lighting continuity, and overall feel in 1 short sentence.
+[Style]: Describe mood, lighting continuity, atmosphere, and style consistency in 1 sentence.
 
 Rules:
 - Preserve all important motion elements the user mentioned
-- Keep it motion-first; do not over-describe static appearance
+- Keep it motion-first, but anchor the motion to the actual shared subject/environment details visible in both frames
 - Be specific about direction and pacing when relevant
 - Anchor the movement to the actual selected start and end frames, not just the shot descriptions
+- The start and end frames must share continuity anchors, and the prompt should explain how those anchors evolve rather than jumping to an unrelated composition
 - Write in present tense
-- Keep every section compact
+- Use the audio direction as timing context: transitions under narration should leave room for the spoken beat, while music-only or silent transitions should make the visual change read clearly on its own.
+- Do not settle for vague phrasing like "smooth transition" or "camera moves closer" unless you specify what visually changes in the image
 ${TRANSITION_MOVEMENT_RULES}
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "transition" })}
 
@@ -314,22 +346,40 @@ Return ONLY the final prompt, nothing else.`;
 				REPLICATE_TIMEOUT_MS,
 			);
 			try {
-				const chunks: string[] = [];
-				for await (const event of replicate.stream(TRANSITION_PROMPT_MODEL, {
+				const modelOutput = await runTransitionPromptModel({
+					replicate,
 					input: {
+						images: [fromFrameImageUrl, toFrameImageUrl].filter(
+							(url): url is string => Boolean(url),
+						),
 						prompt: `${systemPrompt}\n\nUser's prompt to enhance:\n${userPrompt}`,
-						system_prompt:
+						system_instruction:
 							"You are an expert prompt writer for modern video generation models like Kling.",
-						max_completion_tokens: 1024,
+						max_output_tokens: TRANSITION_PROMPT_MAX_OUTPUT_TOKENS,
+						dynamic_thinking: false,
+						thinking_budget: 0,
 						temperature: 0.7,
 					},
 					signal: controller.signal,
-				})) {
-					chunks.push(String(event));
+				});
+				const enhanced =
+					modelOutput ||
+					buildFallbackTransitionPrompt({
+						fromShotDescription: fromShot.description,
+						toShotDescription: toShot.description,
+						sceneDescription: scene.description,
+						fromFrameVisual,
+						toFrameVisual,
+						userPrompt,
+					});
+				if (!modelOutput) {
+					console.warn("[TransitionPrompt] enhance-empty-response:fallback", {
+						fromShotId,
+						toShotId,
+						hasStartFrameImage: Boolean(fromFrameImageUrl),
+						hasEndFrameImage: Boolean(toFrameImageUrl),
+					});
 				}
-				const enhanced = chunks.join("").trim();
-				if (!enhanced)
-					throw new Error("AI returned an empty response — please try again");
 				const finalPrompt = await critiqueAndRewritePrompt({
 					replicate,
 					medium: "transition",
@@ -373,164 +423,14 @@ export const generateTransitionVideoPrompt = createServerFn({ method: "POST" })
 				usePrevShotContext = true,
 				assetTypeOverride,
 			},
-		}) => {
-			const {
-				userId,
-				shot: fromShot,
-				project,
-				scene,
-			} = await assertShotOwner(fromShotId);
-			const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
-
-			if (toScene.projectId !== scene.projectId) {
-				throw new Error(
-					"Cannot generate transition prompt between shots from different projects",
-				);
-			}
-
-			const apiKey = await getUserApiKey(userId);
-			const settings = normalizeProjectSettings(project.settings);
-			const resolvedAssetType = resolvePromptAssetType({
-				override: assetTypeOverride,
-				text: `${fromShot.description}\n${toShot.description}`,
-				medium: "transition",
-			});
-			const intake = settings?.intake;
-			const characters = settings?.characters;
-			const characterContext = characters?.length
-				? `Key characters:\n${characters.map((c) => `- ${c.name}: ${c.visualPromptFragment}`).join("\n")}`
-				: null;
-
-			const projectContextBlock = useProjectContext
-				? [
-						intake?.concept ? `Project concept: ${intake.concept}` : null,
-						intake?.purpose ? `Purpose: ${intake.purpose}` : null,
-						intake?.style?.length
-							? `Visual style: ${intake.style.join(", ")}`
-							: null,
-						intake?.mood?.length ? `Mood: ${intake.mood.join(", ")}` : null,
-						characterContext,
-					]
-						.filter(Boolean)
-						.join("\n")
-				: null;
-			const replicate = new Replicate({ auth: apiKey });
-			const [{ fromFrameVisual, toFrameVisual }, sceneVisualBrief] =
-				await Promise.all([
-					buildTransitionImageContext({
-						replicate,
-						fromShotId,
-						toShotId,
-						fromShotDescription: fromShot.description,
-						toShotDescription: toShot.description,
-					}),
-					buildSceneVisualBrief({
-						replicate,
-						medium: "transition",
-						projectName: project.name,
-						sceneTitle: scene.title,
-						sceneDescription: scene.description,
-						projectContext: projectContextBlock,
-						shotContext: `Start shot: ${fromShot.description}\nEnd shot: ${toShot.description}`,
-					}),
-				]);
-
-			const sceneCtx =
-				usePrevShotContext && scene.description
-					? `Scene: ${scene.description}`
-					: null;
-
-			const contextBlock = [
-				useProjectContext
-					? `PROJECT CONTEXT:\n${projectContextBlock || `Project: ${project.name}`}`
-					: null,
-				sceneCtx,
-				`Shot A (start): ${fromShot.description}`,
-				`Shot B (end): ${toShot.description}`,
-				sceneVisualBrief ? `Scene visual brief:\n${sceneVisualBrief}` : null,
-				fromFrameVisual
-					? `Selected start frame image:\n${fromFrameVisual}`
-					: null,
-				toFrameVisual ? `Selected end frame image:\n${toFrameVisual}` : null,
-			]
-				.filter(Boolean)
-				.join("\n\n");
-
-			const systemPrompt = `You are an expert prompt writer for modern video generation models like Kling.
-You are generating a motion prompt for a transition video between two consecutive shots.
-
-The video starts on Shot A and ends on Shot B. Describe the motion and camera behavior that naturally bridges those two frames.
-
-Use this exact lightweight structure:
-
-[Motion]: Describe how the composition and subject state evolve from Shot A to Shot B in 1-2 short sentences.
-
-[Camera]: Describe the camera behavior in 1 short sentence. A real camera move is required unless the user explicitly asked for a locked shot.
-
-[Style]: Describe mood, lighting continuity, and overall feel in 1 short sentence.
-
-Rules:
-- Present tense
-- Be specific about direction, pacing, and camera behavior when relevant
-- The motion should feel like a natural continuation from Shot A into Shot B
-- Focus on what changes and moves; do not over-describe static details
-- Explicitly bridge the actual selected start frame and selected end frame
-- Describe a movement path the video model can clearly execute, not just a mood or abstract transition
-- Keep every section compact
-${TRANSITION_MOVEMENT_RULES}
-${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "transition" })}
-${!useProjectContext ? "- Base the motion prompt only on the shot descriptions provided" : ""}
-
-Transition context:
-${contextBlock}
-
-Return ONLY the final prompt, nothing else.`;
-
-			const controller = new AbortController();
-			const timeout = setTimeout(
-				() => controller.abort(),
-				REPLICATE_TIMEOUT_MS,
-			);
-
-			try {
-				const chunks: string[] = [];
-				for await (const event of replicate.stream(TRANSITION_PROMPT_MODEL, {
-					input: {
-						prompt: systemPrompt,
-						system_prompt:
-							"You are an expert prompt writer for modern video generation models like Kling.",
-						max_completion_tokens: 1024,
-						temperature: 0.7,
-					},
-					signal: controller.signal,
-				})) {
-					chunks.push(String(event));
-				}
-				const generatedPrompt = chunks.join("").trim();
-				if (!generatedPrompt)
-					throw new Error("AI returned an empty response — please try again");
-				const finalPrompt = await critiqueAndRewritePrompt({
-					replicate,
-					medium: "transition",
-					assetType: resolvedAssetType,
-					prompt: generatedPrompt,
-					context: [
-						sceneVisualBrief
-							? `Scene visual brief:\n${sceneVisualBrief}`
-							: null,
-						fromFrameVisual
-							? `Selected start frame:\n${fromFrameVisual}`
-							: null,
-						toFrameVisual ? `Selected end frame:\n${toFrameVisual}` : null,
-					]
-						.filter(Boolean)
-						.join("\n\n"),
-				});
-				return { prompt: finalPrompt, assetType: resolvedAssetType };
-			} finally {
-				clearTimeout(timeout);
-			}
-		},
+		}) =>
+			generateAndSaveTransitionPromptForPair({
+				fromShotId,
+				toShotId,
+				useProjectContext,
+				usePrevShotContext,
+				assetTypeOverride,
+			}),
 	);
 
 export const generateTransitionVideo = createServerFn({ method: "POST" })
@@ -667,7 +567,7 @@ export const pollTransitionVideos = createServerFn({ method: "POST" })
 		const generating = videos.filter((video) =>
 			isPendingVideoStatus(video.status),
 		);
-		const done = videos.filter((video) => video.status === "done");
+		const done = videos.filter((video) => video.status === "done" && video.url);
 		const errored = videos.filter((video) => video.status === "error");
 		const selectedDone = done.find((video) => video.isSelected) ?? null;
 
@@ -957,7 +857,7 @@ export const selectTransitionVideo = createServerFn({ method: "POST" })
 			),
 		});
 		if (!tv) throw new Error("Transition video not found");
-		if (tv.status !== "done")
+		if (tv.status !== "done" || !tv.url)
 			throw new Error("Only completed transition videos can be selected");
 
 		// Assert ownership on fromShot and verify toShot belongs to the same project
