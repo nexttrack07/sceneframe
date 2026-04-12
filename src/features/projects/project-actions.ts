@@ -10,7 +10,6 @@ export type {
 	IntakeAnswers,
 	ProjectSettings,
 	SceneAssetSummary,
-	ScenePlanEntry,
 	ShotPlanEntry,
 	ShotType,
 	VideoDefaults,
