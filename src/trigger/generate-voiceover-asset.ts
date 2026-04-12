@@ -10,7 +10,6 @@ export interface GenerateVoiceoverAssetPayload {
 	assetId: string;
 	userId: string;
 	projectId: string;
-	sceneId: string;
 	generationId: string;
 	script: string;
 	voiceId: string | null;
@@ -48,7 +47,7 @@ export const generateVoiceoverAsset = task({
 			voiceId: payload.voiceId ?? undefined,
 		});
 
-		const storageKey = `projects/${payload.projectId}/scenes/${payload.sceneId}/voiceover/${payload.assetId}.mp3`;
+		const storageKey = `projects/${payload.projectId}/voiceover/${payload.assetId}.mp3`;
 		const publicUrl = await uploadBuffer(audio, storageKey, contentType);
 		const estimatedDurationMs = Math.round((audio.length / 16_000) * 1000);
 

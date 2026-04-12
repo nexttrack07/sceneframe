@@ -32,7 +32,7 @@ import {
 	getTransitionVideoRunStatuses,
 	pollTransitionVideos,
 	selectTransitionVideo,
-} from "../scene-actions";
+} from "../transition-actions";
 import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
@@ -573,17 +573,11 @@ export function useVideoStudio({
 			const location =
 				fromLabel && toLabel
 					? formatTransitionLocation({
-							fromSceneNumber: fromLabel.sceneNumber,
 							fromShotNumber: fromLabel.shotNumber,
-							toSceneNumber: toLabel.sceneNumber,
 							toShotNumber: toLabel.shotNumber,
 						})
 					: "Selected transition";
-			const fromSceneId =
-				storyShots.find((shot) => shot.id === pair.fromShotId)?.sceneId ?? null;
-			const href = fromSceneId
-				? `/projects/${projectId}?scene=${fromSceneId}&from=${pair.fromShotId}&to=${pair.toShotId}&mediaTab=video`
-				: `/projects/${projectId}?from=${pair.fromShotId}&to=${pair.toShotId}&mediaTab=video`;
+			const href = `/projects/${projectId}?from=${pair.fromShotId}&to=${pair.toShotId}&mediaTab=video`;
 			trackedToastMetaRef.current.set(result.transitionVideoId, {
 				title: "Generating transition video",
 				location,

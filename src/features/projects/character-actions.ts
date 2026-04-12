@@ -15,7 +15,8 @@ import {
 	getImageOutputFormat,
 } from "@/features/projects/image-models";
 import { assertProjectOwner } from "@/lib/assert-project-owner.server";
-import { deleteObject, uploadBuffer, uploadFromUrl } from "@/lib/r2.server";
+import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
+import { uploadBuffer, uploadFromUrl } from "@/lib/r2.server";
 import { getUserApiKey } from "./image-generation-helpers.server";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
@@ -696,13 +697,6 @@ export const removeCharacterImage = createServerFn({ method: "POST" })
 			return image.storageKey;
 		});
 
-		// Best-effort R2 cleanup (outside transaction)
-		if (storageKey) {
-			deleteObject(storageKey).catch((err) =>
-				console.error(
-					`Failed to delete character image from R2 (imageId=${imageId}, key=${storageKey}):`,
-					err,
-				),
-			);
-		}
+		// R2 cleanup AFTER transaction commits — safe to delete now
+		await cleanupStorageKeys([storageKey]);
 	});

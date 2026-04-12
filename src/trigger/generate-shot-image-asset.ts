@@ -1,7 +1,7 @@
 import { task } from "@trigger.dev/sdk";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
-import { assets, scenes } from "@/db/schema";
+import { assets } from "@/db/schema";
 import {
 	generateImageSync,
 	getImageProviderApiKey,
@@ -20,7 +20,6 @@ export interface GenerateShotImageAssetPayload {
 	assetId: string;
 	userId: string;
 	projectId: string;
-	sceneId: string;
 	shotId: string;
 	generationId: string;
 	batchId: string;
@@ -91,7 +90,7 @@ export const generateShotImageAsset = task({
 			throw new Error("No output URL found from image generation.");
 		}
 
-		const storageKey = `projects/${payload.projectId}/scenes/${payload.sceneId}/shots/${payload.shotId}/images/${payload.batchId}/image-${payload.sequenceIndex + 1}.${outputFormat}`;
+		const storageKey = `projects/${payload.projectId}/shots/${payload.shotId}/images/${payload.batchId}/image-${payload.sequenceIndex + 1}.${outputFormat}`;
 		const storedUrl = await uploadFromUrl(
 			sourceUrl,
 			storageKey,
@@ -119,11 +118,6 @@ export const generateShotImageAsset = task({
 				generationDurationMs,
 			})
 			.where(eq(assets.id, payload.assetId));
-
-		await db
-			.update(scenes)
-			.set({ stage: "images" })
-			.where(and(eq(scenes.id, payload.sceneId), eq(scenes.stage, "script")));
 
 		return { status: "done" as const, assetId: payload.assetId };
 	},

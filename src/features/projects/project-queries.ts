@@ -1,27 +1,25 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db/index";
 import {
 	assets,
 	messages,
 	motionGraphics,
-	scenes,
 	shots,
 	transitionVideos,
 } from "@/db/schema";
 import { assertProjectOwner } from "@/lib/assert-project-owner.server";
 import { normalizeProjectSettings } from "./project-normalize";
-import type { ScenePlanEntry } from "./project-types";
 
 export const loadProject = createServerFn({ method: "GET" })
 	.inputValidator((projectId: string) => projectId)
 	.handler(async ({ data: projectId }) => {
 		const { project } = await assertProjectOwner(projectId);
 
-		const [projectScenes, projectMessages] = await Promise.all([
-			db.query.scenes.findMany({
-				where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-				orderBy: asc(scenes.order),
+		const [projectShots, projectMessages] = await Promise.all([
+			db.query.shots.findMany({
+				where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+				orderBy: asc(shots.order),
 			}),
 			db.query.messages.findMany({
 				where: eq(messages.projectId, projectId),
@@ -30,83 +28,43 @@ export const loadProject = createServerFn({ method: "GET" })
 			}),
 		]);
 
-		const sceneIds = projectScenes.map((scene) => scene.id);
-
-		// Load shots by sceneIds, then sort by (scene order, shot order within scene)
-		const rawShots =
-			sceneIds.length === 0
-				? []
-				: await db.query.shots.findMany({
-						where: and(
-							inArray(shots.sceneId, sceneIds),
-							isNull(shots.deletedAt),
-						),
-						orderBy: asc(shots.order),
-					});
-		const sceneIndexMap = new Map(sceneIds.map((id, i) => [id, i]));
-		const projectShots = rawShots.slice().sort((a, b) => {
-			const sceneA = sceneIndexMap.get(a.sceneId) ?? 0;
-			const sceneB = sceneIndexMap.get(b.sceneId) ?? 0;
-			if (sceneA !== sceneB) return sceneA - sceneB;
-			return a.order - b.order;
-		});
-
 		const shotIds = projectShots.map((shot) => shot.id);
 
-		// Load assets: by shotIds (shot-level) PLUS legacy assets with no shotId (scene-level).
-		// Only stage="images" assets are loaded here.
-		// Stage="video" assets use their own generation flow and are not part of the
-		// shared image asset list rendered by the storyboard.
-		const projectAssets =
-			sceneIds.length === 0
-				? []
-				: await db.query.assets.findMany({
-						where: and(
-							eq(assets.stage, "images"),
-							isNull(assets.deletedAt),
-							shotIds.length > 0
-								? or(
-										inArray(assets.shotId, shotIds),
-										and(
-											inArray(assets.sceneId, sceneIds),
-											isNull(assets.shotId),
-										),
-									)
-								: inArray(assets.sceneId, sceneIds),
-						),
-						orderBy: asc(assets.createdAt),
-					});
+		// Load image assets directly by projectId (stage="images")
+		const projectAssets = await db.query.assets.findMany({
+			where: and(
+				eq(assets.projectId, projectId),
+				eq(assets.stage, "images"),
+				isNull(assets.deletedAt),
+			),
+			orderBy: asc(assets.createdAt),
+		});
 
-		const projectTransitionVideos =
-			sceneIds.length === 0
-				? []
-				: await db.query.transitionVideos.findMany({
-						where: and(
-							inArray(transitionVideos.sceneId, sceneIds),
-							isNull(transitionVideos.deletedAt),
-						),
-						orderBy: asc(transitionVideos.createdAt),
-					});
+		// Load transition videos directly by projectId
+		const projectTransitionVideos = await db.query.transitionVideos.findMany({
+			where: and(
+				eq(transitionVideos.projectId, projectId),
+				isNull(transitionVideos.deletedAt),
+			),
+			orderBy: asc(transitionVideos.createdAt),
+		});
 
-		// Load audio assets (scene-level, stage="audio") — voiceovers + background music
-		const audioAssets =
-			sceneIds.length === 0
-				? []
-				: await db.query.assets.findMany({
-						where: and(
-							eq(assets.stage, "audio"),
-							inArray(assets.sceneId, sceneIds),
-							isNull(assets.deletedAt),
-						),
-						orderBy: asc(assets.createdAt),
-					});
+		// Load audio assets (stage="audio") — voiceovers + background music
+		const audioAssets = await db.query.assets.findMany({
+			where: and(
+				eq(assets.projectId, projectId),
+				eq(assets.stage, "audio"),
+				isNull(assets.deletedAt),
+			),
+			orderBy: asc(assets.createdAt),
+		});
 
 		const voiceoverAssets = audioAssets.filter((a) => a.type === "voiceover");
 		const backgroundMusicAssets = audioAssets.filter(
 			(a) => a.type === "background_music",
 		);
 
-		// Load shot video assets (shot-level, type="video", stage="video")
+		// Load shot video assets (type="video", stage="video")
 		const shotVideoAssets =
 			shotIds.length === 0
 				? []
@@ -120,23 +78,20 @@ export const loadProject = createServerFn({ method: "GET" })
 						orderBy: asc(assets.createdAt),
 					});
 
-		const projectMotionGraphics =
-			shotIds.length === 0
-				? []
-				: await db.query.motionGraphics.findMany({
-						where: and(
-							inArray(motionGraphics.shotId, shotIds),
-							isNull(motionGraphics.deletedAt),
-						),
-						orderBy: asc(motionGraphics.createdAt),
-					});
+		// Load motion graphics directly by projectId
+		const projectMotionGraphics = await db.query.motionGraphics.findMany({
+			where: and(
+				eq(motionGraphics.projectId, projectId),
+				isNull(motionGraphics.deletedAt),
+			),
+			orderBy: asc(motionGraphics.createdAt),
+		});
 
 		return {
 			project: {
 				...project,
 				settings: normalizeProjectSettings(project.settings),
 			},
-			scenes: projectScenes,
 			shots: projectShots,
 			messages: projectMessages,
 			assets: projectAssets
@@ -162,7 +117,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				)
 				.map((asset) => ({
 					id: asset.id,
-					sceneId: asset.sceneId,
+					projectId: asset.projectId,
 					shotId: asset.shotId,
 					type: asset.type,
 					status: asset.status,
@@ -187,7 +142,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				)
 				.map((a) => ({
 					id: a.id,
-					sceneId: a.sceneId,
+					projectId: a.projectId,
 					type: "voiceover" as const,
 					status: a.status,
 					jobId: a.jobId,
@@ -208,7 +163,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				)
 				.map((a) => ({
 					id: a.id,
-					sceneId: a.sceneId,
+					projectId: a.projectId,
 					type: "background_music" as const,
 					status: a.status,
 					jobId: a.jobId,
@@ -222,7 +177,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				})),
 			transitionVideos: projectTransitionVideos.map((tv) => ({
 				id: tv.id,
-				sceneId: tv.sceneId,
+				projectId: tv.projectId,
 				fromShotId: tv.fromShotId,
 				toShotId: tv.toShotId,
 				fromImageId: tv.fromImageId,
@@ -257,7 +212,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				)
 				.map((a) => ({
 					id: a.id,
-					sceneId: a.sceneId,
+					projectId: a.projectId,
 					shotId: a.shotId,
 					status: a.status,
 					url: a.url,
@@ -276,7 +231,7 @@ export const loadProject = createServerFn({ method: "GET" })
 				})),
 			motionGraphics: projectMotionGraphics.map((graphic) => ({
 				id: graphic.id,
-				sceneId: graphic.sceneId,
+				projectId: graphic.projectId,
 				shotId: graphic.shotId,
 				preset: graphic.preset,
 				title: graphic.title,
@@ -294,18 +249,13 @@ export const exportProjectHandoff = createServerFn({ method: "POST" })
 	.handler(async ({ data: { projectId, format } }) => {
 		const { project } = await assertProjectOwner(projectId, "error");
 
-		const projectScenes = await db.query.scenes.findMany({
-			where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-			orderBy: asc(scenes.order),
-		});
-		const settings = normalizeProjectSettings(project.settings);
-		let plan: ScenePlanEntry[] = [];
-		try {
-			const parsed = project.scriptRaw ? JSON.parse(project.scriptRaw) : [];
-			plan = Array.isArray(parsed) ? parsed : [];
-		} catch {
-			plan = [];
-		}
+		const [projectShots, settings] = await Promise.all([
+			db.query.shots.findMany({
+				where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+				orderBy: asc(shots.order),
+			}),
+			Promise.resolve(normalizeProjectSettings(project.settings)),
+		]);
 
 		if (format === "json") {
 			return {
@@ -313,13 +263,15 @@ export const exportProjectHandoff = createServerFn({ method: "POST" })
 					{
 						project: { id: project.id, name: project.name },
 						intake: settings?.intake ?? null,
-						scenes: projectScenes.map((scene, i) => ({
-							id: scene.id,
+						shots: projectShots.map((shot, i) => ({
+							id: shot.id,
 							order: i + 1,
-							title: scene.title,
-							description: scene.description,
-							beat: plan[i]?.beat ?? null,
-							durationSec: plan[i]?.durationSec ?? null,
+							description: shot.description,
+							shotType: shot.shotType,
+							shotSize: shot.shotSize,
+							durationSec: shot.durationSec,
+							timestampStart: shot.timestampStart,
+							timestampEnd: shot.timestampEnd,
 						})),
 					},
 					null,
@@ -342,14 +294,14 @@ export const exportProjectHandoff = createServerFn({ method: "POST" })
 				? `- Viewer action: ${settings.intake.viewerAction}`
 				: "",
 			"",
-			"## Scene Plan",
-			...projectScenes.map((scene, i) =>
+			"## Shot List",
+			...projectShots.map((shot, i) =>
 				[
-					`### Scene ${i + 1}${scene.title ? `: ${scene.title}` : ""}`,
-					plan[i]?.beat ? `- Beat: ${plan[i].beat}` : "",
-					plan[i]?.durationSec ? `- Duration: ${plan[i].durationSec}s` : "",
+					`### Shot ${i + 1}`,
+					`- Type: ${shot.shotType} / Size: ${shot.shotSize}`,
+					shot.durationSec ? `- Duration: ${shot.durationSec}s` : "",
 					"",
-					scene.description,
+					shot.description,
 					"",
 				]
 					.filter(Boolean)

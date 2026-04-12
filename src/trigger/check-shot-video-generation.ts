@@ -128,7 +128,7 @@ export const checkShotVideoGeneration = task({
 					payload.assetId,
 					payload.generationId,
 				);
-				if (!freshAsset?.sceneId || !freshAsset.shotId) {
+				if (!freshAsset?.projectId || !freshAsset.shotId) {
 					logger.warn("Asset became stale during finalization", logContext);
 					return {
 						status: "skipped" as const,
@@ -136,7 +136,7 @@ export const checkShotVideoGeneration = task({
 					};
 				}
 
-				const storageKey = `projects/${freshAsset.sceneId}/shots/${freshAsset.shotId}/videos/${payload.assetId}.mp4`;
+				const storageKey = `projects/${freshAsset.projectId}/shots/${freshAsset.shotId}/videos/${payload.assetId}.mp4`;
 				const storedUrl = await uploadFromUrl(
 					prediction.outputUrl,
 					storageKey,

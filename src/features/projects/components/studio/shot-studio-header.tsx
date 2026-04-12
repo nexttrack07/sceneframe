@@ -1,13 +1,12 @@
 import { ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type { SceneAssetSummary } from "../../project-types";
 import { ShotFilmstrip } from "./shot-filmstrip";
 
 export function ShotStudioHeader({
 	shot,
 	shotIndex,
-	parentScene,
 	allShots,
 	allAssets,
 	onShotChange,
@@ -15,7 +14,6 @@ export function ShotStudioHeader({
 }: {
 	shot: Shot;
 	shotIndex: number;
-	parentScene: Scene;
 	allShots: Shot[];
 	allAssets: SceneAssetSummary[];
 	onShotChange: (shotId: string) => void;
@@ -32,10 +30,6 @@ export function ShotStudioHeader({
 				>
 					Storyboard
 				</button>
-				<ChevronRight size={12} />
-				<span className="text-muted-foreground">
-					{parentScene.title || `Scene ${parentScene.order}`}
-				</span>
 				<ChevronRight size={12} />
 				<span className="text-foreground font-medium">
 					Shot {shotIndex + 1}

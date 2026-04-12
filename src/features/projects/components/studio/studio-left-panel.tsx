@@ -1,19 +1,14 @@
 import { Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Scene } from "@/db/schema";
 import type {
 	ImageDefaults,
 	PromptAssetType,
 	PromptAssetTypeSelection,
-	ScenePlanEntry,
 } from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
 import { PromptEditor } from "./prompt-editor";
-import { SceneContextSection } from "./scene-context-section";
 
 export function StudioLeftPanel({
-	scene,
-	plan,
 	prompt,
 	onPromptChange,
 	onPromptBlur,
@@ -26,12 +21,7 @@ export function StudioLeftPanel({
 	onSettingsChange,
 	isGenerating,
 	onGenerate,
-	onDescriptionSaved,
 }: {
-	scene: Scene;
-	plan?: ScenePlanEntry;
-	promptMode?: "start" | "end";
-	onPromptModeChange?: (mode: "start" | "end") => void;
 	prompt: string;
 	onPromptChange: (value: string) => void;
 	onPromptBlur?: () => void;
@@ -44,19 +34,12 @@ export function StudioLeftPanel({
 	onSettingsChange: (settings: ImageDefaults) => void;
 	isGenerating: boolean;
 	onGenerate: () => void;
-	onDescriptionSaved?: (newDescription: string) => void;
 }) {
 	return (
 		<div className="w-[380px] border-r flex flex-col shrink-0 bg-card">
 			{/* Scrollable content */}
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
-				<SceneContextSection
-					scene={scene}
-					plan={plan}
-					onDescriptionSaved={onDescriptionSaved}
-				/>
-
-				<div className="border-t pt-4 space-y-4">
+				<div className="space-y-4">
 					<PromptEditor
 						prompt={prompt}
 						onPromptChange={onPromptChange}

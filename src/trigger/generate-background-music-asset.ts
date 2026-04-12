@@ -15,7 +15,6 @@ export interface GenerateBackgroundMusicAssetPayload {
 	assetId: string;
 	userId: string;
 	projectId: string;
-	sceneId: string;
 	generationId: string;
 	prompt: string;
 	durationSeconds: number;
@@ -74,7 +73,7 @@ export const generateBackgroundMusicAsset = task({
 			);
 		}
 
-		const storageKey = `projects/${payload.projectId}/scenes/${payload.sceneId}/music/${payload.assetId}.mp3`;
+		const storageKey = `projects/${payload.projectId}/music/${payload.assetId}.mp3`;
 		const publicUrl = await uploadFromUrl(urls[0], storageKey);
 
 		const freshAsset = await loadActiveAsset(

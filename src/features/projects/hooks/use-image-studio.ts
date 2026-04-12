@@ -27,8 +27,8 @@ import type {
 	TriggerRunSummary,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
+import { deleteAsset } from "../audio-actions";
 import {
-	deleteAsset,
 	enhanceShotImagePrompt,
 	generateShotImagePrompt,
 	generateShotImages,
@@ -36,7 +36,7 @@ import {
 	pollShotAssets,
 	selectShotAsset,
 	uploadShotReferenceImage,
-} from "../scene-actions";
+} from "../shot-actions";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
 
@@ -423,16 +423,11 @@ export function useImageStudio({
 			});
 			const label = shotLabelMap.get(selectedShotId);
 			const location = label ? formatShotLocation(label) : "Selected shot";
-			const sceneId =
-				storyShotsRef.current.find((shot) => shot.id === selectedShotId)
-					?.sceneId ?? null;
 			trackedBatchMetaRef.current.set(result.batchId, {
 				title: "Generating image",
 				location,
 			});
-			const href = sceneId
-				? `/projects/${projectId}?scene=${sceneId}&shot=${selectedShotId}&mediaTab=images`
-				: `/projects/${projectId}?shot=${selectedShotId}&mediaTab=images`;
+			const href = `/projects/${projectId}?shot=${selectedShotId}&mediaTab=images`;
 			beginGenerationToast({
 				id: result.batchId,
 				title: "Generating image",

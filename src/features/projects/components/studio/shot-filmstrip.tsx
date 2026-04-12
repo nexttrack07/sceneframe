@@ -45,9 +45,6 @@ export function ShotFilmstrip({
 		return anyDone?.url ?? null;
 	}
 
-	// Track scene boundaries for dividers
-	let lastSceneId: string | null = null;
-
 	return (
 		<div
 			ref={scrollRef}
@@ -56,16 +53,9 @@ export function ShotFilmstrip({
 			{shots.map((shot, i) => {
 				const isCurrent = shot.id === currentShotId;
 				const previewUrl = getPreviewUrl(shot.id);
-				const showDivider =
-					lastSceneId !== null && shot.sceneId !== lastSceneId;
-				lastSceneId = shot.sceneId;
 
 				return (
 					<div key={shot.id} className="flex items-center shrink-0">
-						{/* Scene group divider */}
-						{showDivider && (
-							<div className="w-px h-6 bg-border mx-1 shrink-0" />
-						)}
 						<button
 							ref={isCurrent ? currentRef : undefined}
 							type="button"

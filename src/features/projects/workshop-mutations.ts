@@ -1,0 +1,824 @@
+import { createServerFn } from "@tanstack/react-start";
+import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import Replicate from "replicate";
+import { db } from "@/db/index";
+import { assets, messages, projects, shots, transitionVideos } from "@/db/schema";
+import { assertProjectOwner } from "@/lib/assert-project-owner.server";
+import { withWorkshopLock } from "@/lib/project-lock.server";
+import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
+import {
+	getUserApiKey,
+} from "./image-generation-helpers.server";
+import {
+	ImagePromptArraySchema,
+	OutlineArraySchema,
+	parseLlmJson,
+	ShotDraftArraySchema,
+} from "./lib/llm-schemas";
+import { normalizeProjectSettings } from "./project-normalize";
+import type {
+	IntakeAnswers,
+	ProjectSettings,
+	ScriptDraft,
+	ShotDraftEntry,
+	ShotPlanEntry,
+} from "./project-types";
+
+const MAX_MESSAGE_LENGTH = 5_000;
+const MAX_HISTORY_MESSAGES = 30;
+const REPLICATE_TIMEOUT_MS = 60_000;
+
+export const saveIntake = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
+		const { intake } = data;
+		if (!intake.channelPreset) throw new Error("Channel preset is required");
+		if (!intake.concept?.trim() || intake.concept.trim().length < 10) {
+			throw new Error("Concept must be at least 10 characters");
+		}
+		return data;
+	})
+	.handler(async ({ data: { projectId, intake } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
+
+		const existing = normalizeProjectSettings(project.settings);
+		const merged: ProjectSettings = {
+			...existing,
+			intake,
+		};
+
+		await db
+			.update(projects)
+			.set({ settings: merged })
+			.where(eq(projects.id, projectId));
+	});
+
+export const sendMessage = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			content: string;
+			stage?: "discovery" | "outline" | "shots" | "prompts";
+			clientMessageId?: string;
+		}) => {
+			const trimmed = data.content.trim();
+			if (trimmed.length === 0) throw new Error("Message cannot be empty");
+			if (trimmed.length > MAX_MESSAGE_LENGTH)
+				throw new Error(
+					`Message too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+				);
+			return {
+				projectId: data.projectId,
+				content: trimmed,
+				stage: data.stage,
+				clientMessageId: data.clientMessageId,
+			};
+		},
+	)
+	.handler(async ({ data: { projectId, content, stage, clientMessageId } }) => {
+		const { userId, project } = await assertProjectOwner(projectId, "error");
+
+		// Idempotency: if the client retried with the same clientMessageId, short-circuit.
+		if (clientMessageId) {
+			const existing = await db.query.messages.findFirst({
+				where: and(
+					eq(messages.projectId, projectId),
+					eq(messages.clientMessageId, clientMessageId),
+				),
+			});
+			if (existing) {
+				const assistant = await db.query.messages.findFirst({
+					where: and(
+						eq(messages.projectId, projectId),
+						eq(messages.role, "assistant"),
+						gt(messages.createdAt, existing.createdAt),
+					),
+					orderBy: asc(messages.createdAt),
+				});
+				if (assistant) return { content: assistant.content };
+
+				// If the user message is older than 5 minutes with no assistant response,
+				// it's orphaned (original request failed). Delete it and allow retry.
+				const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+				if (existing.createdAt < fiveMinutesAgo) {
+					await db.delete(messages).where(eq(messages.id, existing.id));
+					// Fall through to create a new message below
+				} else {
+					throw new Error(
+						"Message is still being processed — please wait before retrying",
+					);
+				}
+			}
+		}
+
+		await db
+			.insert(messages)
+			.values({ projectId, role: "user", content, clientMessageId });
+
+		const recentHistory = await db.query.messages
+			.findMany({
+				where: eq(messages.projectId, projectId),
+				orderBy: desc(messages.createdAt),
+				limit: MAX_HISTORY_MESSAGES,
+			})
+			.then((rows) => rows.reverse());
+		const apiKey = await getUserApiKey(userId);
+
+		const settings = normalizeProjectSettings(project.settings);
+		const intake = settings?.intake ?? null;
+		const scriptDraft = project.scriptDraft ?? null;
+
+		const currentStage = stage ?? scriptDraft?.stage ?? "discovery";
+
+		const intakeContext = intake
+			? `
+CREATIVE DIRECTION (from project setup):
+- Target duration: ${intake.targetDurationSec ? `${intake.targetDurationSec}s` : "Not specified"}
+- Visual style: ${intake.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+`
+			: "";
+
+		const draftContext = scriptDraft?.outline
+			? `\nCURRENT OUTLINE (${scriptDraft.outline.length} beats generated)`
+			: "";
+
+		const stageInstruction =
+			currentStage === "discovery"
+				? `You are in the DISCOVERY phase. Your ONLY job is to understand what video the user wants to create through conversation.
+
+STRICT RULES FOR DISCOVERY:
+- Ask specific, cinematographer-style questions: What's the core concept? What camera style? Any special effects? How many characters? What's the emotional arc? What's the pacing?
+- Ask ONE or TWO questions per response. Not more.
+- NEVER generate outlines, scripts, narration, or any structured content. This is a conversation, not a generation step.
+- NEVER return any fenced code blocks (no \`\`\`outline, \`\`\`json, or similar). Plain conversational text only.
+- NEVER write narration, dialogue, or script copy. That comes in later stages.
+- Do NOT make assumptions about details the user hasn't specified — ask instead.
+- When you have gathered enough information (concept, tone, pacing, visual style, key subjects, narrative arc), say something like: "I think I have a solid picture of what you want. Ready for me to draft an outline?" and WAIT for the user to confirm.
+- You may offer quick-reply suggestions using a \`\`\`suggestions block at the end.`
+				: currentStage === "outline"
+					? `You are in the OUTLINE phase. A narrative outline is visible in the right panel.
+- Help the user refine individual beats in the outline through conversation.
+- If the user selects a specific beat, focus on that beat only.
+- Do NOT regenerate the entire outline unless explicitly asked.
+- Do NOT write shot descriptions — that's the next stage.`
+					: currentStage === "shots"
+						? `You are in the SHOTS phase. A flat shot list is visible in the right panel.
+- Help the user refine specific shot descriptions through conversation.
+- Focus on cinematography, framing, visual detail, and production-ready direction.
+- Each shot should be visually distinct from its neighbors.
+- Do NOT regenerate all shots unless explicitly asked.`
+						: `You are in the IMAGE PROMPTS phase. Per-shot image prompts are visible in the right panel.
+- Help the user refine image generation prompts for specific shots.
+- Each prompt should be a standalone visual description suitable for AI image generation.`;
+
+		const systemPrompt = `You are a creative director and cinematographer helping plan a video project called "${project.name}".
+
+${stageInstruction}
+
+${intakeContext}${draftContext}
+
+Global rules:
+- Be conversational and collaborative, like a real cinematographer in a creative session.
+- Keep responses short and focused. No walls of text.
+- Match the user's energy — if they're brief, be brief back.
+- The user has action buttons in the UI to trigger generation (outline, shots, prompts). You do NOT need to generate structured content yourself — just have the conversation and let the user click the button when ready.`;
+
+		const llmMessages = recentHistory.map((m) =>
+			m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`,
+		);
+		const prompt = `${systemPrompt}\n\n${llmMessages.join("\n\n")}`;
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 2048, temperature: 0.7 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+			const assistantContent = chunks.join("");
+
+			if (!assistantContent.trim()) {
+				throw new Error("AI returned an empty response — please try again");
+			}
+
+			await db
+				.insert(messages)
+				.values({ projectId, role: "assistant", content: assistantContent });
+
+			return { content: assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+export const approveWorkshop = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			shots: ShotDraftEntry[];
+			imagePrompts?: Array<{ shotIndex: number; prompt: string }>;
+		}) => {
+			if (!data.projectId || typeof data.projectId !== "string") {
+				throw new Error("projectId is required");
+			}
+			const shotsResult = ShotDraftArraySchema.safeParse(data.shots);
+			if (!shotsResult.success) {
+				const issue = shotsResult.error.issues[0];
+				throw new Error(
+					`Invalid shots: ${issue.path.join(".") || "root"} — ${issue.message}`,
+				);
+			}
+			if (data.imagePrompts !== undefined) {
+				const promptsResult = ImagePromptArraySchema.safeParse(
+					data.imagePrompts,
+				);
+				if (!promptsResult.success) {
+					const issue = promptsResult.error.issues[0];
+					throw new Error(
+						`Invalid imagePrompts: ${issue.path.join(".") || "root"} — ${issue.message}`,
+					);
+				}
+			}
+			return {
+				projectId: data.projectId,
+				shots: shotsResult.data,
+				imagePrompts: data.imagePrompts,
+			};
+		},
+	)
+	.handler(
+		async ({ data: { projectId, shots: inputShots, imagePrompts } }) => {
+			await assertProjectOwner(projectId, "error");
+			return withWorkshopLock(projectId, async (project) => {
+			// ---------------------------------------------------------------
+			// 1. Convert ShotDraftEntry[] to ShotPlanEntry[] with image prompts
+			// ---------------------------------------------------------------
+			const shotPlan: ShotPlanEntry[] = inputShots.map((shot, shotIdx) => ({
+				description: shot.description,
+				shotType: shot.shotType,
+				shotSize: shot.shotSize,
+				durationSec: shot.durationSec,
+				imagePrompt: imagePrompts?.find((p) => p.shotIndex === shotIdx)?.prompt,
+			}));
+
+			// ---------------------------------------------------------------
+			// 2. Compute cumulative timestamps
+			// ---------------------------------------------------------------
+			let cursor = 0;
+			const timestampedShots = shotPlan.map((shot) => {
+				const start = cursor;
+				cursor += shot.durationSec;
+				return { ...shot, timestampStart: start, timestampEnd: cursor };
+			});
+
+			// ---------------------------------------------------------------
+			// 2b. OUTSIDE transaction: collect existing storage keys for post-commit R2 cleanup
+			// ---------------------------------------------------------------
+			const existingAssetsForCleanup = await db
+				.select({ storageKey: assets.storageKey })
+				.from(assets)
+				.where(
+					and(eq(assets.projectId, projectId), isNull(assets.deletedAt)),
+				);
+
+			const storageKeysToCleanup: string[] = existingAssetsForCleanup
+				.map((a) => a.storageKey)
+				.filter((k): k is string => Boolean(k));
+
+			const existingShotIdsForCleanup = (
+				await db
+					.select({ id: shots.id })
+					.from(shots)
+					.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+			).map((r) => r.id);
+
+			const transitionKeysToCleanup: string[] = [];
+			if (existingShotIdsForCleanup.length > 0) {
+				const tvRows = await db
+					.select({ storageKey: transitionVideos.storageKey })
+					.from(transitionVideos)
+					.where(
+						and(
+							or(
+								inArray(transitionVideos.fromShotId, existingShotIdsForCleanup),
+								inArray(transitionVideos.toShotId, existingShotIdsForCleanup),
+							),
+							isNull(transitionVideos.deletedAt),
+						),
+					);
+
+				for (const tv of tvRows) {
+					if (tv.storageKey) transitionKeysToCleanup.push(tv.storageKey);
+				}
+			}
+
+			// ---------------------------------------------------------------
+			// 3. INSIDE a single transaction: persist everything
+			// ---------------------------------------------------------------
+			await db.transaction(async (tx) => {
+				const now = new Date();
+
+				// Soft-delete existing shots by projectId
+				const existingShotIds = (
+					await tx
+						.select({ id: shots.id })
+						.from(shots)
+						.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+				).map((r) => r.id);
+
+				await tx
+					.update(shots)
+					.set({ deletedAt: now })
+					.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)));
+
+				// Soft-delete existing assets by projectId
+				await tx
+					.update(assets)
+					.set({ deletedAt: now })
+					.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+
+				// Soft-delete existing transition videos by shot IDs
+				if (existingShotIds.length > 0) {
+					await tx
+						.update(transitionVideos)
+						.set({ deletedAt: now })
+						.where(
+							and(
+								or(
+									inArray(transitionVideos.fromShotId, existingShotIds),
+									inArray(transitionVideos.toShotId, existingShotIds),
+								),
+								isNull(transitionVideos.deletedAt),
+							),
+						);
+				}
+
+				// Insert new shot rows flat — already in order
+				const shotValues: Array<{
+					projectId: string;
+					order: number;
+					description: string;
+					imagePrompt: string;
+					shotType: "talking" | "visual";
+					shotSize:
+						| "extreme-wide"
+						| "wide"
+						| "medium"
+						| "close-up"
+						| "extreme-close-up"
+						| "insert";
+					durationSec: number;
+					timestampStart: number;
+					timestampEnd: number;
+				}> = [];
+
+				timestampedShots.forEach((shot, i) => {
+					shotValues.push({
+						projectId,
+						order: i + 1,
+						description: shot.description,
+						imagePrompt: shot.imagePrompt?.trim() || shot.description,
+						shotType: shot.shotType,
+						shotSize: shot.shotSize ?? "medium",
+						durationSec: shot.durationSec,
+						timestampStart: shot.timestampStart,
+						timestampEnd: shot.timestampEnd,
+					});
+				});
+
+				if (shotValues.length > 0) {
+					await tx.insert(shots).values(shotValues);
+				}
+
+				// Update project
+				const directorPrompt = project.name;
+				await tx
+					.update(projects)
+					.set({
+						scriptStatus: "done",
+						directorPrompt,
+					})
+					.where(eq(projects.id, projectId));
+			});
+
+			// R2 cleanup AFTER transaction commits — safe to delete now
+			await cleanupStorageKeys([...storageKeysToCleanup, ...transitionKeysToCleanup]);
+			});
+		},
+	);
+
+export const updateScriptDraft = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			scriptDraft: import("./project-types").ScriptDraft;
+		}) => data,
+	)
+	.handler(async ({ data: { projectId, scriptDraft } }) => {
+		await assertProjectOwner(projectId, "error");
+		await db
+			.update(projects)
+			.set({ scriptDraft })
+			.where(eq(projects.id, projectId));
+	});
+
+export const generateOutline = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; feedback?: string }) => ({
+		projectId: data.projectId,
+		feedback: data.feedback?.trim() || undefined,
+	}))
+	.handler(async ({ data: { projectId, feedback } }) => {
+		const { userId } = await assertProjectOwner(projectId, "error");
+		return withWorkshopLock(projectId, async (project) => {
+		const settings = normalizeProjectSettings(project.settings) ?? {};
+		const intake = settings.intake ?? null;
+		if (!intake) {
+			throw new Error("Save the creative brief before generating an outline");
+		}
+
+		const apiKey = await getUserApiKey(userId);
+		const recentHistory = await db.query.messages
+			.findMany({
+				where: eq(messages.projectId, projectId),
+				orderBy: desc(messages.createdAt),
+				limit: MAX_HISTORY_MESSAGES,
+			})
+			.then((rows) => rows.reverse());
+		const historyBlock = recentHistory
+			.map((m) =>
+				m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`,
+			)
+			.join("\n\n");
+
+		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		const prompt = `You are a creative director creating a scene-by-scene outline for a video. Generate 3-7 scenes with a title and one-line summary each.
+
+PROJECT:
+- Name: ${project.name}
+- Channel preset: ${intake.channelPreset}
+- Purpose: ${intake.purpose ?? "Not specified"}
+- Target duration: ${intake.targetDurationSec ?? 300} seconds
+- Visual style: ${intake.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake.setting?.join(", ") ?? "Not specified"}
+- Audio direction: ${intake.audioMode ?? "Not specified"}
+- Audience: ${intake.audience ?? "Not specified"}
+- Desired viewer action: ${intake.viewerAction ?? "Not specified"}
+- Working title: ${intake.workingTitle || "Not provided"}
+- Thumbnail promise: ${intake.thumbnailPromise || "Not provided"}
+- Concept: ${intake.concept}
+
+RECENT WORKSHOP CONTEXT:
+${historyBlock || "No prior chat context."}
+
+${feedback ? `USER DIRECTION FOR THIS OUTLINE:\n${feedback}\n` : ""}
+Return a short note plus this exact fenced JSON block:
+
+\`\`\`outline
+[{"title": "Scene title", "summary": "One-line description"}]
+\`\`\``;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 2048, temperature: 0.6 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const assistantContent = chunks.join("").trim();
+			if (!assistantContent) {
+				throw new Error("AI returned an empty outline — please try again");
+			}
+
+			const parsed = parseLlmJson(
+				assistantContent,
+				OutlineArraySchema,
+				"generateOutline",
+			);
+
+			const nextDraft: ScriptDraft = {
+				...existingDraft,
+				outline: parsed,
+				stage: "outline",
+			};
+
+			await db
+				.update(projects)
+				.set({ scriptDraft: nextDraft })
+				.where(eq(projects.id, projectId));
+
+			return { content: assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+		});
+	});
+
+export const generateShots = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string; feedback?: string }) => ({
+		projectId: data.projectId,
+		feedback: data.feedback?.trim() || undefined,
+	}))
+	.handler(async ({ data: { projectId, feedback } }) => {
+		const { userId } = await assertProjectOwner(projectId, "error");
+		return withWorkshopLock(projectId, async (project) => {
+		const settings = normalizeProjectSettings(project.settings) ?? {};
+		const intake = settings.intake ?? null;
+
+		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const outlineList = existingDraft.outline;
+		if (!outlineList || outlineList.length === 0) {
+			throw new Error("Generate an outline before breaking down into shots");
+		}
+
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		const outlineBlock = outlineList
+			.map((s, i) => `${i + 1}. ${s.title}: ${s.summary}`)
+			.join("\n");
+
+		const targetDuration = intake?.targetDurationSec ?? 300;
+		// Suggest a shot count range based on duration — avg 5-8 seconds per shot
+		const minShots = Math.max(3, Math.floor(targetDuration / 10));
+		const maxShots = Math.max(minShots + 5, Math.ceil(targetDuration / 4));
+
+		const prompt = `You are a cinematographer creating a shot list for a video.
+
+PROJECT:
+- Name: ${project.name}
+- Target duration: ${targetDuration} seconds
+- Visual style: ${intake?.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake?.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake?.setting?.join(", ") ?? "Not specified"}
+
+OUTLINE (narrative structure, not shot boundaries):
+${outlineBlock}
+
+${feedback ? `USER DIRECTION:\n${feedback}\n` : ""}
+TASK:
+- Generate a flat, chronological shot list for the ENTIRE video. The outline is narrative context only — do NOT subdivide each outline entry into its own shots. Think of shots as cinematic beats that flow through the story, not chunks of scenes.
+- Total shot count should be around ${minShots} to ${maxShots} shots, sized to fit the ${targetDuration}-second duration.
+- Each shot must be VISUALLY DISTINCT from every other shot — different framing, different subject, different action, different composition. NEVER describe the same view twice. If two shots would look similar, merge them or cut one.
+- Each shot must specify: shotType (talking or visual), shotSize (extreme-wide, wide, medium, close-up, extreme-close-up, or insert), durationSec (typically 3-10s), and a detailed visual description.
+- Shot descriptions should be self-contained, production-ready, and specific enough for a camera operator to frame without additional context. Include environment, subject, lighting, composition, action, and camera movement.
+- Vary shot sizes across the list — don't use all wides or all close-ups. A good sequence alternates framing to create rhythm.
+- The sum of all durationSec values should roughly equal the target duration.
+
+Return only this fenced JSON block with a flat array of shots in playback order:
+
+\`\`\`shots
+[
+  {"description": "Detailed shot description...", "shotType": "visual", "shotSize": "wide", "durationSec": 8}
+]
+\`\`\``;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 4096, temperature: 0.5 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const assistantContent = chunks.join("").trim();
+			if (!assistantContent) {
+				throw new Error("AI returned an empty response — please try again");
+			}
+
+			const parsed = parseLlmJson(
+				assistantContent,
+				ShotDraftArraySchema,
+				"generateShots",
+			);
+
+			const nextDraft: ScriptDraft = {
+				...existingDraft,
+				shots: parsed,
+				stage: "shots",
+			};
+
+			await db
+				.update(projects)
+				.set({ scriptDraft: nextDraft })
+				.where(eq(projects.id, projectId));
+
+			return { content: assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+		});
+	});
+
+export const generateImagePrompts = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string }) => data)
+	.handler(async ({ data: { projectId } }) => {
+		const { userId } = await assertProjectOwner(projectId, "error");
+		return withWorkshopLock(projectId, async (project) => {
+		const settings = normalizeProjectSettings(project.settings) ?? {};
+		const intake = settings.intake ?? null;
+
+		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const outlineList = existingDraft.outline;
+		const shotList = existingDraft.shots;
+		if (!outlineList || outlineList.length === 0) {
+			throw new Error("Generate an outline before creating image prompts");
+		}
+		if (!shotList || shotList.length === 0) {
+			throw new Error("Break outline into shots before creating image prompts");
+		}
+
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		const shotsBlock = shotList
+			.map(
+				(shot, shotIdx) =>
+					`Shot ${shotIdx} (shotIndex: ${shotIdx}): [${shot.shotSize}, ${shot.shotType}] ${shot.description}`,
+			)
+			.join("\n");
+
+		const prompt = `Generate a detailed image generation prompt for each shot. Each prompt should be a standalone visual description suitable for an AI image generator like Flux or Stable Diffusion.
+
+PROJECT STYLE:
+- Visual style: ${intake?.style?.join(", ") ?? "Not specified"}
+- Mood / tone: ${intake?.mood?.join(", ") ?? "Not specified"}
+- Setting: ${intake?.setting?.join(", ") ?? "Not specified"}
+
+SHOTS:
+${shotsBlock}
+
+Return only this fenced JSON block:
+
+\`\`\`prompts
+[{"shotIndex": 0, "prompt": "Detailed image prompt..."}]
+\`\`\`
+
+Generate exactly one entry per shot, matching the shotIndex values shown above. Each prompt must be a self-contained visual description including framing (the shot size like wide, close-up, etc.), environment, subject, lighting, mood, color palette, and style. Do not reference other shots.`;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 4096, temperature: 0.5 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const assistantContent = chunks.join("").trim();
+			if (!assistantContent) {
+				throw new Error("AI returned empty image prompts — please try again");
+			}
+
+			const parsed = parseLlmJson(
+				assistantContent,
+				ImagePromptArraySchema,
+				"generateImagePrompts",
+			);
+
+			const nextDraft: ScriptDraft = {
+				...existingDraft,
+				imagePrompts: parsed,
+				stage: "prompts",
+			};
+
+			await db
+				.update(projects)
+				.set({ scriptDraft: nextDraft })
+				.where(eq(projects.id, projectId));
+
+			return { content: assistantContent };
+		} finally {
+			clearTimeout(timeout);
+		}
+		});
+	});
+
+export const resetWorkshop = createServerFn({ method: "POST" })
+	.inputValidator((projectId: string) => projectId)
+	.handler(async ({ data: projectId }) => {
+		await assertProjectOwner(projectId, "error");
+		return withWorkshopLock(projectId, async (project) => {
+		const currentSettings = normalizeProjectSettings(project.settings);
+
+		// Collect R2 keys BEFORE the transaction so cleanup runs safely after commit
+		const resetAssets = await db
+			.select({ storageKey: assets.storageKey })
+			.from(assets)
+			.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+
+		const resetAssetKeys: string[] = resetAssets
+			.map((a) => a.storageKey)
+			.filter((k): k is string => Boolean(k));
+
+		const resetShotIds = (
+			await db
+				.select({ id: shots.id })
+				.from(shots)
+				.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+		).map((r) => r.id);
+
+		const resetTransitionKeys: string[] = [];
+		if (resetShotIds.length > 0) {
+			const tvRows = await db
+				.select({ storageKey: transitionVideos.storageKey })
+				.from(transitionVideos)
+				.where(
+					and(
+						or(
+							inArray(transitionVideos.fromShotId, resetShotIds),
+							inArray(transitionVideos.toShotId, resetShotIds),
+						),
+						isNull(transitionVideos.deletedAt),
+					),
+				);
+			for (const tv of tvRows) {
+				if (tv.storageKey) resetTransitionKeys.push(tv.storageKey);
+			}
+		}
+
+		await db.transaction(async (tx) => {
+			const now = new Date();
+
+			// Soft-delete shots directly by projectId
+			const existingShotIds = (
+				await tx
+					.select({ id: shots.id })
+					.from(shots)
+					.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+			).map((r) => r.id);
+
+			await tx
+				.update(shots)
+				.set({ deletedAt: now })
+				.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)));
+
+			// Soft-delete assets by projectId
+			await tx
+				.update(assets)
+				.set({ deletedAt: now })
+				.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+
+			// Soft-delete transition videos referencing those shots
+			if (existingShotIds.length > 0) {
+				await tx
+					.update(transitionVideos)
+					.set({ deletedAt: now })
+					.where(
+						and(
+							or(
+								inArray(transitionVideos.fromShotId, existingShotIds),
+								inArray(transitionVideos.toShotId, existingShotIds),
+							),
+							isNull(transitionVideos.deletedAt),
+						),
+					);
+			}
+
+			// messages table has no deletedAt column — hard delete is intentional
+			await tx.delete(messages).where(eq(messages.projectId, projectId));
+
+			await tx
+				.update(projects)
+				.set({
+					scriptStatus: "idle",
+					directorPrompt: "",
+					scriptRaw: null,
+					scriptJobId: null,
+					scriptDraft: null,
+					settings: currentSettings
+						? {
+								intake: currentSettings.intake,
+								characters: currentSettings.characters,
+								locations: currentSettings.locations,
+							}
+						: null,
+				})
+				.where(eq(projects.id, projectId));
+		});
+
+		// R2 cleanup AFTER transaction commits — safe to delete now
+		await cleanupStorageKeys([...resetAssetKeys, ...resetTransitionKeys]);
+		});
+	});
+
+
+

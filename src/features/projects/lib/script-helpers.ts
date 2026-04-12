@@ -64,7 +64,7 @@ export function composeBrief(intake: IntakeAnswers): string {
 	const parts: string[] = [];
 	const lengthLabel = intake.targetDurationSec
 		? `${Math.round((intake.targetDurationSec / 60) * 10) / 10}-minute`
-		: intake.length.toLowerCase();
+		: (intake.length ?? "short").toLowerCase();
 
 	parts.push(`I'd like to create a ${lengthLabel} video.`);
 

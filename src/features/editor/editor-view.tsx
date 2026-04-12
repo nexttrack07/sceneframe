@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import { saveEditorState } from "@/features/projects/project-mutations";
 import type {
 	BackgroundMusicAssetSummary,
@@ -16,7 +16,6 @@ import type { UndoableState } from "./vendor/state/types";
 const AUTOSAVE_DELAY_MS = 2_000;
 
 export function EditorView({
-	scenes,
 	shots,
 	assets,
 	shotVideoAssets,
@@ -26,7 +25,6 @@ export function EditorView({
 	projectId,
 	savedEditorState,
 }: {
-	scenes: Scene[];
 	shots: Shot[];
 	assets: SceneAssetSummary[];
 	shotVideoAssets: ShotVideoSummary[];
@@ -40,7 +38,6 @@ export function EditorView({
 	const initialState = useMemo(() => {
 		if (savedEditorState) return savedEditorState as UndoableState;
 		return buildEditorState({
-			scenes,
 			shots,
 			assets,
 			shotVideoAssets,
@@ -50,7 +47,6 @@ export function EditorView({
 		});
 	}, [
 		shots,
-		scenes,
 		assets,
 		shotVideoAssets,
 		transitionVideos,
@@ -79,7 +75,6 @@ export function EditorView({
 	return (
 		<div className="h-full w-full flex">
 			<ShotLibraryPanel
-				scenes={scenes}
 				shots={shots}
 				assets={assets}
 				shotVideoAssets={shotVideoAssets}

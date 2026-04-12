@@ -1,16 +1,14 @@
 import { Check, Loader2, Pencil, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type {
 	ImageDefaults,
 	PromptAssetType,
 	PromptAssetTypeSelection,
-	ScenePlanEntry,
 } from "../../project-types";
 import { InlineSettingsRow } from "./inline-settings-row";
 import { ProjectVisualReferenceSelector } from "./project-visual-reference-selector";
 import { PromptEditor } from "./prompt-editor";
-import { SceneContextSection } from "./scene-context-section";
 import { ShotContextSection } from "./shot-context-section";
 import { VisualReferencesSection } from "./visual-references-section";
 
@@ -61,8 +59,6 @@ function ContextToggleCard({
 
 export function ShotStudioLeftPanel({
 	shot,
-	parentScene,
-	scenePlan,
 	prompt,
 	onPromptChange,
 	onGeneratePrompt,
@@ -77,7 +73,6 @@ export function ShotStudioLeftPanel({
 	isQueueing,
 	onGenerate,
 	onDescriptionSaved,
-	onSceneDescriptionSaved,
 	refImageUrl,
 	useRefImage,
 	onUseRefImageChange,
@@ -101,8 +96,6 @@ export function ShotStudioLeftPanel({
 	hideContext,
 }: {
 	shot: Shot;
-	parentScene: Scene;
-	scenePlan?: ScenePlanEntry;
 	prompt: string;
 	onPromptChange: (value: string) => void;
 	onGeneratePrompt: () => void;
@@ -117,7 +110,6 @@ export function ShotStudioLeftPanel({
 	isQueueing: boolean;
 	onGenerate: () => void;
 	onDescriptionSaved?: (newDescription: string) => void;
-	onSceneDescriptionSaved?: (newDescription: string) => void;
 	refImageUrl?: string | null;
 	useRefImage?: boolean;
 	onUseRefImageChange?: (v: boolean) => void;
@@ -147,15 +139,8 @@ export function ShotStudioLeftPanel({
 			<div className="flex-1 overflow-y-auto p-4 space-y-4">
 				{!hideContext && (
 					<>
-						<SceneContextSection
-							scene={parentScene}
-							plan={scenePlan}
-							onDescriptionSaved={onSceneDescriptionSaved}
-						/>
-
 						<ShotContextSection
 							shot={shot}
-							parentScene={parentScene}
 							onDescriptionSaved={onDescriptionSaved}
 						/>
 					</>

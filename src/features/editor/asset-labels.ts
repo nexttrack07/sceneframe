@@ -1,4 +1,4 @@
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type {
 	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
@@ -11,55 +11,24 @@ function padOrder(order: number): string {
 	return String(order).padStart(2, "0");
 }
 
-function sceneDisplayLabel(scene: Scene, index: number): string {
-	const title = scene.title?.trim();
-	return title ? `Scene ${index + 1}: ${title}` : `Scene ${index + 1}`;
-}
-
 export function createEditorAssetLabeler({
-	scenes,
 	shots,
 }: {
-	scenes: Scene[];
 	shots: Shot[];
 }) {
-	const sceneById = new Map(scenes.map((scene) => [scene.id, scene] as const));
-	const sceneIndexById = new Map(
-		scenes.map((scene, index) => [scene.id, index]),
-	);
-	const shotsBySceneId = new Map<string, Shot[]>();
-
-	for (const shot of shots) {
-		const existing = shotsBySceneId.get(shot.sceneId) ?? [];
-		existing.push(shot);
-		shotsBySceneId.set(shot.sceneId, existing);
-	}
-
 	const shotOrderById = new Map<string, number>();
-	for (const sceneShots of shotsBySceneId.values()) {
-		sceneShots
-			.slice()
-			.sort((a, b) => a.order - b.order)
-			.forEach((shot, index) => {
-				shotOrderById.set(shot.id, index + 1);
-			});
-	}
+	shots
+		.slice()
+		.sort((a, b) => a.order - b.order)
+		.forEach((shot, index) => {
+			shotOrderById.set(shot.id, index + 1);
+		});
 
 	const shotById = new Map(shots.map((shot) => [shot.id, shot] as const));
 
-	const getSceneLabel = (sceneId: string): string => {
-		const scene = sceneById.get(sceneId);
-		const sceneIndex = sceneIndexById.get(sceneId) ?? 0;
-		return scene
-			? sceneDisplayLabel(scene, sceneIndex)
-			: `Scene ${sceneIndex + 1}`;
-	};
-
 	const getShotLabel = (shotId: string): string => {
-		const shot = shotById.get(shotId);
-		if (!shot) return "Shot";
 		const shotOrder = shotOrderById.get(shotId) ?? 1;
-		return `${getSceneLabel(shot.sceneId)} · Shot ${padOrder(shotOrder)}`;
+		return `Shot ${padOrder(shotOrder)}`;
 	};
 
 	const countWithin = <T extends { id: string }>(
@@ -86,13 +55,11 @@ export function createEditorAssetLabeler({
 				return `${getShotLabel(asset.shotId)} · Image ${padOrder(countWithin(shotAssets, asset.id))}`;
 			}
 
-			const sceneAssets = allAssets.filter(
-				(candidate) =>
-					candidate.sceneId === asset.sceneId &&
-					candidate.shotId == null &&
-					candidate.type === asset.type,
+			// Asset not tied to a specific shot — use a generic label
+			const projectAssets = allAssets.filter(
+				(candidate) => candidate.shotId == null && candidate.type === asset.type,
 			);
-			return `${getSceneLabel(asset.sceneId)} · Image ${padOrder(countWithin(sceneAssets, asset.id))}`;
+			return `Image ${padOrder(countWithin(projectAssets, asset.id))}`;
 		},
 		shotVideoLabel(video: ShotVideoSummary, allVideos: ShotVideoSummary[]) {
 			const shotVideos = allVideos.filter(
@@ -116,19 +83,16 @@ export function createEditorAssetLabeler({
 			audio: VoiceoverAssetSummary,
 			allVoiceovers: VoiceoverAssetSummary[],
 		) {
-			const sceneVoiceovers = allVoiceovers.filter(
-				(candidate) => candidate.sceneId === audio.sceneId,
-			);
-			return `${getSceneLabel(audio.sceneId)} · Voiceover ${padOrder(countWithin(sceneVoiceovers, audio.id))}`;
+			// voiceovers are project-level; label by position
+			return `Voiceover ${padOrder(countWithin(allVoiceovers, audio.id))}`;
 		},
 		backgroundMusicLabel(
 			audio: BackgroundMusicAssetSummary,
 			allTracks: BackgroundMusicAssetSummary[],
 		) {
-			const sceneTracks = allTracks.filter(
-				(candidate) => candidate.sceneId === audio.sceneId,
-			);
-			return `${getSceneLabel(audio.sceneId)} · Music ${padOrder(countWithin(sceneTracks, audio.id))}`;
+			return `Music ${padOrder(countWithin(allTracks, audio.id))}`;
 		},
+		// Keep shotById accessible for consumers that need it
+		shotById,
 	};
 }

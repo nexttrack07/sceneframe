@@ -19,9 +19,9 @@ export type VideoLifecycleStatus =
 	| "error";
 
 export interface IntakeAnswers {
-	channelPreset: string;
+	channelPreset?: string;
 	purpose?: string;
-	length: string;
+	length?: string;
 	style?: string[];
 	mood?: string[];
 	setting?: string[];
@@ -30,7 +30,7 @@ export interface IntakeAnswers {
 	viewerAction?: string;
 	workingTitle?: string;
 	thumbnailPromise?: string;
-	concept: string;
+	concept?: string;
 	targetDurationSec?: number;
 }
 
@@ -49,9 +49,34 @@ export interface OpeningHookDraft {
 	visualDirection: string;
 }
 
+export type WorkshopStage =
+	| "discovery"
+	| "outline"
+	| "shots"
+	| "prompts";
+
+export interface OutlineEntry {
+	title: string;
+	summary: string;
+}
+
+export interface ShotDraftEntry {
+	description: string;
+	shotType: "talking" | "visual";
+	shotSize: "extreme-wide" | "wide" | "medium" | "close-up" | "extreme-close-up" | "insert";
+	durationSec: number;
+}
+
+export interface ScriptDraft {
+	stage: WorkshopStage;
+	outline?: OutlineEntry[];
+	shots?: ShotDraftEntry[];
+	imagePrompts?: Array<{ shotIndex: number; prompt: string }>;
+	staleStages?: Array<"outline" | "shots" | "prompts">;
+}
+
 export interface ScriptEditSelection {
 	project: boolean;
-	sceneIds: string[];
 	shotIds: string[];
 }
 
@@ -59,10 +84,6 @@ export interface ScriptEditDraft {
 	scope: ScriptEditSelection;
 	instructions: string;
 	summary: string;
-	sceneUpdates: Array<{
-		sceneId: string;
-		description: string;
-	}>;
 	shotUpdates: Array<{
 		shotId: string;
 		description: string;
@@ -84,7 +105,6 @@ export interface ShotPlanEntry {
 	shotType: ShotType;
 	shotSize: ShotSize;
 	durationSec: number;
-	sceneIndex: number;
 }
 
 export interface ImageDefaults {
@@ -175,7 +195,7 @@ export interface MotionGraphicSpec {
 
 export interface MotionGraphicSummary {
 	id: string;
-	sceneId: string;
+	projectId: string;
 	shotId: string;
 	preset: MotionGraphicPreset;
 	title: string;
@@ -187,7 +207,7 @@ export interface MotionGraphicSummary {
 // Base video type shared by both transition and shot videos
 export interface BaseVideoSummary {
 	id: string;
-	sceneId: string;
+	projectId: string;
 	status: VideoLifecycleStatus;
 	url: string | null;
 	errorMessage: string | null;
@@ -220,7 +240,7 @@ export interface ShotVideoSummary extends BaseVideoSummary {
 
 export interface VoiceoverAssetSummary {
 	id: string;
-	sceneId: string;
+	projectId: string;
 	type: "voiceover";
 	status: "generating" | "done" | "error";
 	jobId: string | null;
@@ -235,7 +255,7 @@ export interface VoiceoverAssetSummary {
 
 export interface BackgroundMusicAssetSummary {
 	id: string;
-	sceneId: string;
+	projectId: string;
 	type: "background_music";
 	status: "generating" | "done" | "error";
 	jobId: string | null;
@@ -250,7 +270,7 @@ export interface BackgroundMusicAssetSummary {
 
 export interface SceneAssetSummary {
 	id: string;
-	sceneId: string;
+	projectId: string;
 	shotId: string | null;
 	type: "start_image" | "end_image" | "image";
 	status: "generating" | "done" | "error";

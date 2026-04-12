@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Image, Music, Video } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type {
 	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
@@ -226,17 +226,15 @@ function TabButton({
 // ---------------------------------------------------------------------------
 
 function ImagesTabContent({
-	scenes,
 	assets,
 	shots,
 }: {
-	scenes: Scene[];
 	assets: SceneAssetSummary[];
 	shots: Shot[];
 }) {
 	const labels = useMemo(
-		() => createEditorAssetLabeler({ scenes, shots }),
-		[scenes, shots],
+		() => createEditorAssetLabeler({ shots }),
+		[shots],
 	);
 
 	const filteredAssets = assets.filter(
@@ -274,19 +272,17 @@ function ImagesTabContent({
 // ---------------------------------------------------------------------------
 
 function VideosTabContent({
-	scenes,
 	shotVideoAssets,
 	transitionVideos,
 	shots,
 }: {
-	scenes: Scene[];
 	shotVideoAssets: ShotVideoSummary[];
 	transitionVideos: TransitionVideoSummary[];
 	shots: Shot[];
 }) {
 	const labels = useMemo(
-		() => createEditorAssetLabeler({ scenes, shots }),
-		[scenes, shots],
+		() => createEditorAssetLabeler({ shots }),
+		[shots],
 	);
 
 	const filteredTransitionVideos = transitionVideos.filter(
@@ -342,19 +338,17 @@ function VideosTabContent({
 // ---------------------------------------------------------------------------
 
 function AudioTabContent({
-	scenes,
 	shots,
 	voiceovers,
 	backgroundMusic,
 }: {
-	scenes: Scene[];
 	shots: Shot[];
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
 }) {
 	const labels = useMemo(
-		() => createEditorAssetLabeler({ scenes, shots }),
-		[scenes, shots],
+		() => createEditorAssetLabeler({ shots }),
+		[shots],
 	);
 	const filteredVoiceovers = voiceovers.filter(
 		(vo): vo is VoiceoverAssetSummary & { url: string } =>
@@ -407,7 +401,6 @@ function AudioTabContent({
 // ---------------------------------------------------------------------------
 
 interface ShotLibraryPanelProps {
-	scenes: Scene[];
 	shots: Shot[];
 	assets: SceneAssetSummary[];
 	shotVideoAssets: ShotVideoSummary[];
@@ -417,7 +410,6 @@ interface ShotLibraryPanelProps {
 }
 
 export function ShotLibraryPanel({
-	scenes,
 	shots,
 	assets,
 	shotVideoAssets,
@@ -510,11 +502,10 @@ export function ShotLibraryPanel({
 			{/* Tab content */}
 			<div className="flex-1 overflow-y-auto p-3">
 				{activeTab === "images" && (
-					<ImagesTabContent scenes={scenes} assets={assets} shots={shots} />
+					<ImagesTabContent assets={assets} shots={shots} />
 				)}
 				{activeTab === "videos" && (
 					<VideosTabContent
-						scenes={scenes}
 						shotVideoAssets={shotVideoAssets}
 						transitionVideos={transitionVideos}
 						shots={shots}
@@ -522,7 +513,6 @@ export function ShotLibraryPanel({
 				)}
 				{activeTab === "audio" && (
 					<AudioTabContent
-						scenes={scenes}
 						shots={shots}
 						voiceovers={voiceovers}
 						backgroundMusic={backgroundMusic}

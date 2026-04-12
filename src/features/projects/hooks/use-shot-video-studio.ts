@@ -32,7 +32,7 @@ import {
 	getShotVideoRunStatuses,
 	pollShotVideos,
 	selectShotVideo,
-} from "../scene-actions";
+} from "../shot-actions";
 import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
@@ -611,11 +611,7 @@ export function useShotVideoStudio({
 			});
 			const label = shotLabelMap.get(shotId);
 			const location = label ? formatShotLocation(label) : "Selected shot";
-			const sceneId =
-				storyShots.find((shot) => shot.id === shotId)?.sceneId ?? null;
-			const href = sceneId
-				? `/projects/${projectId}?scene=${sceneId}&shot=${shotId}&mediaTab=video`
-				: `/projects/${projectId}?shot=${shotId}&mediaTab=video`;
+			const href = `/projects/${projectId}?shot=${shotId}&mediaTab=video`;
 			trackedToastMetaRef.current.set(result.assetId, {
 				title: "Generating video",
 				location,

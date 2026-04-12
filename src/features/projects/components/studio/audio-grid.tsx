@@ -17,7 +17,7 @@ import type {
 	VoiceoverAssetSummary,
 } from "../../project-types";
 import { projectKeys } from "../../query-keys";
-import { deleteVoiceoverAsset, selectVoiceover } from "../../scene-actions";
+import { deleteVoiceoverAsset, selectVoiceover } from "../../audio-actions";
 
 type AudioAsset = VoiceoverAssetSummary | BackgroundMusicAssetSummary;
 

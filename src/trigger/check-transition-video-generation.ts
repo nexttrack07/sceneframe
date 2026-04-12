@@ -139,7 +139,7 @@ export const checkTransitionVideoGeneration = task({
 					};
 				}
 
-				const storageKey = `projects/${freshTv.sceneId}/transitions/${payload.transitionVideoId}.mp4`;
+				const storageKey = `projects/${freshTv.projectId}/transitions/${payload.transitionVideoId}.mp4`;
 				const storedUrl = await uploadFromUrl(
 					prediction.outputUrl,
 					storageKey,

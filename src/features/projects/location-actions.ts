@@ -15,7 +15,8 @@ import {
 	getImageOutputFormat,
 } from "@/features/projects/image-models";
 import { assertProjectOwner } from "@/lib/assert-project-owner.server";
-import { deleteObject, uploadBuffer, uploadFromUrl } from "@/lib/r2.server";
+import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
+import { uploadBuffer, uploadFromUrl } from "@/lib/r2.server";
 import { getUserApiKey } from "./image-generation-helpers.server";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
@@ -182,14 +183,8 @@ export const deleteLocation = createServerFn({ method: "POST" })
 				.filter((value): value is string => Boolean(value));
 		});
 
-		for (const storageKey of storageKeys) {
-			deleteObject(storageKey).catch((err) =>
-				console.error(
-					`Failed to delete location image from R2 (${storageKey})`,
-					err,
-				),
-			);
-		}
+		// R2 cleanup AFTER transaction commits — safe to delete now
+		await cleanupStorageKeys(storageKeys);
 	});
 
 export const listLocations = createServerFn({ method: "GET" })
@@ -572,12 +567,6 @@ export const removeLocationImage = createServerFn({ method: "POST" })
 			return image.storageKey;
 		});
 
-		if (storageKey) {
-			deleteObject(storageKey).catch((err) =>
-				console.error(
-					`Failed to delete location image from R2 (${storageKey})`,
-					err,
-				),
-			);
-		}
+		// R2 cleanup AFTER transaction commits — safe to delete now
+		await cleanupStorageKeys([storageKey]);
 	});

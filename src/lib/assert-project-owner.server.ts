@@ -2,7 +2,7 @@ import { auth } from "@clerk/tanstack-react-start/server";
 import { redirect } from "@tanstack/react-router";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db/index";
-import { assets, projects, scenes, shots } from "@/db/schema";
+import { assets, projects, shots } from "@/db/schema";
 
 type FailureMode = "redirect" | "error";
 
@@ -40,69 +40,8 @@ export async function assertProjectOwner(
 }
 
 /**
- * Asserts that the current authenticated user owns the project the scene
- * belongs to.
- */
-export async function assertSceneOwner(
-	sceneId: string,
-	mode: FailureMode = "error",
-) {
-	const { userId } = await auth();
-	if (!userId) fail(mode, "Unauthenticated");
-
-	const scene = await db.query.scenes.findFirst({
-		where: and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)),
-	});
-	if (!scene) fail(mode, "Scene not found");
-
-	const project = await db.query.projects.findFirst({
-		where: and(
-			eq(projects.id, scene.projectId),
-			eq(projects.userId, userId),
-			isNull(projects.deletedAt),
-		),
-	});
-	if (!project) fail(mode, "Unauthorized");
-
-	return { userId, scene, project };
-}
-
-/**
- * Asserts that the current authenticated user owns the project the asset
- * belongs to (asset → scene → project chain).
- */
-export async function assertAssetOwner(
-	assetId: string,
-	mode: FailureMode = "error",
-) {
-	const { userId } = await auth();
-	if (!userId) fail(mode, "Unauthenticated");
-
-	const asset = await db.query.assets.findFirst({
-		where: and(eq(assets.id, assetId), isNull(assets.deletedAt)),
-	});
-	if (!asset) fail(mode, "Asset not found");
-
-	const scene = await db.query.scenes.findFirst({
-		where: and(eq(scenes.id, asset.sceneId), isNull(scenes.deletedAt)),
-	});
-	if (!scene) fail(mode, "Scene not found");
-
-	const project = await db.query.projects.findFirst({
-		where: and(
-			eq(projects.id, scene.projectId),
-			eq(projects.userId, userId),
-			isNull(projects.deletedAt),
-		),
-	});
-	if (!project) fail(mode, "Unauthorized");
-
-	return { userId, asset, scene, project };
-}
-
-/**
  * Asserts that the current authenticated user owns the project the shot
- * belongs to (shot → scene → project chain).
+ * belongs to (shot → project direct FK).
  */
 export async function assertShotOwner(
 	shotId: string,
@@ -116,29 +55,29 @@ export async function assertShotOwner(
 	});
 	if (!shot) fail(mode, "Shot not found");
 
-	const scene = await db.query.scenes.findFirst({
-		where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
-	});
-	if (!scene) fail(mode, "Scene not found");
-
 	const project = await db.query.projects.findFirst({
 		where: and(
-			eq(projects.id, scene.projectId),
+			eq(projects.id, shot.projectId),
 			eq(projects.userId, userId),
 			isNull(projects.deletedAt),
 		),
 	});
 	if (!project) fail(mode, "Unauthorized");
 
-	return { userId, shot, scene, project };
+	return { userId, shot, project };
 }
 
 /**
  * Asserts that the current authenticated user owns the project the asset
- * belongs to via its shot (asset → shot → scene → project chain).
- * Only traverses the shot path if the asset has a shotId.
+ * belongs to. Works for ALL asset types — project-scoped (voiceover, music,
+ * sfx) and shot-scoped (images, videos).
+ *
+ * If the asset has a shotId, the associated shot is fetched and returned.
+ * If the asset is project-scoped (shotId is null), shot is returned as null.
+ *
+ * This replaces the old split between assertAssetOwner and assertAssetOwnerViaShot.
  */
-export async function assertAssetOwnerViaShot(
+export async function assertAssetOwner(
 	assetId: string,
 	mode: FailureMode = "error",
 ) {
@@ -150,26 +89,22 @@ export async function assertAssetOwnerViaShot(
 	});
 	if (!asset) fail(mode, "Asset not found");
 
-	if (!asset.shotId) fail(mode, "Asset has no shot");
-
-	const shot = await db.query.shots.findFirst({
-		where: and(eq(shots.id, asset.shotId), isNull(shots.deletedAt)),
-	});
-	if (!shot) fail(mode, "Shot not found");
-
-	const scene = await db.query.scenes.findFirst({
-		where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
-	});
-	if (!scene) fail(mode, "Scene not found");
-
+	// Direct project ownership check — works regardless of shotId
 	const project = await db.query.projects.findFirst({
 		where: and(
-			eq(projects.id, scene.projectId),
+			eq(projects.id, asset.projectId),
 			eq(projects.userId, userId),
 			isNull(projects.deletedAt),
 		),
 	});
 	if (!project) fail(mode, "Unauthorized");
 
-	return { userId, asset, shot, scene, project };
+	// Fetch the shot if the asset is shot-scoped
+	const shot = asset.shotId
+		? ((await db.query.shots.findFirst({
+				where: and(eq(shots.id, asset.shotId), isNull(shots.deletedAt)),
+			})) ?? null)
+		: null;
+
+	return { userId, asset, project, shot };
 }

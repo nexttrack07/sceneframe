@@ -9,16 +9,16 @@ import { db } from "@/db/index";
 import {
 	assets,
 	referenceImages,
-	scenes,
 	shots,
 	transitionVideos,
 } from "@/db/schema";
 import {
-	assertAssetOwnerViaShot,
-	assertSceneOwner,
+	assertAssetOwner,
+	assertProjectOwner,
 	assertShotOwner,
 } from "@/lib/assert-project-owner.server";
-import { copyObject, deleteObject, uploadBuffer } from "@/lib/r2.server";
+import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
+import { copyObject, uploadBuffer } from "@/lib/r2.server";
 import { generateShotImageAsset, startShotVideoGeneration } from "@/trigger";
 import {
 	buildLanePrompt,
@@ -180,35 +180,16 @@ function loadLocationPromptContext(args: {
 // ---------------------------------------------------------------------------
 
 async function recomputeProjectTimestamps(projectId: string) {
-	// Load all non-deleted shots for the project, ordered by scene.order ASC, shot.order ASC
-	const projectScenes = await db
-		.select({ id: scenes.id, order: scenes.order })
-		.from(scenes)
-		.where(and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)))
-		.orderBy(asc(scenes.order));
-
-	if (projectScenes.length === 0) return;
-
-	const sceneIds = projectScenes.map((s) => s.id);
+	// Load all non-deleted shots for the project, ordered by shot.order ASC
 	const allShots = await db
 		.select({
 			id: shots.id,
-			sceneId: shots.sceneId,
 			order: shots.order,
 			durationSec: shots.durationSec,
 		})
 		.from(shots)
-		.where(and(inArray(shots.sceneId, sceneIds), isNull(shots.deletedAt)))
+		.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
 		.orderBy(asc(shots.order));
-
-	// Sort shots by scene order then shot order
-	const sceneOrderMap = new Map(projectScenes.map((s, i) => [s.id, i]));
-	allShots.sort((a, b) => {
-		const sceneOrdA = sceneOrderMap.get(a.sceneId) ?? 0;
-		const sceneOrdB = sceneOrderMap.get(b.sceneId) ?? 0;
-		if (sceneOrdA !== sceneOrdB) return sceneOrdA - sceneOrdB;
-		return a.order - b.order;
-	});
 
 	// Compute cumulative timestamps and apply in a single bulk UPDATE
 	let cursor = 0;
@@ -267,25 +248,16 @@ function mapTriggerRunStatus(run: {
 // ---------------------------------------------------------------------------
 
 async function reconcileGeneratingImageAssets(args: {
-	scope: "scene" | "shot";
+	scope: "shot";
 	scopeId: string;
 }) {
 	const generatingAssets = await db.query.assets.findMany({
-		where:
-			args.scope === "scene"
-				? and(
-						eq(assets.sceneId, args.scopeId),
-						eq(assets.stage, "images"),
-						isNull(assets.shotId),
-						eq(assets.status, "generating"),
-						isNull(assets.deletedAt),
-					)
-				: and(
-						eq(assets.shotId, args.scopeId),
-						eq(assets.stage, "images"),
-						eq(assets.status, "generating"),
-						isNull(assets.deletedAt),
-					),
+		where: and(
+			eq(assets.shotId, args.scopeId),
+			eq(assets.stage, "images"),
+			eq(assets.status, "generating"),
+			isNull(assets.deletedAt),
+		),
 		orderBy: desc(assets.createdAt),
 	});
 
@@ -366,9 +338,9 @@ export const updateShot = createServerFn({ method: "POST" })
 				if (
 					!Number.isFinite(data.durationSec) ||
 					data.durationSec < 1 ||
-					data.durationSec > 15
+					data.durationSec > 10
 				) {
-					throw new Error("durationSec must be between 1 and 15");
+					throw new Error("durationSec must be between 1 and 10");
 				}
 			}
 			return data;
@@ -378,7 +350,7 @@ export const updateShot = createServerFn({ method: "POST" })
 		async ({
 			data: { shotId, description, shotType, shotSize, durationSec },
 		}) => {
-			const { shot, scene } = await assertShotOwner(shotId);
+			const { shot, project } = await assertShotOwner(shotId);
 
 			const hasUpdates =
 				description !== undefined ||
@@ -398,7 +370,7 @@ export const updateShot = createServerFn({ method: "POST" })
 			}
 
 			if (durationSec !== undefined && durationSec !== shot.durationSec) {
-				await recomputeProjectTimestamps(scene.projectId);
+				await recomputeProjectTimestamps(project.id);
 			}
 		},
 	);
@@ -410,11 +382,11 @@ export const updateShot = createServerFn({ method: "POST" })
 export const deleteShot = createServerFn({ method: "POST" })
 	.inputValidator((data: { shotId: string }) => data)
 	.handler(async ({ data: { shotId } }) => {
-		const { scene } = await assertShotOwner(shotId);
+		const { project } = await assertShotOwner(shotId);
 
 		const now = new Date();
 
-		// Collect storageKeys for R2 cleanup
+		// Collect R2 keys BEFORE the transaction so cleanup runs safely after commit
 		const shotAssets = await db
 			.select({ storageKey: assets.storageKey })
 			.from(assets)
@@ -422,21 +394,7 @@ export const deleteShot = createServerFn({ method: "POST" })
 		const storageKeys = shotAssets
 			.map((r) => r.storageKey)
 			.filter((k): k is string => k !== null);
-		const assetR2Results = await Promise.allSettled(
-			storageKeys.map((key) => deleteObject(key)),
-		);
-		assetR2Results.forEach((result, i) => {
-			if (result.status === "rejected") {
-				console.error(
-					"R2 deleteObject failed for key:",
-					storageKeys[i],
-					result.reason,
-				);
-			}
-		});
 
-		// Soft-delete shot's assets — done inside transaction below
-		// Clean up R2 storage for transition videos involving this shot
 		const tvToDelete = await db
 			.select({ storageKey: transitionVideos.storageKey })
 			.from(transitionVideos)
@@ -452,18 +410,6 @@ export const deleteShot = createServerFn({ method: "POST" })
 		const tvStorageKeys = tvToDelete
 			.map((r) => r.storageKey)
 			.filter((k): k is string => k !== null);
-		const tvR2Results = await Promise.allSettled(
-			tvStorageKeys.map((key) => deleteObject(key)),
-		);
-		tvR2Results.forEach((result, i) => {
-			if (result.status === "rejected") {
-				console.error(
-					"R2 deleteObject failed for key:",
-					tvStorageKeys[i],
-					result.reason,
-				);
-			}
-		});
 
 		// Wrap all soft-deletes in a single transaction for consistency
 		await db.transaction(async (tx) => {
@@ -494,7 +440,10 @@ export const deleteShot = createServerFn({ method: "POST" })
 				.where(eq(shots.id, shotId));
 		});
 
-		await recomputeProjectTimestamps(scene.projectId);
+		// R2 cleanup AFTER transaction commits — safe to delete now
+		await cleanupStorageKeys([...storageKeys, ...tvStorageKeys]);
+
+		await recomputeProjectTimestamps(project.id);
 	});
 
 // ---------------------------------------------------------------------------
@@ -510,13 +459,13 @@ export const cloneShot = createServerFn({ method: "POST" })
 		return data;
 	})
 	.handler(async ({ data: { shotId, placement } }) => {
-		const { scene, shot } = await assertShotOwner(shotId);
+		const { project, shot } = await assertShotOwner(shotId);
 
 		// Get sibling shots to calculate insertion order
 		const siblingShots = await db
 			.select({ id: shots.id, order: shots.order })
 			.from(shots)
-			.where(and(eq(shots.sceneId, shot.sceneId), isNull(shots.deletedAt)))
+			.where(and(eq(shots.projectId, shot.projectId), isNull(shots.deletedAt)))
 			.orderBy(asc(shots.order));
 
 		const currentIdx = siblingShots.findIndex((s) => s.id === shotId);
@@ -533,7 +482,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 		const [newShot] = await db
 			.insert(shots)
 			.values({
-				sceneId: shot.sceneId,
+				projectId: shot.projectId,
 				order: newOrder,
 				description: shot.description,
 				shotType: shot.shotType,
@@ -560,7 +509,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 			const copyResults = await Promise.allSettled(
 				sourceAssets.map(async (asset, i) => {
 					const ext = asset.storageKey?.split(".").pop() ?? "webp";
-					const newStorageKey = `projects/${scene.projectId}/scenes/${scene.id}/shots/${newShot.id}/images/${newBatchId}/image-${i + 1}.${ext}`;
+					const newStorageKey = `projects/${project.id}/shots/${newShot.id}/images/${newBatchId}/image-${i + 1}.${ext}`;
 
 					let newUrl = asset.url;
 					if (asset.storageKey) {
@@ -573,7 +522,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 					if (asset.thumbnailStorageKey) {
 						const thumbExt =
 							asset.thumbnailStorageKey.split(".").pop() ?? "webp";
-						newThumbKey = `projects/${scene.projectId}/scenes/${scene.id}/shots/${newShot.id}/images/${newBatchId}/thumb-${i + 1}.${thumbExt}`;
+						newThumbKey = `projects/${project.id}/shots/${newShot.id}/images/${newBatchId}/thumb-${i + 1}.${thumbExt}`;
 						newThumbUrl = await copyObject(
 							asset.thumbnailStorageKey,
 							newThumbKey,
@@ -581,7 +530,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 					}
 
 					return {
-						sceneId: shot.sceneId,
+						projectId: shot.projectId,
 						shotId: newShot.id,
 						type: asset.type,
 						stage: asset.stage,
@@ -626,7 +575,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 			}
 		}
 
-		await recomputeProjectTimestamps(scene.projectId);
+		await recomputeProjectTimestamps(project.id);
 	});
 
 // ---------------------------------------------------------------------------
@@ -636,7 +585,7 @@ export const cloneShot = createServerFn({ method: "POST" })
 export const addShot = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: {
-			sceneId: string;
+			projectId: string;
 			description: string;
 			shotType: ShotType;
 			shotSize?: ShotSize;
@@ -654,14 +603,14 @@ export const addShot = createServerFn({ method: "POST" })
 	)
 	.handler(
 		async ({
-			data: { sceneId, description, shotType, shotSize, afterOrder },
+			data: { projectId, description, shotType, shotSize, afterOrder },
 		}) => {
-			const { scene } = await assertSceneOwner(sceneId);
+			await assertProjectOwner(projectId, "error");
 
 			const newOrder = afterOrder + 0.5;
 
 			await db.insert(shots).values({
-				sceneId,
+				projectId,
 				order: newOrder,
 				description,
 				shotType,
@@ -669,7 +618,7 @@ export const addShot = createServerFn({ method: "POST" })
 				durationSec: 5,
 			});
 
-			await recomputeProjectTimestamps(scene.projectId);
+			await recomputeProjectTimestamps(projectId);
 		},
 	);
 
@@ -679,7 +628,7 @@ export const addShot = createServerFn({ method: "POST" })
 
 export const reorderShot = createServerFn({ method: "POST" })
 	.inputValidator(
-		(data: { shotId: string; newOrder: number; targetSceneId?: string }) => {
+		(data: { shotId: string; newOrder: number }) => {
 			if (
 				typeof data.newOrder !== "number" ||
 				!Number.isFinite(data.newOrder)
@@ -689,29 +638,14 @@ export const reorderShot = createServerFn({ method: "POST" })
 			return data;
 		},
 	)
-	.handler(async ({ data: { shotId, newOrder, targetSceneId } }) => {
-		const { scene } = await assertShotOwner(shotId);
+	.handler(async ({ data: { shotId, newOrder } }) => {
+		const { project } = await assertShotOwner(shotId);
 
-		if (targetSceneId) {
-			const { scene: targetScene } = await assertSceneOwner(targetSceneId);
-			if (targetScene.projectId !== scene.projectId) {
-				throw new Error("Cannot move shot to a scene in a different project");
-			}
-			await db
-				.update(shots)
-				.set({ order: newOrder, sceneId: targetSceneId })
-				.where(eq(shots.id, shotId));
-			// Use targetScene.projectId — after the move the shot belongs to targetScene.
-			// The cross-project guard above ensures both are the same project,
-			// but being explicit here avoids confusion if that guard is ever changed.
-			await recomputeProjectTimestamps(targetScene.projectId);
-		} else {
-			await db
-				.update(shots)
-				.set({ order: newOrder })
-				.where(eq(shots.id, shotId));
-			await recomputeProjectTimestamps(scene.projectId);
-		}
+		await db
+			.update(shots)
+			.set({ order: newOrder })
+			.where(eq(shots.id, shotId));
+		await recomputeProjectTimestamps(project.id);
 	});
 
 // ---------------------------------------------------------------------------
@@ -754,18 +688,18 @@ export const generateShotImagePrompt = createServerFn({ method: "POST" })
 				assetTypeOverride,
 			},
 		}) => {
-			const { userId, shot, scene, project } = await assertShotOwner(shotId);
+			const { userId, shot, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
 			const resolvedAssetType = resolvePromptAssetType({
 				override: assetTypeOverride,
-				text: `${shot.description}\n${scene.description}\n${referenceImageUrls.join("\n")}`,
+				text: `${shot.description}\n${referenceImageUrls.join("\n")}`,
 				medium: "image",
 			});
 
-			// Load all shots in this scene for context
+			// Load all shots in this project for context
 			const sceneShots = await db.query.shots.findMany({
-				where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+				where: and(eq(shots.projectId, project.id), isNull(shots.deletedAt)),
 				orderBy: asc(shots.order),
 			});
 			const shotIdx = sceneShots.findIndex((s) => s.id === shotId);
@@ -824,9 +758,6 @@ Return ONLY the final prompt, nothing else.`;
 				useProjectContext
 					? `PROJECT CONTEXT:\n${projectContext || `Project: ${project.name}`}`
 					: null,
-				useProjectContext
-					? `SCENE CONTEXT:\nScene description: ${scene.description}`
-					: null,
 				usePrevShotContext && prevShot
 					? `PREVIOUS SHOT: ${prevShot.description}`
 					: null,
@@ -850,8 +781,8 @@ Return ONLY the final prompt, nothing else.`;
 					replicate,
 					medium: "image",
 					projectName: project.name,
-					sceneTitle: scene.title,
-					sceneDescription: scene.description,
+					sceneTitle: null,
+					sceneDescription: shot.description,
 					projectContext: useProjectContext ? projectContext : null,
 					shotContext: [
 						prevShot ? `Previous shot: ${prevShot.description}` : null,
@@ -954,18 +885,18 @@ export const enhanceShotImagePrompt = createServerFn({ method: "POST" })
 				assetTypeOverride,
 			},
 		}) => {
-			const { userId, shot, scene, project } = await assertShotOwner(shotId);
+			const { userId, shot, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
 			const resolvedAssetType = resolvePromptAssetType({
 				override: assetTypeOverride,
-				text: `${shot.description}\n${userPrompt}\n${scene.description}`,
+				text: `${shot.description}\n${userPrompt}`,
 				medium: "image",
 			});
 
 			// Load adjacent shots for context
 			const sceneShots = await db.query.shots.findMany({
-				where: and(eq(shots.sceneId, scene.id), isNull(shots.deletedAt)),
+				where: and(eq(shots.projectId, project.id), isNull(shots.deletedAt)),
 				orderBy: asc(shots.order),
 			});
 			const shotIdx = sceneShots.findIndex((s) => s.id === shotId);
@@ -1001,7 +932,6 @@ Rules:
 - If scale matters, preserve it exactly
 ${getPrecisionPromptInstructions({ type: resolvedAssetType, medium: "image" })}
 ${useProjectContext && projectContext ? `\nProject context:\n${projectContext}` : ""}
-${useProjectContext ? `Scene: ${scene.description}` : ""}
 Shot: ${shot.description}
 ${usePrevShotContext && prevShot ? `\nPrevious shot: ${prevShot.description}` : ""}
 ${usePrevShotContext && nextShot ? `\nNext shot: ${nextShot.description}` : ""}
@@ -1019,8 +949,7 @@ Return ONLY the final prompt, nothing else.`;
 					replicate,
 					medium: "image",
 					projectName: project.name,
-					sceneTitle: scene.title,
-					sceneDescription: scene.description,
+					sceneDescription: shot.description,
 					projectContext: useProjectContext ? projectContext : null,
 					shotContext: [
 						prevShot ? `Previous shot: ${prevShot.description}` : null,
@@ -1129,7 +1058,7 @@ export const generateShotImages = createServerFn({ method: "POST" })
 				referenceImageUrls,
 			},
 		}) => {
-			const { userId, shot, scene, project } = await assertShotOwner(shotId);
+			const { userId, shot, project } = await assertShotOwner(shotId);
 			const settings = normalizeProjectSettings(project.settings);
 			const [characterPromptContext, locationPromptContext] = await Promise.all(
 				[
@@ -1197,7 +1126,7 @@ export const generateShotImages = createServerFn({ method: "POST" })
 				.insert(assets)
 				.values(
 					Array.from({ length: generationCount }).map(() => ({
-						sceneId: scene.id,
+						projectId: project.id,
 						shotId: shot.id,
 						type,
 						stage: "images" as const,
@@ -1233,7 +1162,6 @@ export const generateShotImages = createServerFn({ method: "POST" })
 						assetId: placeholder.id,
 						userId,
 						projectId: project.id,
-						sceneId: scene.id,
 						shotId: shot.id,
 						generationId: placeholder.generationId ?? batchId,
 						batchId,
@@ -1564,7 +1492,7 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 	)
 	.handler(
 		async ({ data: { shotId, prompt, videoSettings, referenceImageIds } }) => {
-			const { userId, shot, scene } = await assertShotOwner(shotId);
+			const { userId, shot } = await assertShotOwner(shotId);
 			const normalizedVideo = normalizeVideoDefaults(videoSettings);
 			const safeReferenceImageIds = Array.isArray(referenceImageIds)
 				? referenceImageIds.filter((id): id is string => typeof id === "string")
@@ -1596,7 +1524,7 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 			const [placeholder] = await db
 				.insert(assets)
 				.values({
-					sceneId: scene.id,
+					projectId: shot.projectId,
 					shotId: shot.id,
 					type: "video" as const,
 					stage: "video" as const,
@@ -1635,7 +1563,7 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 export const pollVideoAsset = createServerFn({ method: "POST" })
 	.inputValidator((data: { assetId: string }) => data)
 	.handler(async ({ data: { assetId } }) => {
-		const { asset } = await assertAssetOwnerViaShot(assetId);
+		const { asset } = await assertAssetOwner(assetId);
 
 		if (asset.status === "done")
 			return { status: "done" as const, url: asset.url };
@@ -1652,7 +1580,10 @@ export const pollVideoAsset = createServerFn({ method: "POST" })
 export const selectShotAsset = createServerFn({ method: "POST" })
 	.inputValidator((data: { assetId: string }) => data)
 	.handler(async ({ data: { assetId } }) => {
-		const { asset, shot } = await assertAssetOwnerViaShot(assetId);
+		const { asset, shot } = await assertAssetOwner(assetId);
+		if (!shot) {
+			throw new Error("Asset is not attached to a shot");
+		}
 
 		if (!["start_image", "end_image", "image"].includes(asset.type)) {
 			throw new Error("Only image assets can be selected here");
@@ -1726,7 +1657,7 @@ async function generateAdjacentTransitionPromptsForShot(shotId: string) {
 	if (!shotRow) return;
 
 	const sceneShots = await db.query.shots.findMany({
-		where: and(eq(shots.sceneId, shotRow.sceneId), isNull(shots.deletedAt)),
+		where: and(eq(shots.projectId, shotRow.projectId), isNull(shots.deletedAt)),
 		orderBy: asc(shots.order),
 	});
 	const shotIndex = sceneShots.findIndex(
@@ -1782,7 +1713,7 @@ export const uploadShotReferenceImage = createServerFn({ method: "POST" })
 		(data: { shotId: string; fileBase64: string; fileName: string }) => data,
 	)
 	.handler(async ({ data: { shotId, fileBase64, fileName } }) => {
-		const { project, scene } = await assertShotOwner(shotId);
+		const { project } = await assertShotOwner(shotId);
 
 		// Decode base64 to buffer
 		const base64Data = fileBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -1807,7 +1738,7 @@ export const uploadShotReferenceImage = createServerFn({ method: "POST" })
 
 		// Generate unique storage key
 		const uniqueId = randomUUID();
-		const storageKey = `projects/${project.id}/scenes/${scene.id}/shots/${shotId}/references/${uniqueId}.${ext}`;
+		const storageKey = `projects/${project.id}/shots/${shotId}/references/${uniqueId}.${ext}`;
 
 		// Upload to R2
 		const url = await uploadBuffer(buffer, storageKey, contentType);
@@ -1844,7 +1775,7 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 				shotId,
 				userPrompt,
 				useProjectContext = true,
-				usePrevShotContext = true,
+				usePrevShotContext: _usePrevShotContext = true,
 				referenceImageIds = [],
 				useProjectCharacters = true,
 				excludedCharacterIds = [],
@@ -1853,12 +1784,12 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 				assetTypeOverride,
 			},
 		}) => {
-			const { userId, shot, project, scene } = await assertShotOwner(shotId);
+			const { userId, shot, project } = await assertShotOwner(shotId);
 			const apiKey = await getUserApiKey(userId);
 			const settings = normalizeProjectSettings(project.settings);
 			const resolvedAssetType = resolvePromptAssetType({
 				override: assetTypeOverride,
-				text: `${shot.description}\n${userPrompt}\n${scene.description}`,
+				text: `${shot.description}\n${userPrompt}`,
 				medium: "video",
 			});
 
@@ -1893,10 +1824,7 @@ export const enhanceShotVideoPrompt = createServerFn({ method: "POST" })
 						.join("\n")
 				: null;
 
-			const sceneCtx =
-				usePrevShotContext && scene.description
-					? `Scene: ${scene.description}`
-					: null;
+			const sceneCtx = null;
 
 			const contextBlock = [
 				useProjectContext
@@ -1967,8 +1895,7 @@ Return ONLY the final prompt, nothing else.`;
 					replicate,
 					medium: "video",
 					projectName: project.name,
-					sceneTitle: scene.title,
-					sceneDescription: scene.description,
+					sceneDescription: shot.description,
 					projectContext: projectContextLines,
 					shotContext: `Current shot: ${shot.description}`,
 				}),
@@ -2258,7 +2185,10 @@ export const getShotVideoRunStatuses = createServerFn({ method: "POST" })
 export const selectShotVideo = createServerFn({ method: "POST" })
 	.inputValidator((data: { videoId: string }) => data)
 	.handler(async ({ data: { videoId } }) => {
-		const { asset, shot } = await assertAssetOwnerViaShot(videoId);
+		const { asset, shot } = await assertAssetOwner(videoId);
+		if (!shot) {
+			throw new Error("Asset is not attached to a shot");
+		}
 
 		if (asset.type !== "video" || asset.stage !== "video") {
 			throw new Error("Only video assets can be selected here");
@@ -2294,20 +2224,17 @@ export const selectShotVideo = createServerFn({ method: "POST" })
 export const deleteShotVideo = createServerFn({ method: "POST" })
 	.inputValidator((data: { videoId: string }) => data)
 	.handler(async ({ data: { videoId } }) => {
-		const { asset } = await assertAssetOwnerViaShot(videoId);
+		const { asset } = await assertAssetOwner(videoId);
 
 		if (asset.type !== "video" || asset.stage !== "video") {
 			throw new Error("Only video assets can be deleted here");
-		}
-
-		if (asset.storageKey) {
-			await deleteObject(asset.storageKey).catch((err) =>
-				console.error("R2 deleteObject failed for key:", asset.storageKey, err),
-			);
 		}
 
 		await db
 			.update(assets)
 			.set({ deletedAt: new Date() })
 			.where(eq(assets.id, videoId));
+
+		// R2 cleanup AFTER the DB soft-delete
+		await cleanupStorageKeys([asset.storageKey]);
 	});

@@ -1,4 +1,4 @@
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type {
 	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
@@ -21,7 +21,6 @@ function genId(prefix: string, id: string): string {
 }
 
 export function buildEditorState({
-	scenes,
 	shots,
 	assets,
 	shotVideoAssets,
@@ -29,7 +28,6 @@ export function buildEditorState({
 	voiceovers,
 	backgroundMusic,
 }: {
-	scenes: Scene[];
 	shots: Shot[];
 	assets: SceneAssetSummary[];
 	shotVideoAssets: ShotVideoSummary[];
@@ -39,7 +37,7 @@ export function buildEditorState({
 }): UndoableState {
 	const itemsMap: Record<string, EditorStarterItem> = {};
 	const assetsMap: Record<string, EditorStarterAsset> = {};
-	const labels = createEditorAssetLabeler({ scenes, shots });
+	const labels = createEditorAssetLabeler({ shots });
 
 	// --- Video track: transition videos placed sequentially ---
 	const videoItemIds: string[] = [];

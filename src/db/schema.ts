@@ -17,6 +17,7 @@ import type {
 	MotionGraphicPreset,
 	MotionGraphicSpec,
 	ProjectSettings,
+	ScriptDraft,
 	ShotSize,
 } from "@/features/projects/project-types";
 
@@ -60,8 +61,10 @@ export const projects = pgTable(
 			.$type<"idle" | "generating" | "done" | "error">(),
 		scriptJobId: text("script_job_id"),
 		settings: jsonb("settings").$type<ProjectSettings | null>(),
+		scriptDraft: jsonb("script_draft").$type<ScriptDraft | null>(),
 		// biome-ignore lint/suspicious/noExplicitAny: TanStack route serialization in this repo expects a permissive JSON object shape here
 		editorState: jsonb("editor_state").$type<Record<string, any> | null>(),
+		workshopBusyUntil: timestamp("workshop_busy_until", { withTimezone: true }),
 		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.notNull()
@@ -82,50 +85,6 @@ export const projects = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// scenes
-// ---------------------------------------------------------------------------
-
-export const scenes = pgTable(
-	"scenes",
-	{
-		id: uuid("id").primaryKey().defaultRandom(),
-		projectId: uuid("project_id")
-			.notNull()
-			.references(() => projects.id),
-		order: doublePrecision("order").notNull(),
-		title: text("title"),
-		description: text("description").notNull(),
-		startFramePrompt: text("start_frame_prompt"),
-		endFramePrompt: text("end_frame_prompt"),
-		stage: text("stage")
-			.notNull()
-			.default("script")
-			.$type<"script" | "images" | "video" | "audio">(),
-		deletedAt: timestamp("deleted_at", { withTimezone: true }),
-		createdAt: timestamp("created_at", { withTimezone: true })
-			.notNull()
-			.defaultNow(),
-		updatedAt: timestamp("updated_at", { withTimezone: true })
-			.notNull()
-			.defaultNow()
-			.$onUpdateFn(() => new Date()),
-	},
-	(table) => [
-		index("idx_scenes_project_id").on(table.projectId),
-		index("idx_scenes_project_stage").on(table.projectId, table.stage),
-		uniqueIndex("idx_scenes_project_order")
-			.on(table.projectId, table.order)
-			.where(sql`${table.deletedAt} IS NULL`),
-		index("idx_scenes_deleted").on(table.deletedAt),
-		check(
-			"scenes_stage_check",
-			sql`${table.stage} IN ('script', 'images', 'video', 'audio')`,
-		),
-		check("scenes_description_check", sql`trim(${table.description}) != ''`),
-	],
-);
-
-// ---------------------------------------------------------------------------
 // shots
 // ---------------------------------------------------------------------------
 
@@ -133,9 +92,9 @@ export const shots = pgTable(
 	"shots",
 	{
 		id: uuid("id").primaryKey().defaultRandom(),
-		sceneId: uuid("scene_id")
+		projectId: uuid("project_id")
 			.notNull()
-			.references(() => scenes.id),
+			.references(() => projects.id),
 		order: doublePrecision("order").notNull(),
 		description: text("description").notNull(),
 		shotType: text("shot_type").notNull().$type<"talking" | "visual">(),
@@ -154,9 +113,9 @@ export const shots = pgTable(
 			.$onUpdateFn(() => new Date()),
 	},
 	(table) => [
-		index("idx_shots_scene_id").on(table.sceneId),
+		index("idx_shots_project_id").on(table.projectId),
 		index("idx_shots_deleted").on(table.deletedAt),
-		index("idx_shots_scene_order").on(table.sceneId, table.order),
+		index("idx_shots_project_order").on(table.projectId, table.order),
 		check(
 			"shots_shot_type_check",
 			sql`${table.shotType} IN ('talking', 'visual')`,
@@ -178,9 +137,9 @@ export const assets = pgTable(
 	"assets",
 	{
 		id: uuid("id").primaryKey().defaultRandom(),
-		sceneId: uuid("scene_id")
+		projectId: uuid("project_id")
 			.notNull()
-			.references(() => scenes.id),
+			.references(() => projects.id),
 		shotId: uuid("shot_id").references(() => shots.id),
 		type: text("type")
 			.notNull()
@@ -224,25 +183,19 @@ export const assets = pgTable(
 			.$onUpdateFn(() => new Date()),
 	},
 	(table) => [
-		index("idx_assets_scene_id").on(table.sceneId),
-		index("idx_assets_scene_stage").on(table.sceneId, table.stage),
+		index("idx_assets_project_id").on(table.projectId),
+		index("idx_assets_project_stage").on(table.projectId, table.stage),
 		index("idx_assets_batch_id").on(table.batchId),
 		index("idx_assets_deleted").on(table.deletedAt),
-		// One selected scene-level image asset per scene.
-		uniqueIndex("idx_assets_scene_image_selected")
-			.on(table.sceneId)
-			.where(
-				sql`${table.isSelected} = true AND ${table.shotId} IS NULL AND ${table.stage} = 'images' AND ${table.deletedAt} IS NULL`,
-			),
-		// One selected voiceover per scene.
-		uniqueIndex("idx_assets_scene_voiceover_selected")
-			.on(table.sceneId)
+		// One selected voiceover per project.
+		uniqueIndex("idx_assets_project_voiceover_selected")
+			.on(table.projectId)
 			.where(
 				sql`${table.isSelected} = true AND ${table.type} = 'voiceover' AND ${table.deletedAt} IS NULL`,
 			),
-		// One selected background-music track per scene.
-		uniqueIndex("idx_assets_scene_background_music_selected")
-			.on(table.sceneId)
+		// One selected background-music track per project.
+		uniqueIndex("idx_assets_project_background_music_selected")
+			.on(table.projectId)
 			.where(
 				sql`${table.isSelected} = true AND ${table.type} = 'background_music' AND ${table.deletedAt} IS NULL`,
 			),
@@ -285,9 +238,9 @@ export const transitionVideos = pgTable(
 	"transition_videos",
 	{
 		id: uuid("id").primaryKey().defaultRandom(),
-		sceneId: uuid("scene_id")
+		projectId: uuid("project_id")
 			.notNull()
-			.references(() => scenes.id),
+			.references(() => projects.id),
 		fromShotId: uuid("from_shot_id")
 			.notNull()
 			.references(() => shots.id),
@@ -320,7 +273,7 @@ export const transitionVideos = pgTable(
 			.$onUpdateFn(() => new Date()),
 	},
 	(table) => [
-		index("idx_transition_videos_scene_id").on(table.sceneId),
+		index("idx_transition_videos_project_id").on(table.projectId),
 		index("idx_transition_videos_from_shot").on(table.fromShotId),
 		index("idx_transition_videos_to_shot").on(table.toShotId),
 		index("idx_transition_videos_deleted").on(table.deletedAt),
@@ -347,9 +300,9 @@ export const motionGraphics = pgTable(
 	"motion_graphics",
 	{
 		id: uuid("id").primaryKey().defaultRandom(),
-		sceneId: uuid("scene_id")
+		projectId: uuid("project_id")
 			.notNull()
-			.references(() => scenes.id),
+			.references(() => projects.id),
 		shotId: uuid("shot_id")
 			.notNull()
 			.references(() => shots.id),
@@ -367,7 +320,7 @@ export const motionGraphics = pgTable(
 			.$onUpdateFn(() => new Date()),
 	},
 	(table) => [
-		index("idx_motion_graphics_scene_id").on(table.sceneId),
+		index("idx_motion_graphics_project_id").on(table.projectId),
 		index("idx_motion_graphics_shot_id").on(table.shotId),
 		index("idx_motion_graphics_deleted").on(table.deletedAt),
 		check(
@@ -393,12 +346,16 @@ export const messages = pgTable(
 			.references(() => projects.id),
 		role: text("role").notNull().$type<"system" | "user" | "assistant">(),
 		content: text("content").notNull(),
+		clientMessageId: uuid("client_message_id"),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.notNull()
 			.defaultNow(),
 	},
 	(table) => [
 		index("idx_messages_project_id").on(table.projectId),
+		uniqueIndex("uq_messages_project_client_msg")
+			.on(table.projectId, table.clientMessageId)
+			.where(sql`${table.clientMessageId} IS NOT NULL`),
 		check(
 			"messages_role_check",
 			sql`${table.role} IN ('system', 'user', 'assistant')`,
@@ -415,9 +372,6 @@ export type NewUser = typeof users.$inferInsert;
 
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
-
-export type Scene = typeof scenes.$inferSelect;
-export type NewScene = typeof scenes.$inferInsert;
 
 export type Shot = typeof shots.$inferSelect;
 export type NewShot = typeof shots.$inferInsert;

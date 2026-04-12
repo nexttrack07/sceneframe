@@ -67,7 +67,6 @@ function EditorPage() {
 					}
 				>
 					<EditorView
-						scenes={data_.scenes}
 						shots={data_.shots}
 						assets={data_.assets}
 						shotVideoAssets={data_.shotVideoAssets}

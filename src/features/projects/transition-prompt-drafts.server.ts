@@ -167,7 +167,7 @@ async function runTransitionPromptModel(args: {
 }
 
 async function saveTransitionPromptDraft(args: {
-	sceneId: string;
+	projectId: string;
 	fromShotId: string;
 	toShotId: string;
 	fromImageId: string | null;
@@ -179,7 +179,7 @@ async function saveTransitionPromptDraft(args: {
 	}
 
 	await db.insert(transitionVideos).values({
-		sceneId: args.sceneId,
+		projectId: args.projectId,
 		fromShotId: args.fromShotId,
 		toShotId: args.toShotId,
 		fromImageId: args.fromImageId,
@@ -195,7 +195,7 @@ export async function generateAndSaveTransitionPromptForPair({
 	fromShotId,
 	toShotId,
 	useProjectContext = true,
-	usePrevShotContext = true,
+	usePrevShotContext: _usePrevShotContext = true,
 	assetTypeOverride,
 }: {
 	fromShotId: string;
@@ -208,11 +208,10 @@ export async function generateAndSaveTransitionPromptForPair({
 		userId,
 		shot: fromShot,
 		project,
-		scene,
 	} = await assertShotOwner(fromShotId);
-	const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
+	const { shot: toShot, project: toProject } = await assertShotOwner(toShotId);
 
-	if (toScene.projectId !== scene.projectId) {
+	if (toProject.id !== project.id) {
 		throw new Error(
 			"Cannot generate transition prompt between shots from different projects",
 		);
@@ -263,17 +262,13 @@ export async function generateAndSaveTransitionPromptForPair({
 			replicate,
 			medium: "transition",
 			projectName: project.name,
-			sceneTitle: scene.title,
-			sceneDescription: scene.description,
+			sceneDescription: `${fromShot.description} → ${toShot.description}`,
 			projectContext: projectContextBlock,
 			shotContext: `Start shot: ${fromShot.description}\nEnd shot: ${toShot.description}`,
 		}),
 	]);
 
-	const sceneCtx =
-		usePrevShotContext && scene.description
-			? `Scene: ${scene.description}`
-			: null;
+	const sceneCtx = null;
 
 	const contextBlock = [
 		useProjectContext
@@ -350,7 +345,7 @@ Return ONLY the final prompt, nothing else.`;
 			buildFallbackTransitionPrompt({
 				fromShotDescription: fromShot.description,
 				toShotDescription: toShot.description,
-				sceneDescription: scene.description,
+				sceneDescription: `${fromShot.description} → ${toShot.description}`,
 				fromFrameVisual,
 				toFrameVisual,
 			});
@@ -377,7 +372,7 @@ Return ONLY the final prompt, nothing else.`;
 		});
 
 		await saveTransitionPromptDraft({
-			sceneId: scene.id,
+			projectId: project.id,
 			fromShotId,
 			toShotId,
 			fromImageId: fromFrameImageId,

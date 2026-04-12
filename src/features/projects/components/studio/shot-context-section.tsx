@@ -2,17 +2,15 @@ import { useRouter } from "@tanstack/react-router";
 import { AlertCircle, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { Scene, Shot } from "@/db/schema";
+import type { Shot } from "@/db/schema";
 import type { ShotType } from "../../project-types";
-import { updateShot } from "../../scene-actions";
+import { updateShot } from "../../shot-actions";
 
 export function ShotContextSection({
 	shot,
-	parentScene,
 	onDescriptionSaved,
 }: {
 	shot: Shot;
-	parentScene: Scene;
 	onDescriptionSaved?: (newDescription: string) => void;
 }) {
 	const router = useRouter();
@@ -85,11 +83,6 @@ export function ShotContextSection({
 
 			{isOpen && (
 				<div className="space-y-3">
-					{/* Breadcrumb */}
-					<p className="text-xs text-muted-foreground">
-						Scene: {parentScene.title || `Scene ${parentScene.order}`}
-					</p>
-
 					{/* Description */}
 					<div className="space-y-1.5">
 						<label

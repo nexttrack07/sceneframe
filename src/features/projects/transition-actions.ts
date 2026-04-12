@@ -7,7 +7,8 @@ import Replicate from "replicate";
 import { db } from "@/db/index";
 import { assets, transitionVideos } from "@/db/schema";
 import { assertShotOwner } from "@/lib/assert-project-owner.server";
-import { deleteObject, uploadFromUrl } from "@/lib/r2.server";
+import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
+import { uploadFromUrl } from "@/lib/r2.server";
 import { startTransitionVideoGeneration } from "@/trigger";
 import { getUserApiKey } from "./image-generation-helpers.server";
 import {
@@ -223,7 +224,7 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 				toShotId,
 				userPrompt,
 				useProjectContext = true,
-				usePrevShotContext = true,
+				usePrevShotContext: _usePrevShotContext = true,
 				assetTypeOverride,
 			},
 		}) => {
@@ -231,11 +232,10 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 				userId,
 				shot: fromShot,
 				project,
-				scene,
 			} = await assertShotOwner(fromShotId);
-			const { shot: toShot, scene: toScene } = await assertShotOwner(toShotId);
+			const { shot: toShot, project: toProject } = await assertShotOwner(toShotId);
 
-			if (toScene.projectId !== scene.projectId) {
+			if (toProject.id !== project.id) {
 				throw new Error(
 					"Cannot enhance transition prompt between shots from different projects",
 				);
@@ -281,23 +281,16 @@ export const enhanceTransitionVideoPrompt = createServerFn({ method: "POST" })
 					replicate,
 					medium: "transition",
 					projectName: project.name,
-					sceneTitle: scene.title,
-					sceneDescription: scene.description,
+					sceneDescription: `${fromShot.description} into ${toShot.description}`,
 					projectContext: projectContextBlock,
 					shotContext: `Start shot: ${fromShot.description}\nEnd shot: ${toShot.description}`,
 				}),
 			]);
 
-			const sceneCtx =
-				usePrevShotContext && scene.description
-					? `Scene: ${scene.description}`
-					: null;
-
 			const contextBlock = [
 				useProjectContext
 					? `PROJECT CONTEXT:\n${projectContextBlock || `Project: ${project.name}`}`
 					: null,
-				sceneCtx,
 				`From: ${fromShot.description}`,
 				`To: ${toShot.description}`,
 				sceneVisualBrief ? `Scene visual brief:\n${sceneVisualBrief}` : null,
@@ -367,7 +360,7 @@ Return ONLY the final prompt, nothing else.`;
 					buildFallbackTransitionPrompt({
 						fromShotDescription: fromShot.description,
 						toShotDescription: toShot.description,
-						sceneDescription: scene.description,
+						sceneDescription: `${fromShot.description} into ${toShot.description}`,
 						fromFrameVisual,
 						toFrameVisual,
 						userPrompt,
@@ -447,12 +440,12 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 			const {
 				userId,
 				shot: fromShot,
-				scene,
+				project,
 			} = await assertShotOwner(fromShotId);
-			const { scene: toScene } = await assertShotOwner(toShotId);
+			const { project: toProject } = await assertShotOwner(toShotId);
 			const normalizedVideo = normalizeVideoDefaults(videoSettings);
 
-			if (toScene.projectId !== scene.projectId) {
+			if (toProject.id !== project.id) {
 				throw new Error(
 					"Cannot generate transition between shots from different projects",
 				);
@@ -515,7 +508,7 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 			const [placeholder] = await db
 				.insert(transitionVideos)
 				.values({
-					sceneId: scene.id,
+					projectId: project.id,
 					fromShotId,
 					toShotId,
 					fromImageId: fromImage.id,
@@ -550,8 +543,8 @@ export const pollTransitionVideos = createServerFn({ method: "POST" })
 	.inputValidator((data: { fromShotId: string; toShotId: string }) => data)
 	.handler(async ({ data: { fromShotId, toShotId } }) => {
 		const { userId, project } = await assertShotOwner(fromShotId);
-		const { scene: toScene } = await assertShotOwner(toShotId);
-		if (toScene.projectId !== project.id) throw new Error("Unauthorized");
+		const { shot: toShot } = await assertShotOwner(toShotId);
+		if (toShot.projectId !== project.id) throw new Error("Unauthorized");
 
 		await reconcileGeneratingTransitionVideos({ fromShotId, toShotId, userId });
 
@@ -677,7 +670,7 @@ async function reconcileGeneratingTransitionVideos(args: {
 							return;
 						}
 
-						const storageKey = `projects/${video.sceneId}/transitions/${video.id}.mp4`;
+						const storageKey = `projects/${video.projectId}/transitions/${video.id}.mp4`;
 						const storedUrl = await uploadFromUrl(
 							sourceUrl,
 							storageKey,
@@ -783,8 +776,8 @@ export const getTransitionVideoRunStatuses = createServerFn({ method: "POST" })
 	.inputValidator((data: { fromShotId: string; toShotId: string }) => data)
 	.handler(async ({ data: { fromShotId, toShotId } }) => {
 		const { project } = await assertShotOwner(fromShotId);
-		const { scene: toScene } = await assertShotOwner(toShotId);
-		if (toScene.projectId !== project.id) throw new Error("Unauthorized");
+		const { shot: toShot } = await assertShotOwner(toShotId);
+		if (toShot.projectId !== project.id) throw new Error("Unauthorized");
 
 		const generatingVideos = await db.query.transitionVideos.findMany({
 			where: and(
@@ -861,9 +854,9 @@ export const selectTransitionVideo = createServerFn({ method: "POST" })
 			throw new Error("Only completed transition videos can be selected");
 
 		// Assert ownership on fromShot and verify toShot belongs to the same project
-		const { scene: fromScene } = await assertShotOwner(tv.fromShotId);
-		const { scene: toScene } = await assertShotOwner(tv.toShotId);
-		if (toScene.projectId !== fromScene.projectId)
+		const { shot: fromShot } = await assertShotOwner(tv.fromShotId);
+		const { shot: toShot } = await assertShotOwner(tv.toShotId);
+		if (toShot.projectId !== fromShot.projectId)
 			throw new Error("Unauthorized");
 
 		await db.transaction(async (tx) => {
@@ -899,14 +892,11 @@ export const deleteTransitionVideo = createServerFn({ method: "POST" })
 
 		await assertShotOwner(tv.fromShotId);
 
-		if (tv.storageKey) {
-			await deleteObject(tv.storageKey).catch((err) =>
-				console.error("R2 deleteObject failed for key:", tv.storageKey, err),
-			);
-		}
-
 		await db
 			.update(transitionVideos)
 			.set({ deletedAt: new Date() })
 			.where(eq(transitionVideos.id, transitionVideoId));
+
+		// R2 cleanup AFTER the DB soft-delete
+		await cleanupStorageKeys([tv.storageKey]);
 	});

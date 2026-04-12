@@ -1,11 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db/index";
 import {
 	assets,
 	motionGraphics,
 	projects,
-	scenes,
 	shots,
 	transitionVideos,
 } from "@/db/schema";
@@ -73,67 +72,42 @@ function createTextEditorItem({
 async function buildInitialEditorState(
 	projectId: string,
 ): Promise<UndoableState> {
-	const projectScenes = await db.query.scenes.findMany({
-		where: and(eq(scenes.projectId, projectId), isNull(scenes.deletedAt)),
-		orderBy: asc(scenes.order),
-	});
-	const sceneIds = projectScenes.map((scene) => scene.id);
-
-	const rawShots =
-		sceneIds.length === 0
-			? []
-			: await db.query.shots.findMany({
-					where: and(inArray(shots.sceneId, sceneIds), isNull(shots.deletedAt)),
-					orderBy: asc(shots.order),
-				});
-	const sceneIndexMap = new Map(sceneIds.map((id, index) => [id, index]));
-	const projectShots = rawShots.slice().sort((a, b) => {
-		const sceneA = sceneIndexMap.get(a.sceneId) ?? 0;
-		const sceneB = sceneIndexMap.get(b.sceneId) ?? 0;
-		if (sceneA !== sceneB) return sceneA - sceneB;
-		return a.order - b.order;
+	const projectShots = await db.query.shots.findMany({
+		where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+		orderBy: asc(shots.order),
 	});
 
 	const shotIds = projectShots.map((shot) => shot.id);
-	const projectAssets =
-		sceneIds.length === 0
-			? []
-			: await db.query.assets.findMany({
-					where: and(
-						eq(assets.stage, "images"),
-						isNull(assets.deletedAt),
-						shotIds.length > 0
-							? or(
-									inArray(assets.shotId, shotIds),
-									and(inArray(assets.sceneId, sceneIds), isNull(assets.shotId)),
-								)
-							: inArray(assets.sceneId, sceneIds),
-					),
-					orderBy: asc(assets.createdAt),
-				});
 
-	const projectTransitionVideos =
-		sceneIds.length === 0
-			? []
-			: await db.query.transitionVideos.findMany({
-					where: and(
-						inArray(transitionVideos.sceneId, sceneIds),
-						isNull(transitionVideos.deletedAt),
-					),
-					orderBy: asc(transitionVideos.createdAt),
-				});
+	const [projectAssets, projectTransitionVideos, audioAssets] =
+		await Promise.all([
+			db.query.assets.findMany({
+				where: and(
+					eq(assets.projectId, projectId),
+					eq(assets.stage, "images"),
+					isNull(assets.deletedAt),
+				),
+				orderBy: asc(assets.createdAt),
+			}),
+			db.query.transitionVideos.findMany({
+				where: and(
+					eq(transitionVideos.projectId, projectId),
+					isNull(transitionVideos.deletedAt),
+				),
+				orderBy: asc(transitionVideos.createdAt),
+			}),
+			db.query.assets.findMany({
+				where: and(
+					eq(assets.projectId, projectId),
+					eq(assets.stage, "audio"),
+					isNull(assets.deletedAt),
+				),
+				orderBy: asc(assets.createdAt),
+			}),
+		]);
 
-	const audioAssets =
-		sceneIds.length === 0
-			? []
-			: await db.query.assets.findMany({
-					where: and(
-						eq(assets.stage, "audio"),
-						inArray(assets.sceneId, sceneIds),
-						isNull(assets.deletedAt),
-					),
-					orderBy: asc(assets.createdAt),
-				});
+	// Suppress unused variable warning — shotIds is available for future FK filtering
+	void shotIds;
 
 	const normalizedAssets: SceneAssetSummary[] = projectAssets
 		.filter(
@@ -152,7 +126,7 @@ async function buildInitialEditorState(
 		)
 		.map((asset) => ({
 			id: asset.id,
-			sceneId: asset.sceneId,
+			projectId: asset.projectId,
 			shotId: asset.shotId,
 			type: asset.type,
 			status: asset.status,
@@ -171,7 +145,7 @@ async function buildInitialEditorState(
 	const normalizedTransitions: TransitionVideoSummary[] =
 		projectTransitionVideos.map((video) => ({
 			id: video.id,
-			sceneId: video.sceneId,
+			projectId: video.projectId,
 			fromShotId: video.fromShotId,
 			toShotId: video.toShotId,
 			fromImageId: video.fromImageId,
@@ -204,8 +178,8 @@ async function buildInitialEditorState(
 		)
 		.map((asset) => ({
 			id: asset.id,
-			sceneId: asset.sceneId,
-			type: "voiceover",
+			projectId: asset.projectId,
+			type: "voiceover" as const,
 			status: asset.status,
 			jobId: asset.jobId,
 			url: asset.url,
@@ -218,7 +192,6 @@ async function buildInitialEditorState(
 		}));
 
 	return buildEditorState({
-		scenes: projectScenes,
 		shots: projectShots,
 		assets: normalizedAssets,
 		shotVideoAssets: [],
@@ -266,17 +239,11 @@ async function getMotionGraphicForProject({
 	const graphic = await db.query.motionGraphics.findFirst({
 		where: and(
 			eq(motionGraphics.id, motionGraphicId),
+			eq(motionGraphics.projectId, projectId),
 			isNull(motionGraphics.deletedAt),
 		),
 	});
 	if (!graphic) throw new Error("Motion graphic not found");
-
-	const scene = await db.query.scenes.findFirst({
-		where: and(eq(scenes.id, graphic.sceneId), isNull(scenes.deletedAt)),
-	});
-	if (!scene || scene.projectId !== projectId) {
-		throw new Error("Motion graphic does not belong to this project");
-	}
 
 	return graphic;
 }
@@ -305,16 +272,13 @@ export const createShotMotionGraphic = createServerFn({ method: "POST" })
 		await assertProjectOwner(projectId, "error");
 
 		const shot = await db.query.shots.findFirst({
-			where: and(eq(shots.id, shotId), isNull(shots.deletedAt)),
+			where: and(
+				eq(shots.id, shotId),
+				eq(shots.projectId, projectId),
+				isNull(shots.deletedAt),
+			),
 		});
 		if (!shot) throw new Error("Shot not found");
-
-		const scene = await db.query.scenes.findFirst({
-			where: and(eq(scenes.id, shot.sceneId), isNull(scenes.deletedAt)),
-		});
-		if (!scene || scene.projectId !== projectId) {
-			throw new Error("Shot does not belong to this project");
-		}
 
 		const sourceText = shot.description.trim();
 		const spec = buildMotionGraphicSpec({
@@ -327,7 +291,7 @@ export const createShotMotionGraphic = createServerFn({ method: "POST" })
 		const [created] = await db
 			.insert(motionGraphics)
 			.values({
-				sceneId: shot.sceneId,
+				projectId,
 				shotId,
 				preset,
 				title,
@@ -372,19 +336,15 @@ export const importShotMotionGraphicToEditor = createServerFn({
 			.select({
 				id: shots.id,
 				durationSec: shots.durationSec,
-				sceneOrder: scenes.order,
-				shotOrder: shots.order,
 			})
 			.from(shots)
-			.innerJoin(scenes, eq(shots.sceneId, scenes.id))
 			.where(
 				and(
-					eq(scenes.projectId, projectId),
+					eq(shots.projectId, projectId),
 					isNull(shots.deletedAt),
-					isNull(scenes.deletedAt),
 				),
 			)
-			.orderBy(asc(scenes.order), asc(shots.order));
+			.orderBy(asc(shots.order));
 
 		const baseState = project.editorState
 			? (project.editorState as UndoableState)
