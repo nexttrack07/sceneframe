@@ -15,15 +15,8 @@ import {
 	generateImagePrompts,
 	generateOutline,
 	generateShots,
-	updateScriptDraft,
+	setWorkshopStage,
 } from "../workshop-mutations";
-
-const STAGE_ORDER: WorkshopStage[] = [
-	"discovery",
-	"outline",
-	"shots",
-	"prompts",
-];
 
 interface UseWorkshopFlowArgs {
 	projectId: string;
@@ -61,23 +54,13 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 
 	const setStage = useCallback(
 		async (nextStage: WorkshopStage) => {
-			const nextDraft: ScriptDraft = {
-				...(draft ?? { stage: nextStage }),
-				stage: nextStage,
-			};
-			await updateScriptDraft({
-				data: { projectId, scriptDraft: nextDraft },
+			await setWorkshopStage({
+				data: { projectId, stage: nextStage },
 			});
 			await invalidateProject();
 		},
-		[projectId, draft, invalidateProject],
+		[projectId, invalidateProject],
 	);
-
-	const goBack = useCallback(async () => {
-		const idx = STAGE_ORDER.indexOf(stage);
-		if (idx <= 0) return;
-		await setStage(STAGE_ORDER[idx - 1]);
-	}, [stage, setStage]);
 
 	const handleGenerateOutline = useCallback(
 		async (feedback?: string): Promise<string> => {
@@ -165,7 +148,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		staleStages,
 		intake,
 		setStage,
-		goBack,
 		selectedItemId,
 		setSelectedItemId,
 		handleGenerateOutline,

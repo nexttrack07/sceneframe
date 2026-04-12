@@ -413,18 +413,19 @@ export const approveWorkshop = createServerFn({ method: "POST" })
 		},
 	);
 
-export const updateScriptDraft = createServerFn({ method: "POST" })
+export const setWorkshopStage = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: {
 			projectId: string;
-			scriptDraft: import("./project-types").ScriptDraft;
+			stage: import("./project-types").WorkshopStage;
 		}) => data,
 	)
-	.handler(async ({ data: { projectId, scriptDraft } }) => {
-		await assertProjectOwner(projectId, "error");
+	.handler(async ({ data: { projectId, stage } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
+		const currentDraft = (project.scriptDraft ?? {}) as ScriptDraft;
 		await db
 			.update(projects)
-			.set({ scriptDraft })
+			.set({ scriptDraft: { ...currentDraft, stage } })
 			.where(eq(projects.id, projectId));
 	});
 

@@ -21,7 +21,7 @@ export {
 	sendMessage,
 	approveWorkshop,
 	resetWorkshop,
-	updateScriptDraft,
+	setWorkshopStage,
 	generateOutline,
 	generateShots,
 	generateImagePrompts,

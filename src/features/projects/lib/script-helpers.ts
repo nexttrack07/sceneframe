@@ -87,16 +87,6 @@ export function composeBrief(intake: IntakeAnswers): string {
 	return parts.join(" ");
 }
 
-export function targetDurationRange(targetSec: number): {
-	min: number;
-	max: number;
-} {
-	return {
-		min: Math.round(targetSec * 0.85),
-		max: Math.round(targetSec * 1.15),
-	};
-}
-
 export function parseQuickReplies(content: string): string[] | null {
 	const match = content.match(/```suggestions\s*([\s\S]*?)```/);
 	if (!match) return null;
@@ -111,11 +101,4 @@ export function parseQuickReplies(content: string): string[] | null {
 
 export function stripSuggestions(content: string): string {
 	return content.replace(/```suggestions[\s\S]*?```/g, "").trim();
-}
-
-export function estimateDuration(scene: ScenePlanEntry): number {
-	if (scene.durationSec && Number.isFinite(scene.durationSec))
-		return Math.max(2, scene.durationSec);
-	const words = scene.description.trim().split(/\s+/).length;
-	return Math.max(3, Math.min(18, Math.round(words / 3)));
 }
