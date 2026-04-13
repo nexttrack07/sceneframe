@@ -7,11 +7,13 @@ export function ScriptWorkshop({
 	existingMessages,
 	projectSettings,
 	scriptDraft,
+	hasApprovedShots = false,
 }: {
 	projectId: string;
 	existingMessages: Message[];
 	projectSettings: ProjectSettings | null;
 	scriptDraft?: ScriptDraft | null;
+	hasApprovedShots?: boolean;
 }) {
 	return (
 		<ChatWorkshop
@@ -21,6 +23,7 @@ export function ScriptWorkshop({
 				scriptDraft: scriptDraft ?? null,
 				settings: projectSettings,
 			}}
+			hasApprovedShots={hasApprovedShots}
 		/>
 	);
 }

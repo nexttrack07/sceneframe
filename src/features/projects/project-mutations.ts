@@ -24,6 +24,7 @@ export {
 	setWorkshopStage,
 	generateOutline,
 	generateShots,
+	reviewAndFixShots,
 	generateImagePrompts,
 } from "./workshop-mutations";
 

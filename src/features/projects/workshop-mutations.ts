@@ -576,10 +576,15 @@ TASK:
 - Generate a flat, chronological shot list for the ENTIRE video. The outline is narrative context only — do NOT subdivide each outline entry into its own shots. Think of shots as cinematic beats that flow through the story, not chunks of scenes.
 - Total shot count should be around ${minShots} to ${maxShots} shots, sized to fit the ${targetDuration}-second duration.
 - Each shot must be VISUALLY DISTINCT from every other shot — different framing, different subject, different action, different composition. NEVER describe the same view twice. If two shots would look similar, merge them or cut one.
-- Each shot must specify: shotType (talking or visual), shotSize (extreme-wide, wide, medium, close-up, extreme-close-up, or insert), durationSec (typically 3-10s), and a detailed visual description.
+- Each shot must specify: shotType ("talking" or "visual"), shotSize (exactly one of: "extreme-wide", "wide", "medium", "close-up", "extreme-close-up", "insert"), durationSec (integer from 1 to 10, no decimals), and a detailed visual description.
 - Shot descriptions should be self-contained, production-ready, and specific enough for a camera operator to frame without additional context. Include environment, subject, lighting, composition, action, and camera movement.
 - Vary shot sizes across the list — don't use all wides or all close-ups. A good sequence alternates framing to create rhythm.
 - The sum of all durationSec values should roughly equal the target duration.
+
+SCHEMA CONSTRAINTS (must follow exactly):
+- shotType: exactly "talking" or "visual"
+- shotSize: exactly one of "extreme-wide", "wide", "medium", "close-up", "extreme-close-up", "insert"
+- durationSec: integer from 1 to 10 (no decimals, no values above 10)
 
 Return only this fenced JSON block with a flat array of shots in playback order:
 
@@ -624,6 +629,97 @@ Return only this fenced JSON block with a flat array of shots in playback order:
 		} finally {
 			clearTimeout(timeout);
 		}
+		});
+	});
+
+export const reviewAndFixShots = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string }) => data)
+	.handler(async ({ data: { projectId } }) => {
+		const { userId } = await assertProjectOwner(projectId, "error");
+		return withWorkshopLock(projectId, async (project) => {
+			const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+			const shotList = existingDraft.shots;
+			if (!shotList || shotList.length === 0) {
+				throw new Error("No shots to review");
+			}
+
+			const apiKey = await getUserApiKey(userId);
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+			const shotsBlock = shotList
+				.map(
+					(shot, idx) =>
+						`Shot ${idx + 1}: [${shot.shotSize}, ${shot.shotType}, ${shot.durationSec}s] ${shot.description}`,
+				)
+				.join("\n\n");
+
+			const prompt = `You are a cinematographer reviewing a shot list for quality and variety.
+
+SHOT LIST TO REVIEW:
+${shotsBlock}
+
+REVIEW FOR THESE ISSUES:
+1. **Consecutive duplicates**: Two shots back-to-back with the same subject at the same shot size (e.g., two close-ups of an eye). These should be merged or one should be changed to a different framing.
+2. **Redundant shots**: Shots that describe essentially the same visual with minor wording differences. Merge them.
+3. **Missing variety**: If all shots are the same size (all wides, all close-ups), vary them to create rhythm.
+4. **Unclear descriptions**: Shots that are too vague for a camera operator to frame. Add specificity.
+
+RULES:
+- Keep the same total shot count if possible, but you MAY merge redundant shots (reducing count) or split one shot into two (increasing count) if it improves the sequence.
+- Preserve the narrative flow and timing (total duration should stay roughly the same).
+- Each shot must be VISUALLY DISTINCT from adjacent shots.
+- Return the corrected shot list, even if no changes were needed.
+
+SCHEMA CONSTRAINTS (must follow exactly):
+- shotType: exactly "talking" or "visual"
+- shotSize: exactly one of "extreme-wide", "wide", "medium", "close-up", "extreme-close-up", "insert"
+- durationSec: integer from 1 to 10 (no decimals, no values above 10)
+
+Return only this fenced JSON block:
+
+\`\`\`shots
+[
+  {"description": "Detailed shot description...", "shotType": "visual", "shotSize": "wide", "durationSec": 8}
+]
+\`\`\``;
+
+			try {
+				const chunks: string[] = [];
+				for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+					input: { prompt, max_tokens: 4096, temperature: 0.3 },
+					signal: controller.signal,
+				})) {
+					chunks.push(String(event));
+				}
+
+				const assistantContent = chunks.join("").trim();
+				if (!assistantContent) {
+					throw new Error("AI returned empty review — please try again");
+				}
+
+				const parsed = parseLlmJson(
+					assistantContent,
+					ShotDraftArraySchema,
+					"reviewAndFixShots",
+				);
+
+				const nextDraft: ScriptDraft = {
+					...existingDraft,
+					shots: parsed,
+					stage: "shots",
+				};
+
+				await db
+					.update(projects)
+					.set({ scriptDraft: nextDraft })
+					.where(eq(projects.id, projectId));
+
+				return { content: assistantContent, shotCount: parsed.length };
+			} finally {
+				clearTimeout(timeout);
+			}
 		});
 	});
 

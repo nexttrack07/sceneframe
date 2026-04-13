@@ -4,6 +4,7 @@ import {
 	HeadContent,
 	Scripts,
 } from "@tanstack/react-router";
+import { ThemeProvider } from "../components/theme-provider";
 import { ToastProvider } from "../components/ui/toast";
 import { TooltipProvider } from "../components/ui/tooltip";
 import ClerkProvider from "../integrations/clerk/provider";
@@ -53,11 +54,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
-				<ClerkProvider>
-					<TooltipProvider delayDuration={300}>
-						<ToastProvider>{children}</ToastProvider>
-					</TooltipProvider>
-				</ClerkProvider>
+				<ThemeProvider>
+					<ClerkProvider>
+						<TooltipProvider delayDuration={300}>
+							<ToastProvider>{children}</ToastProvider>
+						</TooltipProvider>
+					</ClerkProvider>
+				</ThemeProvider>
 				<Scripts />
 			</body>
 		</html>

@@ -280,7 +280,7 @@ export function StudioGallery({
 									variant="outline"
 									onClick={() => onDeleteAsset(selectedAsset.id)}
 									disabled={deletingAssetId === selectedAsset.id}
-									className="gap-1.5 text-red-600 hover:text-red-600"
+									className="gap-1.5 text-destructive hover:text-destructive"
 								>
 									<Trash2 size={12} />
 								</Button>

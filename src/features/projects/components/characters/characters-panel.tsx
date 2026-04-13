@@ -1,4 +1,5 @@
 import { Loader2, Pencil, Plus, Star, Trash2, Users } from "lucide-react";
+import { ErrorAlert } from "@/components/ui/error-alert";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	AlertDialog,
@@ -293,16 +294,10 @@ export function CharactersPanel({
 
 				<div className="mt-6 space-y-4">
 					{error && (
-						<div className="flex items-center justify-between gap-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">
-							<span>{error}</span>
-							<button
-								type="button"
-								onClick={() => setError(null)}
-								className="hover:opacity-70"
-							>
-								✕
-							</button>
-						</div>
+						<ErrorAlert
+							message={error}
+							onDismiss={() => setError(null)}
+						/>
 					)}
 
 					<div className="rounded-lg border bg-muted/20 p-3">

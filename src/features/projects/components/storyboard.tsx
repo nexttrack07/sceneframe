@@ -9,6 +9,8 @@ import {
 	Loader2,
 	MapPinned,
 	MessageSquare,
+	PanelLeft,
+	PanelLeftClose,
 	Play,
 	Plus,
 	Timer,
@@ -29,6 +31,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorAlert } from "@/components/ui/error-alert";
 import { useToast } from "@/components/ui/toast";
 import type { Shot } from "@/db/schema";
 import { useImageStudio } from "../hooks/use-image-studio";
@@ -138,6 +141,7 @@ export function Storyboard({
 	const [dragOverShotIndex, setDragOverShotIndex] = useState<number | null>(
 		null,
 	);
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
 	const [cloneMenuShotId, setCloneMenuShotId] = useState<string | null>(null);
 
@@ -457,6 +461,7 @@ export function Storyboard({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			toast("Project reset successfully", "success");
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to restart brief and chat",
@@ -480,6 +485,7 @@ export function Storyboard({
 			a.download = result.filename;
 			a.click();
 			URL.revokeObjectURL(url);
+			toast("Export downloaded", "success");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to export handoff");
 		} finally {
@@ -519,6 +525,7 @@ export function Storyboard({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			toast("Shot deleted", "success");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to delete shot");
 		}
@@ -542,6 +549,7 @@ export function Storyboard({
 			await queryClient.invalidateQueries({
 				queryKey: projectKeys.project(projectId),
 			});
+			toast("Shot added", "success");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to add shot");
 		}
@@ -638,7 +646,19 @@ export function Storyboard({
 		return (
 			<div className="flex h-full min-h-0 overflow-hidden">
 				{/* Col 1: Storyboard sidebar — flat shot list */}
-				<div className="w-[240px] border-r flex-shrink-0 overflow-y-auto bg-card">
+				<div className={`${sidebarCollapsed ? "w-10" : "w-[240px]"} border-r flex-shrink-0 overflow-hidden bg-card transition-all duration-200 flex flex-col`}>
+					{/* Sidebar toggle */}
+					<div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "justify-end"} p-2 border-b`}>
+						<button
+							type="button"
+							onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+							className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+							aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+						>
+							{sidebarCollapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
+						</button>
+					</div>
+					<div className={`flex-1 overflow-y-auto ${sidebarCollapsed ? "hidden" : ""}`}>
 					<div className="p-3 space-y-2">
 						{previewShots.map((shot, shotIdx) => {
 							const nextShot = previewShots[shotIdx + 1] ?? null;
@@ -840,6 +860,34 @@ export function Storyboard({
 								<div className="h-0.5 bg-primary rounded-full mb-1" />
 							)}
 					</div>
+					</div>
+					{/* Mini-timeline showing total duration */}
+					{!sidebarCollapsed && (
+						<div className="flex-shrink-0 border-t px-3 py-2 bg-muted/30">
+							<div className="flex items-center justify-between text-xs text-muted-foreground">
+								<div className="flex items-center gap-1.5">
+									<Timer size={12} />
+									<span>Total</span>
+								</div>
+								<span className="font-mono font-medium text-foreground">
+									{Math.floor(previewShots.reduce((acc, shot) => {
+										const dur = shot.timestampEnd != null && shot.timestampStart != null
+											? shot.timestampEnd - shot.timestampStart
+											: shot.durationSec ?? 0;
+										return acc + dur;
+									}, 0) / 60)}:{String(Math.floor(previewShots.reduce((acc, shot) => {
+										const dur = shot.timestampEnd != null && shot.timestampStart != null
+											? shot.timestampEnd - shot.timestampStart
+											: shot.durationSec ?? 0;
+										return acc + dur;
+									}, 0) % 60)).padStart(2, '0')}
+								</span>
+							</div>
+							<div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1">
+								<span>{previewShots.length} shots</span>
+							</div>
+						</div>
+					)}
 				</div>
 
 				{/* Col 2: Controls panel */}
@@ -1267,16 +1315,11 @@ export function Storyboard({
 				</div>
 
 				{error && (
-					<div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-						<AlertCircle size={14} className="shrink-0" />
-						<span>{error}</span>
-						<button
-							type="button"
-							onClick={() => setError(null)}
-							className="ml-auto text-destructive/50 hover:text-destructive"
-						>
-							✕
-						</button>
+					<div className="mb-3">
+						<ErrorAlert
+							message={error}
+							onDismiss={() => setError(null)}
+						/>
 					</div>
 				)}
 

@@ -79,7 +79,7 @@ export function ChatBubble({ message }: { message: Message }) {
 					<div
 						className={`rounded-2xl px-4 py-3 ${
 							isUser
-								? "bg-foreground text-background rounded-tr-md"
+								? "bg-primary text-primary-foreground rounded-tr-md"
 								: "bg-muted text-foreground rounded-tl-md"
 						}`}
 					>

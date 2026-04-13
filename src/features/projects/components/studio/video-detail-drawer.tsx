@@ -105,7 +105,7 @@ export function VideoDetailDrawer({
 								onDelete(video.id);
 							}}
 							disabled={deletingVideoId === video.id}
-							className="gap-1.5 text-red-600 hover:text-red-600 flex-1"
+							className="gap-1.5 text-destructive hover:text-destructive flex-1"
 						>
 							<Trash2 size={12} /> Delete
 						</Button>

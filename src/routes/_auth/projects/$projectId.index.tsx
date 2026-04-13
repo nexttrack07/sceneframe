@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Check, Film, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Film, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
 	AlertDialog,
@@ -121,7 +121,8 @@ function ProjectPage() {
 					});
 				}}
 			>
-				<div className="flex items-center gap-3 min-w-0">
+				<div className="flex items-center justify-between gap-3 flex-1 min-w-0">
+					{/* Left side: project name + status badge */}
 					<div className="flex items-center gap-3 min-w-0">
 						<h1 className="text-sm font-semibold text-foreground truncate">
 							{project.name}
@@ -131,8 +132,6 @@ function ProjectPage() {
 								{projectShots.length} shot{projectShots.length !== 1 ? "s" : ""}
 							</span>
 						)}
-					</div>
-					<div className="flex items-center gap-2 shrink-0">
 						{isWorkshopPhase ? (
 							<Badge
 								variant="outline"
@@ -149,6 +148,27 @@ function ProjectPage() {
 								<Check size={10} />
 								Approved
 							</Badge>
+						)}
+					</div>
+
+					{/* Right side: actions */}
+					<div className="flex items-center gap-2 shrink-0">
+						{isWorkshopPhase && project.scriptStatus === "done" && (
+							<Button
+								variant="outline"
+								size="xs"
+								asChild
+							>
+								<Link
+									to="/projects/$projectId"
+									params={{ projectId: project.id }}
+									search={{}}
+									className="gap-1"
+								>
+									Back to Storyboard
+									<ArrowRight size={12} />
+								</Link>
+							</Button>
 						)}
 						{!isDetailView && (
 							<DeleteProjectDialog
@@ -171,6 +191,7 @@ function ProjectPage() {
 					existingMessages={projectMessages}
 					projectSettings={project.settings}
 					scriptDraft={project.scriptDraft}
+					hasApprovedShots={project.scriptStatus === "done"}
 				/>
 			) : isDetailView ? (
 				<Storyboard

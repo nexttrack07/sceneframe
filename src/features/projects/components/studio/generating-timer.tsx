@@ -33,7 +33,7 @@ export function GeneratingTimer({
 	}, []); // no dependencies — startMsRef.current is stable
 
 	return (
-		<span className="text-sm font-mono font-medium text-foreground/70 tabular-nums">
+		<span className="text-sm font-mono font-medium text-foreground/70 tabular-nums animate-pulse">
 			{elapsed.toFixed(1)}s
 		</span>
 	);

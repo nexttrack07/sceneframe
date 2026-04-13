@@ -42,7 +42,7 @@ export function StageIndicator({
 						}`}
 					>
 						{isStale ? (
-							<AlertTriangle size={11} className="text-amber-500" />
+							<AlertTriangle size={11} className="text-warning" />
 						) : isPast ? (
 							<Check size={11} />
 						) : null}

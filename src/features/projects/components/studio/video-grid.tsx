@@ -69,8 +69,9 @@ export function VideoGrid({
 	const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 	const [expandedId, setExpandedId] = useState<string | null>(null);
 
-	// Filter out error records — errors surface as toasts, not grid items
-	const sorted = [...videos.filter((v) => v.status !== "error")].reverse();
+	// Filter out error records and "done" records without URLs (prompt drafts)
+	// Errors surface as toasts, prompt drafts are not actual videos
+	const sorted = [...videos.filter((v) => v.status !== "error" && !(v.status === "done" && !v.url))].reverse();
 	const expandedVideo = expandedId
 		? (sorted.find((v) => v.id === expandedId) ?? null)
 		: null;
@@ -107,7 +108,9 @@ export function VideoGrid({
 				{sorted.map((video) => (
 					<div
 						key={video.id}
-						className="relative mb-2 break-inside-avoid overflow-hidden rounded-lg bg-muted group"
+						className={`relative mb-2 break-inside-avoid overflow-hidden rounded-lg bg-muted group transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${
+							video.isSelected ? "ring-2 ring-primary ring-offset-2 scale-[1.01] shadow-lg" : ""
+						}`}
 						style={{ aspectRatio: getAspectRatioValue(video) }}
 					>
 						{video.status === "done" && video.url ? (
@@ -139,7 +142,7 @@ export function VideoGrid({
 									</span>
 								)}
 								{hasStaleProperty(video) && video.stale && (
-									<span className="absolute top-1.5 right-1.5 flex items-center gap-0.5 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 rounded">
+									<span className="absolute top-1.5 right-1.5 flex items-center gap-0.5 bg-warning/90 text-warning-foreground text-[10px] px-1.5 py-0.5 rounded">
 										<AlertTriangle size={9} />
 									</span>
 								)}
@@ -180,7 +183,7 @@ export function VideoGrid({
 										type="button"
 										onClick={() => onDelete(video.id)}
 										disabled={deletingVideoId === video.id}
-										className="bg-white/90 text-red-600 p-1 rounded hover:bg-white transition-colors disabled:opacity-50"
+										className="bg-white/90 text-destructive p-1 rounded hover:bg-white transition-colors disabled:opacity-50"
 									>
 										{deletingVideoId === video.id ? (
 											<Loader2 size={11} className="animate-spin" />

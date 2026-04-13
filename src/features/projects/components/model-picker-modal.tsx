@@ -41,7 +41,7 @@ function PreviewMedia({ option }: { option: ModelPickerOption }) {
 		<div
 			className={`absolute inset-0 ${
 				option.accentClassName ??
-				"bg-[linear-gradient(135deg,#111827_0%,#2563eb_40%,#a5f3fc_100%)]"
+				"bg-gradient-to-br from-foreground via-primary to-sky-300"
 			}`}
 		/>
 	);
@@ -59,7 +59,7 @@ function ProviderLogo({
 			<img
 				src={option.logoImageUrl}
 				alt={`${option.provider} logo`}
-				className={`rounded-full bg-white/90 object-cover shadow-sm ${
+				className={`rounded-full bg-card object-cover shadow-md ring-1 ring-border/50 ${
 					compact ? "h-7 w-7" : "h-9 w-9"
 				}`}
 			/>
@@ -68,7 +68,7 @@ function ProviderLogo({
 
 	return (
 		<div
-			className={`flex items-center justify-center rounded-full bg-white/90 font-semibold text-slate-900 shadow-sm ${
+			className={`flex items-center justify-center rounded-full bg-card font-semibold text-foreground shadow-md ring-1 ring-border/50 ${
 				compact ? "h-7 w-7 text-[10px]" : "h-9 w-9 text-[11px]"
 			}`}
 		>
@@ -97,7 +97,7 @@ function ModelPreview({
 				<div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.35),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(0,0,0,0.18),transparent_38%)]" />
 				<div className="absolute top-3 left-3 flex items-center gap-2">
 					<ProviderLogo option={option} />
-					<div className="rounded-full bg-black/45 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white/90 backdrop-blur-sm">
+					<div className="rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-foreground/90 backdrop-blur-sm ring-1 ring-border/30">
 						{option.provider}
 					</div>
 				</div>
@@ -107,11 +107,11 @@ function ModelPreview({
 					</div>
 				)}
 				<div className="absolute inset-x-0 bottom-0 p-4">
-					<div className="rounded-xl bg-black/48 p-3 text-white backdrop-blur-sm">
-						<p className="text-sm font-semibold leading-tight">
+					<div className="rounded-xl bg-background/85 p-3 backdrop-blur-sm ring-1 ring-border/30">
+						<p className="text-sm font-semibold leading-tight text-foreground">
 							{option.label}
 						</p>
-						<p className="mt-1 text-xs leading-relaxed text-white/75">
+						<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
 							{option.description}
 						</p>
 					</div>

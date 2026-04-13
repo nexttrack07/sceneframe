@@ -59,9 +59,9 @@ export function GalleryImageCard({
 		<div
 			role={isClickable ? "button" : undefined}
 			tabIndex={isClickable ? 0 : undefined}
-			className={`relative mb-3 break-inside-avoid overflow-hidden rounded-lg bg-muted group ${
-				isClickable ? "cursor-pointer" : "cursor-default"
-			} ${asset.isSelected ? "ring-2 ring-primary ring-offset-2" : ""}`}
+			className={`relative mb-3 break-inside-avoid overflow-hidden rounded-lg bg-muted group transition-all duration-150 ${
+				isClickable ? "cursor-pointer hover:scale-[1.02] hover:shadow-lg" : "cursor-default"
+			} ${asset.isSelected ? "ring-2 ring-primary ring-offset-2 scale-[1.01] shadow-lg" : ""}`}
 			onClick={isClickable ? onExpand : undefined}
 			onKeyDown={
 				isClickable
@@ -170,7 +170,7 @@ export function GalleryImageCard({
 							onDelete();
 						}}
 						disabled={isDeleting}
-						className="bg-white/90 text-red-600 p-1.5 rounded-md hover:bg-white transition-colors disabled:opacity-50"
+						className="bg-white/90 text-destructive p-1.5 rounded-md hover:bg-white transition-colors disabled:opacity-50"
 					>
 						{isDeleting ? (
 							<Loader2 size={14} className="animate-spin" />

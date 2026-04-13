@@ -1,7 +1,7 @@
 import { task } from "@trigger.dev/sdk";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db/index";
-import { assets } from "@/db/schema";
+import { assets, shots } from "@/db/schema";
 import {
 	generateImageSync,
 	getImageProviderApiKey,
@@ -15,6 +15,63 @@ import {
 import type { ImageSettingValue } from "@/features/projects/project-types";
 import { uploadFromUrl } from "@/lib/r2.server";
 import { loadActiveAsset } from "./helpers";
+
+async function hasSelectedShotImage(shotId: string) {
+	const selectedImage = await db.query.assets.findFirst({
+		where: and(
+			eq(assets.shotId, shotId),
+			inArray(assets.type, ["start_image", "end_image", "image"]),
+			eq(assets.isSelected, true),
+			eq(assets.status, "done"),
+			isNull(assets.deletedAt),
+		),
+	});
+	return Boolean(selectedImage?.url);
+}
+
+async function generateAdjacentTransitionPromptsForShot(shotId: string) {
+	const shotRow = await db.query.shots.findFirst({
+		where: and(eq(shots.id, shotId), isNull(shots.deletedAt)),
+	});
+	if (!shotRow) return;
+
+	const projectShots = await db.query.shots.findMany({
+		where: and(eq(shots.projectId, shotRow.projectId), isNull(shots.deletedAt)),
+		orderBy: asc(shots.order),
+	});
+	const shotIndex = projectShots.findIndex((s) => s.id === shotId);
+	if (shotIndex < 0) return;
+
+	const adjacentPairs = [
+		shotIndex > 0
+			? { fromShotId: projectShots[shotIndex - 1].id, toShotId: shotId }
+			: null,
+		shotIndex < projectShots.length - 1
+			? { fromShotId: shotId, toShotId: projectShots[shotIndex + 1].id }
+			: null,
+	].filter((pair): pair is { fromShotId: string; toShotId: string } => pair !== null);
+
+	await Promise.allSettled(
+		adjacentPairs.map(async (pair) => {
+			const [hasFromImage, hasToImage] = await Promise.all([
+				hasSelectedShotImage(pair.fromShotId),
+				hasSelectedShotImage(pair.toShotId),
+			]);
+			if (!hasFromImage || !hasToImage) return;
+
+			const { generateAndSaveTransitionPromptForPair } = await import(
+				"@/features/projects/transition-prompt-drafts.server"
+			);
+			await generateAndSaveTransitionPromptForPair({
+				fromShotId: pair.fromShotId,
+				toShotId: pair.toShotId,
+				useProjectContext: true,
+				usePrevShotContext: true,
+				assetTypeOverride: "auto",
+			});
+		}),
+	);
+}
 
 export interface GenerateShotImageAssetPayload {
 	assetId: string;
@@ -108,6 +165,20 @@ export const generateShotImageAsset = task({
 			};
 		}
 
+		// Check if there's already a selected image for this shot
+		const existingSelected = await db.query.assets.findFirst({
+			where: and(
+				eq(assets.shotId, payload.shotId),
+				inArray(assets.type, ["start_image", "end_image", "image"]),
+				eq(assets.isSelected, true),
+				eq(assets.status, "done"),
+				isNull(assets.deletedAt),
+			),
+		});
+
+		// If no selected image exists, auto-select this one
+		const shouldAutoSelect = !existingSelected;
+
 		await db
 			.update(assets)
 			.set({
@@ -116,10 +187,23 @@ export const generateShotImageAsset = task({
 				status: "done",
 				errorMessage: null,
 				generationDurationMs,
+				...(shouldAutoSelect && { isSelected: true }),
 			})
 			.where(eq(assets.id, payload.assetId));
 
-		return { status: "done" as const, assetId: payload.assetId };
+		// If we auto-selected this image, trigger adjacent transition prompt generation
+		if (shouldAutoSelect) {
+			void generateAdjacentTransitionPromptsForShot(payload.shotId).catch(
+				(error) => {
+					console.error(
+						`[generateShotImageAsset] Failed to generate adjacent transition prompts for shot ${payload.shotId}`,
+						error,
+					);
+				},
+			);
+		}
+
+		return { status: "done" as const, assetId: payload.assetId, autoSelected: shouldAutoSelect };
 	},
 
 	onFailure: async ({ payload, error }) => {

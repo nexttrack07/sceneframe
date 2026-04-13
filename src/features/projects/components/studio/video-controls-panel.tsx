@@ -821,14 +821,25 @@ export function VideoControlsPanel({
 								</select>
 							)}
 						</div>
-						<textarea
-							id={motionPromptId}
-							rows={7}
-							value={videoPrompt}
-							onChange={(e) => onVideoPromptChange(e.target.value)}
-							placeholder="Describe the motion — camera movement, subject action, speed..."
-							className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed"
-						/>
+						<div className="relative">
+							<textarea
+								id={motionPromptId}
+								rows={7}
+								value={videoPrompt}
+								onChange={(e) => onVideoPromptChange(e.target.value)}
+								placeholder={isGeneratingPrompt ? "" : "Describe the motion — camera movement, subject action, speed..."}
+								disabled={isGeneratingPrompt}
+								className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring leading-relaxed disabled:opacity-50"
+							/>
+							{isGeneratingPrompt && !videoPrompt.trim() && (
+								<div className="absolute inset-0 flex items-center justify-center rounded-lg bg-muted/30 backdrop-blur-[1px]">
+									<div className="flex items-center gap-2 text-sm text-muted-foreground">
+										<Loader2 size={14} className="animate-spin" />
+										<span>Generating prompt...</span>
+									</div>
+								</div>
+							)}
+						</div>
 					</div>
 				</div>
 			</div>

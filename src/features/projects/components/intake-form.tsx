@@ -285,14 +285,34 @@ export function IntakeForm({
 					)}
 
 					{step.type === "text" && (
-						<Textarea
-							value={(answers[step.key] as string) ?? ""}
-							onChange={(e) => handleTextChange(e.target.value)}
-							placeholder="A cinematic tour of Tokyo's neon-lit streets at night..."
-							rows={4}
-							className="resize-none text-base"
-							autoFocus
-						/>
+						<div className="space-y-2">
+							<Textarea
+								value={(answers[step.key] as string) ?? ""}
+								onChange={(e) => handleTextChange(e.target.value)}
+								placeholder="A cinematic tour of Tokyo's neon-lit streets at night..."
+								rows={4}
+								className={`resize-none text-base ${
+									(answers.concept?.length ?? 0) > 0 && (answers.concept?.length ?? 0) < 10
+										? "border-warning focus-visible:ring-warning"
+										: ""
+								}`}
+								autoFocus
+							/>
+							<div className="flex items-center justify-between text-xs">
+								<span className={`${
+									(answers.concept?.length ?? 0) > 0 && (answers.concept?.length ?? 0) < 10
+										? "text-warning"
+										: "text-muted-foreground"
+								}`}>
+									{(answers.concept?.length ?? 0) < 10
+										? `${10 - (answers.concept?.length ?? 0)} more characters needed`
+										: "Looking good!"}
+								</span>
+								<span className="text-muted-foreground font-mono">
+									{answers.concept?.length ?? 0}
+								</span>
+							</div>
+						</div>
 					)}
 
 					{step.type === "duration" && (
@@ -414,9 +434,16 @@ function DurationInput({
 					</span>
 				</div>
 			</div>
-			<p className="text-sm text-muted-foreground">
-				~{shotCount} shot{shotCount !== 1 ? "s" : ""} at 5s each
-			</p>
+			<div className="flex items-center justify-between">
+				<p className="text-sm text-muted-foreground">
+					~{shotCount} shot{shotCount !== 1 ? "s" : ""} at 5s each
+				</p>
+				{(value < 15 || value > 3600) && (
+					<p className="text-xs text-warning">
+						{value < 15 ? "Minimum 15 seconds" : "Maximum 60 minutes"}
+					</p>
+				)}
+			</div>
 		</div>
 	);
 }

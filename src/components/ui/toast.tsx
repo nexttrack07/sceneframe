@@ -61,9 +61,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 					},
 				}}
 				icons={{
-					success: <CheckCircle2 size={16} className="text-blue-600" />,
-					error: <AlertCircle size={16} className="text-red-500" />,
-					info: <Info size={16} className="text-foreground/70" />,
+					success: <CheckCircle2 size={16} className="text-success" />,
+					error: <AlertCircle size={16} className="text-destructive" />,
+					info: <Info size={16} className="text-muted-foreground" />,
 				}}
 			/>
 		</ToastContext.Provider>

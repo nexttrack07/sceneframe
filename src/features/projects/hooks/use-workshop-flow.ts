@@ -15,6 +15,7 @@ import {
 	generateImagePrompts,
 	generateOutline,
 	generateShots,
+	reviewAndFixShots,
 	setWorkshopStage,
 } from "../workshop-mutations";
 
@@ -31,6 +32,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const router = useRouter();
 
 	const [isGenerating, setIsGenerating] = useState(false);
+	const [generatingStage, setGeneratingStage] = useState<WorkshopStage | null>(null);
 	const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
 	const draft = project.scriptDraft ?? null;
@@ -65,6 +67,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const handleGenerateOutline = useCallback(
 		async (feedback?: string): Promise<string> => {
 			setIsGenerating(true);
+			setGeneratingStage("outline");
 			try {
 				const result = await generateOutline({
 					data: { projectId, feedback },
@@ -73,6 +76,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 				return result.content;
 			} finally {
 				setIsGenerating(false);
+				setGeneratingStage(null);
 			}
 		},
 		[projectId, invalidateProject],
@@ -81,6 +85,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const handleGenerateShots = useCallback(
 		async (feedback?: string): Promise<string> => {
 			setIsGenerating(true);
+			setGeneratingStage("shots");
 			try {
 				const result = await generateShots({
 					data: { projectId, feedback },
@@ -89,14 +94,29 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 				return result.content;
 			} finally {
 				setIsGenerating(false);
+				setGeneratingStage(null);
 			}
 		},
 		[projectId, invalidateProject],
 	);
 
+	const handleReviewShots = useCallback(async (): Promise<string> => {
+		setIsGenerating(true);
+		try {
+			const result = await reviewAndFixShots({
+				data: { projectId },
+			});
+			await invalidateProject();
+			return result.content;
+		} finally {
+			setIsGenerating(false);
+		}
+	}, [projectId, invalidateProject]);
+
 	const handleGenerateImagePrompts =
 		useCallback(async (): Promise<string> => {
 			setIsGenerating(true);
+			setGeneratingStage("prompts");
 			try {
 				const result = await generateImagePrompts({
 					data: { projectId },
@@ -105,6 +125,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 				return result.content;
 			} finally {
 				setIsGenerating(false);
+				setGeneratingStage(null);
 			}
 		}, [projectId, invalidateProject]);
 
@@ -152,8 +173,10 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		setSelectedItemId,
 		handleGenerateOutline,
 		handleGenerateShots,
+		handleReviewShots,
 		handleGenerateImagePrompts,
 		handleApprove,
 		isGenerating,
+		generatingStage,
 	};
 }

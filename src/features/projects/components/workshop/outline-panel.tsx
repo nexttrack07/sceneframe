@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText } from "lucide-react";
+import { AlertTriangle, FileText, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { OutlineEntry } from "../../project-types";
 
@@ -29,8 +29,8 @@ export function OutlinePanel({
 			</div>
 
 			{isStale && (
-				<div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-					<div className="flex items-center gap-2 text-sm text-amber-600">
+				<div className="flex items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/5 px-4 py-3">
+					<div className="flex items-center gap-2 text-sm text-warning">
 						<AlertTriangle size={14} />
 						<span>This outline was generated from an earlier version.</span>
 					</div>
@@ -48,10 +48,10 @@ export function OutlinePanel({
 						key={itemId}
 						type="button"
 						onClick={() => onSelectItem(isSelected ? null : itemId)}
-						className={`w-full text-left rounded-xl border p-4 transition-colors ${
+						className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
 							isSelected
-								? "border-primary/40 bg-primary/5 ring-1 ring-primary/20"
-								: "border-border bg-background hover:border-primary/30"
+								? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
+								: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
 						}`}
 					>
 						<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
@@ -73,7 +73,12 @@ export function OutlinePanel({
 							Break each scene down into individual shots.
 						</p>
 					</div>
-					<Button onClick={onBreakdownToShots} disabled={isGenerating}>
+					<Button onClick={onBreakdownToShots} disabled={isGenerating} className="gap-2">
+						{isGenerating ? (
+							<Loader2 size={14} className="animate-spin" />
+						) : (
+							<Sparkles size={14} />
+						)}
 						{isGenerating ? "Generating..." : "Break down into shots"}
 					</Button>
 				</div>

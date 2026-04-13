@@ -106,7 +106,7 @@ export function ProjectVisualReferenceSelector({
 				{selectedWithImages > 0 && (
 					<span
 						className={`text-[10px] font-medium ${
-							isOverLimit ? "text-amber-500" : "text-muted-foreground"
+							isOverLimit ? "text-warning" : "text-muted-foreground"
 						}`}
 					>
 						{selectedWithImages} selected
@@ -114,7 +114,7 @@ export function ProjectVisualReferenceSelector({
 				)}
 			</div>
 			{isOverLimit && kind === "characters" && (
-				<div className="flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+				<div className="flex items-center gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-[10px] text-warning">
 					<AlertTriangle size={12} className="flex-shrink-0" />
 					<span>
 						Only {MAX_REFERENCE_IMAGES} reference images will be used (first{" "}

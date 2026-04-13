@@ -23,12 +23,12 @@ function renderGenerationToast(record: GenerationToastRecord) {
 	const isQueued = record.phase === "loading" && record.status === "Queued";
 	const statusTone =
 		record.phase === "error"
-			? "text-red-600"
+			? "text-destructive"
 			: record.phase === "success"
-				? "text-emerald-600"
+				? "text-success"
 				: isQueued
-					? "text-amber-500"
-					: "text-blue-600";
+					? "text-warning"
+					: "text-primary";
 	const Icon =
 		record.phase === "error"
 			? AlertCircle

@@ -154,18 +154,6 @@ const klingV25TurboSchema = {
 			title: "Negative Prompt",
 			default: "",
 		},
-		cfg_scale: {
-			type: "number",
-			title: "CFG Scale",
-			default: 0.5,
-			minimum: 0,
-			maximum: 1,
-		},
-		generate_audio: {
-			type: "boolean",
-			title: "Audio",
-			default: false,
-		},
 	},
 } as const;
 
@@ -401,7 +389,6 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			"duration",
 			"aspect_ratio",
 			"negative_prompt",
-			"generate_audio",
 		],
 		buildTransitionInput: ({
 			prompt,
@@ -410,42 +397,32 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
 			endImageUrl,
 		}) => ({
 			prompt,
-			image_url: startImageUrl,
-			tail_image_url: endImageUrl,
+			start_image: startImageUrl,
+			end_image: endImageUrl,
 			duration: Number(modelOptions.duration) <= 7 ? 5 : 10,
 			aspect_ratio:
 				typeof modelOptions.aspect_ratio === "string"
 					? modelOptions.aspect_ratio
 					: "16:9",
-			cfg_scale:
-				typeof modelOptions.cfg_scale === "number"
-					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
-					: 0.5,
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
 					? modelOptions.negative_prompt.trim()
 					: undefined,
-			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 		buildShotInput: ({ prompt, modelOptions, startImageUrl }) => ({
 			prompt,
-			...(startImageUrl ? { image_url: startImageUrl } : {}),
+			...(startImageUrl ? { start_image: startImageUrl } : {}),
 			duration: Number(modelOptions.duration) <= 7 ? 5 : 10,
 			aspect_ratio:
 				typeof modelOptions.aspect_ratio === "string"
 					? modelOptions.aspect_ratio
 					: "16:9",
-			cfg_scale:
-				typeof modelOptions.cfg_scale === "number"
-					? Math.max(0, Math.min(1, modelOptions.cfg_scale))
-					: 0.5,
 			negative_prompt:
 				typeof modelOptions.negative_prompt === "string" &&
 				modelOptions.negative_prompt.trim().length > 0
 					? modelOptions.negative_prompt.trim()
 					: undefined,
-			generate_audio: Boolean(modelOptions.generate_audio),
 		}),
 	},
 	{

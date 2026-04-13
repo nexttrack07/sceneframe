@@ -1,11 +1,12 @@
-import { ClipboardCopy, Film, Loader2, MessageSquare, Send, Sparkles } from "lucide-react";
-import { useCallback, useRef } from "react";
+import { Check, ClipboardCopy, Film, Loader2, MessageSquare, Send, Sparkles } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Message } from "@/db/schema";
 import {
 	beginGenerationToast,
 	resolveGenerationToast,
+	updateGenerationToast,
 } from "../../generation-toast";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
@@ -15,6 +16,11 @@ import { OutlinePanel } from "./outline-panel";
 import { PromptsPanel } from "./prompts-panel";
 import { ShotsPanel } from "./shots-panel";
 import { StageIndicator } from "./stage-indicator";
+import {
+	OutlinePanelSkeleton,
+	PromptsPanelSkeleton,
+	ShotsPanelSkeleton,
+} from "./workshop-skeletons";
 
 interface ChatWorkshopProps {
 	projectId: string;
@@ -23,12 +29,14 @@ interface ChatWorkshopProps {
 		scriptDraft?: ScriptDraft | null;
 		settings?: ProjectSettings | null;
 	};
+	hasApprovedShots?: boolean;
 }
 
 export function ChatWorkshop({
 	projectId,
 	existingMessages,
 	project,
+	hasApprovedShots = false,
 }: ChatWorkshopProps) {
 	const flow = useWorkshopFlow({ projectId, project });
 	const chat = useWorkshopChat({ projectId, existingMessages, stage: flow.stage });
@@ -40,6 +48,7 @@ export function ChatWorkshop({
 		await chat.runChatMessage(content);
 	}, [chat, flow.isGenerating]);
 
+	const [transcriptCopied, setTranscriptCopied] = useState(false);
 	const toastIdRef = useRef(0);
 
 	const handleGenerateWithChat = useCallback(
@@ -82,6 +91,47 @@ export function ChatWorkshop({
 		[chat],
 	);
 
+	const handleGenerateShotsWithReview = useCallback(async () => {
+		const toastId = `workshop-${++toastIdRef.current}`;
+		chat.setIsSending(true);
+		chat.setError(null);
+
+		beginGenerationToast({
+			id: toastId,
+			title: "Breaking down to shots",
+			location: "Script Workshop",
+			medium: "workshop",
+			status: "Generating shots...",
+		});
+
+		try {
+			await flow.handleGenerateShots();
+
+			updateGenerationToast(toastId, {
+				status: "Reviewing shots...",
+			});
+
+			await flow.handleReviewShots();
+
+			resolveGenerationToast(toastId, {
+				status: "Complete",
+				message: "Shot breakdown finished",
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Generation failed";
+			resolveGenerationToast(toastId, {
+				status: "Failed",
+				message,
+				error: true,
+			});
+			chat.appendAssistantMessage(
+				`Something went wrong: ${message}. You can try again.`,
+			);
+		} finally {
+			chat.setIsSending(false);
+		}
+	}, [chat, flow]);
+
 	return (
 		<div className="flex-1 min-h-0 flex overflow-hidden">
 			{/* Chat panel */}
@@ -96,12 +146,18 @@ export function ChatWorkshop({
 									.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
 									.join("\n\n");
 								navigator.clipboard.writeText(transcript);
+								setTranscriptCopied(true);
+								setTimeout(() => setTranscriptCopied(false), 1500);
 							}}
-							className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-							title="Copy chat transcript"
+							className={`flex items-center gap-1 text-xs transition-colors ${
+								transcriptCopied
+									? "text-emerald-500"
+									: "text-muted-foreground hover:text-foreground"
+							}`}
+							title={transcriptCopied ? "Copied!" : "Copy chat transcript"}
 						>
-							<ClipboardCopy size={12} />
-							Copy
+							{transcriptCopied ? <Check size={12} /> : <ClipboardCopy size={12} />}
+							{transcriptCopied ? "Copied" : "Copy"}
 						</button>
 					)}
 				</div>
@@ -256,65 +312,81 @@ export function ChatWorkshop({
 						</div>
 					)}
 
+					{flow.stage === "outline" && flow.generatingStage === "outline" && !flow.outline && (
+						<OutlinePanelSkeleton />
+					)}
+
 					{flow.stage === "outline" && flow.outline && (
-						<OutlinePanel
-							outline={flow.outline}
-							selectedItemId={flow.selectedItemId}
-							onSelectItem={flow.setSelectedItemId}
-							isStale={flow.staleStages.includes("outline")}
-							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
-							}
-							onBreakdownToShots={() =>
-								void handleGenerateWithChat(flow.handleGenerateShots, "Breaking down to shots")
-							}
-							isGenerating={flow.isGenerating}
-						/>
+						<div className="animate-fade-in-up">
+							<OutlinePanel
+								outline={flow.outline}
+								selectedItemId={flow.selectedItemId}
+								onSelectItem={flow.setSelectedItemId}
+								isStale={flow.staleStages.includes("outline")}
+								onRegenerate={() =>
+									void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
+								}
+								onBreakdownToShots={() => void handleGenerateShotsWithReview()}
+								isGenerating={flow.isGenerating}
+							/>
+						</div>
+					)}
+
+					{flow.stage === "shots" && flow.generatingStage === "shots" && !flow.shots && (
+						<ShotsPanelSkeleton />
 					)}
 
 					{flow.stage === "shots" && flow.shots && (
-						<ShotsPanel
-							shots={flow.shots}
-							selectedItemId={flow.selectedItemId}
-							onSelectItem={flow.setSelectedItemId}
-							isStale={flow.staleStages.includes("shots")}
-							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateShots, "Breaking down to shots")
-							}
-							onGeneratePrompts={() =>
-								void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
-							}
-							isGenerating={flow.isGenerating}
-						/>
+						<div className="animate-fade-in-up">
+							<ShotsPanel
+								shots={flow.shots}
+								selectedItemId={flow.selectedItemId}
+								onSelectItem={flow.setSelectedItemId}
+								isStale={flow.staleStages.includes("shots")}
+								onRegenerate={() => void handleGenerateShotsWithReview()}
+								onGeneratePrompts={() =>
+									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
+								}
+								isGenerating={flow.isGenerating}
+							/>
+						</div>
+					)}
+
+					{flow.stage === "prompts" && flow.generatingStage === "prompts" && !flow.imagePrompts && (
+						<PromptsPanelSkeleton />
 					)}
 
 					{flow.stage === "prompts" && flow.shots && (
-						<PromptsPanel
-							shots={flow.shots}
-							imagePrompts={flow.imagePrompts ?? []}
-							selectedItemId={flow.selectedItemId}
-							onSelectItem={flow.setSelectedItemId}
-							isStale={flow.staleStages.includes("prompts")}
-							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
-							}
-							onApprove={() => {
-							chat.setIsSending(true);
-							flow
-								.handleApprove()
-								.catch((err) => {
-									const message =
-										err instanceof Error
-											? err.message
-											: "Failed to approve";
-									chat.appendAssistantMessage(
-										`Something went wrong: ${message}. You can try again.`,
-									);
-								})
-								.finally(() => chat.setIsSending(false));
-						}}
-							isApproving={flow.isGenerating}
-						/>
+						<div className="animate-fade-in-up">
+							<PromptsPanel
+								projectId={projectId}
+								shots={flow.shots}
+								imagePrompts={flow.imagePrompts ?? []}
+								selectedItemId={flow.selectedItemId}
+								onSelectItem={flow.setSelectedItemId}
+								isStale={flow.staleStages.includes("prompts")}
+								onRegenerate={() =>
+									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
+								}
+								onApprove={() => {
+								chat.setIsSending(true);
+								flow
+									.handleApprove()
+									.catch((err) => {
+										const message =
+											err instanceof Error
+												? err.message
+												: "Failed to approve";
+										chat.appendAssistantMessage(
+											`Something went wrong: ${message}. You can try again.`,
+										);
+									})
+									.finally(() => chat.setIsSending(false));
+							}}
+								isApproving={flow.isGenerating}
+								hasApprovedShots={hasApprovedShots}
+							/>
+						</div>
 					)}
 
 					{flow.stage !== "discovery" &&
