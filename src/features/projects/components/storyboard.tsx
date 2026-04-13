@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
-	AlertCircle,
 	CheckCircle2,
 	Copy,
 	Download,
@@ -16,6 +15,7 @@ import {
 	Timer,
 	Trash2,
 	Users,
+	Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -62,6 +62,7 @@ import {
 	deleteShot,
 	reorderShot,
 } from "../shot-actions";
+import { generateAllTransitionVideos } from "../transition-actions";
 import { isPendingVideoStatus } from "../video-status";
 import { ResetDialog } from "./reset-dialog";
 import { ShotCard } from "./shot-card";
@@ -118,6 +119,8 @@ export function Storyboard({
 	const [isResetting, setIsResetting] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
 	const [isCopyingScript, setIsCopyingScript] = useState(false);
+	const [isGeneratingAllTransitions, setIsGeneratingAllTransitions] = useState(false);
+	const [regenerateExisting, setRegenerateExisting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [selectedShotId, setSelectedShotIdState] = useState<string | null>(
 		initialShotId ?? null,
@@ -506,6 +509,30 @@ export function Storyboard({
 			setError(err instanceof Error ? err.message : "Failed to copy script");
 		} finally {
 			setIsCopyingScript(false);
+		}
+	}
+
+	async function handleGenerateAllTransitions() {
+		setIsGeneratingAllTransitions(true);
+		setError(null);
+		try {
+			const result = await generateAllTransitionVideos({
+				data: { projectId, regenerateExisting },
+			});
+			if (result.queued > 0) {
+				toast(`Queued ${result.queued} transition video${result.queued > 1 ? "s" : ""}`, "success");
+			} else if (result.skipped > 0) {
+				toast("All transitions already have videos or are missing images", "info");
+			} else {
+				toast(result.message, "info");
+			}
+			await queryClient.invalidateQueries({
+				queryKey: projectKeys.project(projectId),
+			});
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to generate transitions");
+		} finally {
+			setIsGeneratingAllTransitions(false);
 		}
 	}
 
@@ -1310,6 +1337,31 @@ export function Storyboard({
 							)}
 							Copy script
 						</Button>
+						<div className="flex items-center gap-2 border-l pl-3 ml-1">
+							<label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+								<input
+									type="checkbox"
+									checked={regenerateExisting}
+									onChange={(e) => setRegenerateExisting(e.target.checked)}
+									className="w-3 h-3 rounded border-border"
+								/>
+								Regenerate all
+							</label>
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={isGeneratingAllTransitions || storyShots.length < 2}
+								onClick={handleGenerateAllTransitions}
+								className="gap-1.5"
+							>
+								{isGeneratingAllTransitions ? (
+									<Loader2 size={12} className="animate-spin" />
+								) : (
+									<Video size={12} />
+								)}
+								Generate transitions
+							</Button>
+						</div>
 						<ResetDialog isResetting={isResetting} onConfirm={handleReset} />
 					</div>
 				</div>

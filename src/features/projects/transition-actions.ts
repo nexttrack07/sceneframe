@@ -2,11 +2,11 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { runs } from "@trigger.dev/sdk";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import Replicate from "replicate";
 import { db } from "@/db/index";
-import { assets, transitionVideos } from "@/db/schema";
-import { assertShotOwner } from "@/lib/assert-project-owner.server";
+import { assets, shots, transitionVideos } from "@/db/schema";
+import { assertProjectOwner, assertShotOwner } from "@/lib/assert-project-owner.server";
 import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
 import { uploadFromUrl } from "@/lib/r2.server";
 import { startTransitionVideoGeneration } from "@/trigger";
@@ -899,4 +899,205 @@ export const deleteTransitionVideo = createServerFn({ method: "POST" })
 
 		// R2 cleanup AFTER the DB soft-delete
 		await cleanupStorageKeys([tv.storageKey]);
+	});
+
+export const generateAllTransitionVideos = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: { projectId: string; regenerateExisting: boolean }) => data,
+	)
+	.handler(async ({ data: { projectId, regenerateExisting } }) => {
+		const { userId, project } = await assertProjectOwner(projectId, "error");
+
+		// Get all shots ordered by position
+		const projectShots = await db.query.shots.findMany({
+			where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+			orderBy: asc(shots.order),
+		});
+
+		if (projectShots.length < 2) {
+			return { queued: 0, skipped: 0, errors: [], message: "Need at least 2 shots for transitions" };
+		}
+
+		// Get all selected images for these shots
+		const shotIds = projectShots.map((s) => s.id);
+		const selectedImages = await db.query.assets.findMany({
+			where: and(
+				inArray(assets.shotId, shotIds),
+				inArray(assets.type, ["start_image", "end_image", "image"]),
+				eq(assets.isSelected, true),
+				eq(assets.status, "done"),
+				isNull(assets.deletedAt),
+			),
+		});
+
+		// Map shot ID to selected image
+		const shotImageMap = new Map<string, typeof selectedImages[0]>();
+		for (const img of selectedImages) {
+			if (img.shotId) shotImageMap.set(img.shotId, img);
+		}
+
+		// Get existing transition videos (prompt drafts and completed videos)
+		const existingTransitions = await db.query.transitionVideos.findMany({
+			where: and(
+				eq(transitionVideos.projectId, projectId),
+				isNull(transitionVideos.deletedAt),
+			),
+		});
+
+		// Map (fromShotId, toShotId) -> existing transition info
+		const transitionMap = new Map<string, { hasPrompt: boolean; hasVideo: boolean; prompt: string | null }>();
+		for (const tv of existingTransitions) {
+			const key = `${tv.fromShotId}:${tv.toShotId}`;
+			const existing = transitionMap.get(key);
+			const hasVideo = tv.status === "done" && Boolean(tv.url);
+			const hasPrompt = Boolean(tv.prompt);
+
+			if (!existing) {
+				transitionMap.set(key, { hasPrompt, hasVideo, prompt: tv.prompt });
+			} else {
+				// Prefer entries with videos, then prompts
+				if (hasVideo && !existing.hasVideo) {
+					transitionMap.set(key, { hasPrompt, hasVideo, prompt: tv.prompt });
+				} else if (hasPrompt && !existing.hasPrompt && !existing.hasVideo) {
+					transitionMap.set(key, { hasPrompt, hasVideo, prompt: tv.prompt });
+				}
+			}
+		}
+
+		const normalizedVideo = normalizeVideoDefaults(undefined);
+		const modelId = normalizedVideo.model;
+
+		// Kling format validation
+		function isKlingSupportedFormat(url: string): boolean {
+			return /\.(jpg|jpeg|png)(\?|$)/i.test(url);
+		}
+
+		const results: { fromShotId: string; toShotId: string; transitionVideoId: string; jobId: string }[] = [];
+		const skipped: { fromShotId: string; toShotId: string; reason: string }[] = [];
+		const errors: { fromShotId: string; toShotId: string; error: string }[] = [];
+
+		// Process adjacent shot pairs
+		for (let i = 0; i < projectShots.length - 1; i++) {
+			const fromShot = projectShots[i];
+			const toShot = projectShots[i + 1];
+			const key = `${fromShot.id}:${toShot.id}`;
+
+			// Check if both shots have selected images
+			const fromImage = shotImageMap.get(fromShot.id);
+			const toImage = shotImageMap.get(toShot.id);
+
+			if (!fromImage?.url || !toImage?.url) {
+				skipped.push({
+					fromShotId: fromShot.id,
+					toShotId: toShot.id,
+					reason: "Missing selected image on one or both shots",
+				});
+				continue;
+			}
+
+			// Check Kling format support
+			if (!isKlingSupportedFormat(fromImage.url) || !isKlingSupportedFormat(toImage.url)) {
+				skipped.push({
+					fromShotId: fromShot.id,
+					toShotId: toShot.id,
+					reason: "Images must be PNG or JPEG (WebP not supported)",
+				});
+				continue;
+			}
+
+			// Check existing transition status
+			const existing = transitionMap.get(key);
+			if (!regenerateExisting && existing?.hasVideo) {
+				skipped.push({
+					fromShotId: fromShot.id,
+					toShotId: toShot.id,
+					reason: "Already has a completed video",
+				});
+				continue;
+			}
+
+			// Get or generate prompt
+			let prompt = existing?.prompt;
+			if (!prompt) {
+				// Generate prompt for this pair
+				try {
+					const result = await generateAndSaveTransitionPromptForPair({
+						fromShotId: fromShot.id,
+						toShotId: toShot.id,
+						useProjectContext: true,
+						usePrevShotContext: true,
+					});
+					prompt = result.prompt;
+				} catch (err) {
+					errors.push({
+						fromShotId: fromShot.id,
+						toShotId: toShot.id,
+						error: `Failed to generate prompt: ${err instanceof Error ? err.message : String(err)}`,
+					});
+					continue;
+				}
+			}
+
+			// Create transition video record and trigger generation
+			try {
+				const normalizedModelOptions = {
+					...normalizedVideo.modelOptions,
+					duration:
+						typeof normalizedVideo.modelOptions.duration === "number"
+							? normalizedVideo.modelOptions.duration
+							: fromShot.durationSec,
+				};
+
+				const [placeholder] = await db
+					.insert(transitionVideos)
+					.values({
+						projectId: project.id,
+						fromShotId: fromShot.id,
+						toShotId: toShot.id,
+						fromImageId: fromImage.id,
+						toImageId: toImage.id,
+						prompt,
+						model: modelId,
+						modelSettings: normalizedModelOptions,
+						status: "queued",
+						isSelected: false,
+						stale: false,
+					})
+					.returning({ id: transitionVideos.id });
+
+				const handle = await startTransitionVideoGeneration.trigger({
+					transitionVideoId: placeholder.id,
+					userId,
+					modelId,
+					prompt,
+					modelOptions: normalizedModelOptions,
+				});
+
+				await db
+					.update(transitionVideos)
+					.set({ jobId: handle.id })
+					.where(eq(transitionVideos.id, placeholder.id));
+
+				results.push({
+					fromShotId: fromShot.id,
+					toShotId: toShot.id,
+					transitionVideoId: placeholder.id,
+					jobId: handle.id,
+				});
+			} catch (err) {
+				errors.push({
+					fromShotId: fromShot.id,
+					toShotId: toShot.id,
+					error: `Failed to queue generation: ${err instanceof Error ? err.message : String(err)}`,
+				});
+			}
+		}
+
+		return {
+			queued: results.length,
+			skipped: skipped.length,
+			errors: errors.length,
+			details: { results, skipped, errors },
+			message: `Queued ${results.length} transition videos${skipped.length > 0 ? `, skipped ${skipped.length}` : ""}${errors.length > 0 ? `, ${errors.length} errors` : ""}`,
+		};
 	});
