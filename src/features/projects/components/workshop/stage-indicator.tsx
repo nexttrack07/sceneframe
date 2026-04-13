@@ -2,7 +2,6 @@ import { AlertTriangle, Check } from "lucide-react";
 import type { WorkshopStage } from "../../project-types";
 
 const STAGES: { key: WorkshopStage; label: string }[] = [
-	{ key: "discovery", label: "Discovery" },
 	{ key: "outline", label: "Outline" },
 	{ key: "shots", label: "Shots" },
 	{ key: "prompts", label: "Prompts" },

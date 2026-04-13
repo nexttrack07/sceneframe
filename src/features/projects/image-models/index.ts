@@ -1,6 +1,7 @@
 import type { ImageDefaults, ImageSettingValue } from "../project-types";
 import { flux2FlexSchema } from "./schemas/flux-2-flex";
 import { nanoBananaSchema } from "./schemas/nano-banana";
+import { pImageSchema } from "./schemas/p-image";
 
 type ImageSettingPrimitive = string | number | boolean;
 
@@ -787,6 +788,25 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 			"output_format",
 			"safety_tolerance",
 		],
+	},
+	{
+		id: "prunaai/p-image",
+		label: "P-Image",
+		provider: "Pruna",
+		replicateExecution: {
+			provider: "replicate",
+			model: "prunaai/p-image",
+			imageToImageModel: "prunaai/p-image-edit",
+		},
+		description:
+			"Ultra-fast sub-second image generation with strong prompt adherence. Automatically uses P-Image Edit when reference images are provided.",
+		logoText: "P",
+		accentClassName:
+			"bg-[linear-gradient(135deg,#1e1b4b_0%,#7c3aed_35%,#a855f7_65%,#e9d5ff_100%)]",
+		schema: pImageSchema,
+		supportsReferenceImages: true,
+		referenceInputField: "images",
+		visibleSettings: ["aspect_ratio", "prompt_upsampling"],
 	},
 ] as const;
 

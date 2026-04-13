@@ -57,7 +57,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 		(data: {
 			projectId: string;
 			content: string;
-			stage?: "discovery" | "outline" | "shots" | "prompts";
+			stage?: "outline" | "shots" | "prompts";
 			clientMessageId?: string;
 		}) => {
 			const trimmed = data.content.trim();
@@ -127,7 +127,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 		const intake = settings?.intake ?? null;
 		const scriptDraft = project.scriptDraft ?? null;
 
-		const currentStage = stage ?? scriptDraft?.stage ?? "discovery";
+		const currentStage = stage ?? scriptDraft?.stage ?? "outline";
 
 		const intakeContext = intake
 			? `
@@ -143,11 +143,12 @@ CREATIVE DIRECTION (from project setup):
 			? `\nCURRENT OUTLINE (${scriptDraft.outline.length} beats generated)`
 			: "";
 
+		const hasOutline = Boolean(scriptDraft?.outline?.length);
 		const stageInstruction =
-			currentStage === "discovery"
-				? `You are in the DISCOVERY phase. Your ONLY job is to understand what video the user wants to create through conversation.
+			currentStage === "outline" && !hasOutline
+				? `You are in the OUTLINE phase, but no outline has been generated yet. Your job is to understand what video the user wants to create through conversation.
 
-STRICT RULES FOR DISCOVERY:
+STRICT RULES:
 - Ask specific, cinematographer-style questions: What's the core concept? What camera style? Any special effects? How many characters? What's the emotional arc? What's the pacing?
 - Ask ONE or TWO questions per response. Not more.
 - NEVER generate outlines, scripts, narration, or any structured content. This is a conversation, not a generation step.

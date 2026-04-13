@@ -267,7 +267,7 @@ export function ChatWorkshop({
 					onStageClick={flow.setStage}
 				/>
 				<div className="flex-1 overflow-y-auto px-8 py-8">
-					{flow.stage === "discovery" && (
+					{flow.stage === "outline" && !flow.outline && flow.generatingStage !== "outline" && (
 						<div className="h-full rounded-2xl border border-dashed border-border/70 bg-background/70 flex items-center justify-center">
 							<div className="text-center max-w-md px-6">
 								{chat.chatMessages.length >= 2 && !chat.isSending && !flow.isGenerating ? (
@@ -288,13 +288,6 @@ export function ChatWorkshop({
 											<Sparkles size={14} className="mr-2" />
 											Generate outline
 										</Button>
-									</>
-								) : flow.isGenerating ? (
-									<>
-										<Loader2 size={26} className="animate-spin text-muted-foreground mx-auto mb-3" />
-										<p className="text-sm text-muted-foreground">
-											Generating outline...
-										</p>
 									</>
 								) : (
 									<>
@@ -389,21 +382,6 @@ export function ChatWorkshop({
 						</div>
 					)}
 
-					{flow.stage !== "discovery" &&
-						!flow.outline &&
-						!flow.shots && (
-							<div className="h-full rounded-2xl border border-dashed border-border/70 bg-background/70 flex items-center justify-center">
-								<div className="text-center max-w-md px-6">
-									<Loader2
-										size={26}
-										className="animate-spin text-muted-foreground mx-auto mb-3"
-									/>
-									<p className="text-sm text-muted-foreground">
-										Generating...
-									</p>
-								</div>
-							</div>
-						)}
 				</div>
 			</div>
 		</div>

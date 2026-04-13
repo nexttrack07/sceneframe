@@ -50,7 +50,6 @@ export interface OpeningHookDraft {
 }
 
 export type WorkshopStage =
-	| "discovery"
 	| "outline"
 	| "shots"
 	| "prompts";

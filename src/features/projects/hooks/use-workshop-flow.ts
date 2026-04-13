@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
 	IntakeAnswers,
 	OutlineEntry,
@@ -16,7 +16,6 @@ import {
 	generateOutline,
 	generateShots,
 	reviewAndFixShots,
-	setWorkshopStage,
 } from "../workshop-mutations";
 
 interface UseWorkshopFlowArgs {
@@ -36,7 +35,18 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
 	const draft = project.scriptDraft ?? null;
-	const stage: WorkshopStage = draft?.stage ?? "discovery";
+	const serverStage: WorkshopStage = draft?.stage ?? "outline";
+
+	// Local stage for instant tab switching - initialized from server, updated locally
+	const [localStage, setLocalStage] = useState<WorkshopStage>(serverStage);
+
+	// Sync local stage when server stage changes (e.g., after generation advances stage)
+	useEffect(() => {
+		setLocalStage(serverStage);
+	}, [serverStage]);
+
+	// Use local stage for UI
+	const stage: WorkshopStage = localStage;
 	const outline: OutlineEntry[] | null = draft?.outline ?? null;
 	const shots: ShotDraftEntry[] | null = draft?.shots ?? null;
 	const imagePrompts: Array<{
@@ -54,15 +64,10 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		});
 	}, [projectId, queryClient]);
 
-	const setStage = useCallback(
-		async (nextStage: WorkshopStage) => {
-			await setWorkshopStage({
-				data: { projectId, stage: nextStage },
-			});
-			await invalidateProject();
-		},
-		[projectId, invalidateProject],
-	);
+	// Instant local stage change - no server round-trip for tab navigation
+	const setStage = useCallback((nextStage: WorkshopStage) => {
+		setLocalStage(nextStage);
+	}, []);
 
 	const handleGenerateOutline = useCallback(
 		async (feedback?: string): Promise<string> => {

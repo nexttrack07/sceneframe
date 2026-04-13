@@ -346,6 +346,31 @@ async function generateFalImageSync(args: GenerateImageSyncArgs): Promise<string
 // Replicate Provider Implementation
 // =============================================================================
 
+function resolveReplicateModel(
+	execution: ImageModelExecution,
+	mode: ImageGenerationMode,
+	input: Record<string, unknown>,
+): string {
+	if (execution.provider !== "replicate") {
+		throw new Error("Expected replicate provider for model resolution.");
+	}
+
+	// Check if we have reference images in the input
+	const hasReferenceImages =
+		typeof input.image_url === "string" ||
+		(Array.isArray(input.image_urls) && input.image_urls.length > 0) ||
+		(Array.isArray(input.images) && input.images.length > 0) ||
+		(Array.isArray(input.image_input) && input.image_input.length > 0) ||
+		(Array.isArray(input.input_images) && input.input_images.length > 0) ||
+		typeof input.image_prompt === "string";
+
+	if ((mode === "image-to-image" || hasReferenceImages) && execution.imageToImageModel) {
+		return execution.imageToImageModel;
+	}
+
+	return execution.model;
+}
+
 async function submitReplicateGeneration(
 	args: SubmitImageGenerationArgs,
 	execution: ImageModelExecution,
@@ -354,13 +379,15 @@ async function submitReplicateGeneration(
 		throw new Error("Expected replicate provider.");
 	}
 
+	const model = resolveReplicateModel(execution, args.mode, args.input);
+
 	console.info(
-		`[ImageProvider] submit provider=replicate mode=${args.mode} model=${args.modelId} endpoint=${execution.model}`,
+		`[ImageProvider] submit provider=replicate mode=${args.mode} model=${args.modelId} endpoint=${model}`,
 	);
 
 	const replicate = new Replicate({ auth: args.providerApiKey });
 	const prediction = await replicate.predictions.create({
-		model: execution.model as `${string}/${string}`,
+		model: model as `${string}/${string}`,
 		input: args.input,
 	});
 
@@ -431,12 +458,14 @@ async function generateReplicateImageSync(args: GenerateImageSyncArgs): Promise<
 		throw new Error("Expected replicate provider for sync generation.");
 	}
 
+	const model = resolveReplicateModel(execution, args.mode, args.input);
+
 	console.info(
-		`[ImageProvider] generateSync provider=replicate mode=${args.mode} model=${args.modelId} endpoint=${execution.model}`,
+		`[ImageProvider] generateSync provider=replicate mode=${args.mode} model=${args.modelId} endpoint=${model}`,
 	);
 
 	const replicate = new Replicate({ auth: args.providerApiKey });
-	const output = await replicate.run(execution.model as `${string}/${string}`, {
+	const output = await replicate.run(model as `${string}/${string}`, {
 		input: args.input,
 	});
 
