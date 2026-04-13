@@ -176,7 +176,7 @@ function OnboardingPage() {
 							</p>
 						</div>
 						{error && <p className="text-sm text-destructive">{error}</p>}
-						<Button type="submit" className="w-full" disabled={isPending}>
+						<Button type="submit" variant="accent" className="w-full" disabled={isPending}>
 							{isPending
 								? "Saving…"
 								: isReturning

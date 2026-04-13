@@ -848,6 +848,7 @@ export function VideoControlsPanel({
 				<Button
 					onClick={onGenerate}
 					disabled={isQueueing || !videoPrompt.trim()}
+					variant="accent"
 					className="w-full gap-2"
 					size="lg"
 				>

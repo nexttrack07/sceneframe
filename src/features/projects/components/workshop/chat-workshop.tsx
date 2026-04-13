@@ -281,6 +281,7 @@ export function ChatWorkshop({
 											outline for your video.
 										</p>
 										<Button
+											variant="accent"
 											onClick={() =>
 												void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
 											}
