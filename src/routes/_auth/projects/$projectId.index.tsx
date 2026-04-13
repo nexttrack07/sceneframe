@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Check, Film, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Film, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
 	AlertDialog,
@@ -40,7 +40,6 @@ export const Route = createFileRoute("/_auth/projects/$projectId/")({
 			from: typeof search.from === "string" ? search.from : undefined,
 			to: typeof search.to === "string" ? search.to : undefined,
 			mediaTab,
-			workshop: search.workshop === "true" ? ("true" as const) : undefined,
 		};
 	},
 	loader: async ({ params, context: { queryClient } }) => {
@@ -78,7 +77,7 @@ function ProjectPage() {
 		voiceovers: projectVoiceovers,
 		backgroundMusic: projectBackgroundMusic,
 	} = data_;
-	const { shot: shotParam, from, to, mediaTab, workshop } = Route.useSearch();
+	const { shot: shotParam, from, to, mediaTab } = Route.useSearch();
 	const navigate = useNavigate();
 
 	// Resolve "first" to the actual first shot ID
@@ -97,8 +96,6 @@ function ProjectPage() {
 		});
 	}
 
-	const isWorkshopPhase =
-		workshop === "true" || project.scriptStatus !== "done";
 	const isDetailView = Boolean(shot || (from && to));
 
 	return (
@@ -106,8 +103,8 @@ function ProjectPage() {
 			<ProjectHeader
 				projectId={project.id}
 				isDetailView={isDetailView}
-				showEditorLink={!isWorkshopPhase}
-				onBackToStoryboard={() => {
+				showEditorLink={isDetailView}
+				onBackToWorkshop={() => {
 					navigate({
 						to: "/projects/$projectId",
 						params: { projectId: project.id },
@@ -127,12 +124,20 @@ function ProjectPage() {
 						<h1 className="text-sm font-semibold text-foreground truncate">
 							{project.name}
 						</h1>
-						{!isWorkshopPhase && projectShots.length > 0 && (
+						{projectShots.length > 0 && (
 							<span className="text-xs text-muted-foreground shrink-0">
 								{projectShots.length} shot{projectShots.length !== 1 ? "s" : ""}
 							</span>
 						)}
-						{isWorkshopPhase ? (
+						{isDetailView ? (
+							<Badge
+								variant="outline"
+								className="gap-1 text-[10px] py-0.5 px-1.5 text-success border-success/40 bg-success/10"
+							>
+								<Check size={10} />
+								Shot Detail
+							</Badge>
+						) : (
 							<Badge
 								variant="outline"
 								className="gap-1 text-[10px] py-0.5 px-1.5 text-primary border-primary/40 bg-primary/10"
@@ -140,36 +145,11 @@ function ProjectPage() {
 								<Film size={10} />
 								Workshop
 							</Badge>
-						) : (
-							<Badge
-								variant="outline"
-								className="gap-1 text-[10px] py-0.5 px-1.5 text-success border-success/40 bg-success/10"
-							>
-								<Check size={10} />
-								Approved
-							</Badge>
 						)}
 					</div>
 
 					{/* Right side: actions */}
 					<div className="flex items-center gap-2 shrink-0">
-						{isWorkshopPhase && project.scriptStatus === "done" && (
-							<Button
-								variant="outline"
-								size="xs"
-								asChild
-							>
-								<Link
-									to="/projects/$projectId"
-									params={{ projectId: project.id }}
-									search={{}}
-									className="gap-1"
-								>
-									Back to Storyboard
-									<ArrowRight size={12} />
-								</Link>
-							</Button>
-						)}
 						{!isDetailView && (
 							<DeleteProjectDialog
 								projectName={project.name}
@@ -184,22 +164,12 @@ function ProjectPage() {
 			</ProjectHeader>
 
 			{/* Content */}
-			{isWorkshopPhase ? (
-				<ScriptWorkshop
-					key={`${project.id}-workshop`}
-					projectId={project.id}
-					existingMessages={projectMessages}
-					projectSettings={project.settings}
-					scriptDraft={project.scriptDraft}
-					hasApprovedShots={project.scriptStatus === "done"}
-				/>
-			) : isDetailView ? (
+			{isDetailView ? (
 				<Storyboard
 					projectId={project.id}
 					shots={projectShots}
 					assets={projectAssets}
 					projectSettings={project.settings}
-					
 					transitionVideos={projectTransitionVideos}
 					shotVideoAssets={projectShotVideoAssets}
 					motionGraphics={projectMotionGraphics}
@@ -211,21 +181,12 @@ function ProjectPage() {
 					initialMediaTab={mediaTab}
 				/>
 			) : (
-				<Storyboard
+				<ScriptWorkshop
+					key={`${project.id}-workshop`}
 					projectId={project.id}
-					shots={projectShots}
-					assets={projectAssets}
+					existingMessages={projectMessages}
 					projectSettings={project.settings}
-					
-					transitionVideos={projectTransitionVideos}
-					shotVideoAssets={projectShotVideoAssets}
-					motionGraphics={projectMotionGraphics}
-					voiceovers={projectVoiceovers}
-					backgroundMusic={projectBackgroundMusic}
-					initialShotId={shot}
-					initialFromShotId={from}
-					initialToShotId={to}
-					initialMediaTab={mediaTab}
+					scriptDraft={project.scriptDraft}
 				/>
 			)}
 		</div>
@@ -241,13 +202,13 @@ function ProjectHeader({
 	projectId,
 	isDetailView = false,
 	showEditorLink = false,
-	onBackToStoryboard,
+	onBackToWorkshop,
 }: {
 	children?: React.ReactNode;
 	projectId?: string;
 	isDetailView?: boolean;
 	showEditorLink?: boolean;
-	onBackToStoryboard?: () => void;
+	onBackToWorkshop?: () => void;
 }) {
 	return (
 		<div className="px-4 py-2 border-b bg-card shrink-0 flex items-center gap-3">
@@ -255,11 +216,11 @@ function ProjectHeader({
 				<>
 					<button
 						type="button"
-						onClick={onBackToStoryboard}
+						onClick={onBackToWorkshop}
 						className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
 					>
 						<ArrowLeft size={12} />
-						Back to Storyboard
+						Back to Workshop
 					</button>
 					<div className="h-4 w-px bg-border" />
 				</>

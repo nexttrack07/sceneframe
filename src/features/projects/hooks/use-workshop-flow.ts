@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import type {
 	IntakeAnswers,
@@ -11,7 +10,6 @@ import type {
 } from "../project-types";
 import { projectKeys } from "../query-keys";
 import {
-	approveWorkshop,
 	generateImagePrompts,
 	generateOutline,
 	generateShots,
@@ -28,7 +26,6 @@ interface UseWorkshopFlowArgs {
 
 export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const queryClient = useQueryClient();
-	const router = useRouter();
 
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [generatingStage, setGeneratingStage] = useState<WorkshopStage | null>(null);
@@ -134,38 +131,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 			}
 		}, [projectId, invalidateProject]);
 
-	const handleApprove = useCallback(async (): Promise<void> => {
-		if (!shots || shots.length === 0) {
-			throw new Error("No shots to approve");
-		}
-		setIsGenerating(true);
-		try {
-			await approveWorkshop({
-				data: {
-					projectId,
-					shots,
-					imagePrompts: imagePrompts ?? undefined,
-				},
-			});
-			await queryClient.invalidateQueries({
-				queryKey: projectKeys.project(projectId),
-			});
-			router.navigate({
-				to: "/projects/$projectId",
-				params: { projectId },
-				search: {
-					scene: undefined,
-					shot: "first",
-					from: undefined,
-					to: undefined,
-					mediaTab: undefined,
-				},
-			});
-		} finally {
-			setIsGenerating(false);
-		}
-	}, [projectId, shots, imagePrompts, queryClient, router]);
-
 	return {
 		stage,
 		outline,
@@ -180,7 +145,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		handleGenerateShots,
 		handleReviewShots,
 		handleGenerateImagePrompts,
-		handleApprove,
 		isGenerating,
 		generatingStage,
 	};

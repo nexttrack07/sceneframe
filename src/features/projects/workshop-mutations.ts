@@ -28,6 +28,118 @@ const MAX_MESSAGE_LENGTH = 5_000;
 const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
 
+/**
+ * Replace all shots for a project with a new shot list.
+ *
+ * Soft-deletes existing shots, their assets, and any transition videos
+ * that referenced them, then inserts the new shot rows with cumulative
+ * timestamps. Returns the storage keys that need R2 cleanup AFTER the
+ * caller commits the transaction.
+ *
+ * Used by generateShots and reviewAndFixShots so that workshop-stage
+ * generation auto-promotes draft shots into real DB rows. First-time
+ * generation is a clean insert (nothing to delete). Re-generation is
+ * inherently destructive — that is the cost of regenerating shots.
+ */
+async function collectShotReplacementCleanupKeys(projectId: string) {
+	const existingAssets = await db
+		.select({ storageKey: assets.storageKey })
+		.from(assets)
+		.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+	const assetKeys: string[] = existingAssets
+		.map((a) => a.storageKey)
+		.filter((k): k is string => Boolean(k));
+
+	const existingShotIds = (
+		await db
+			.select({ id: shots.id })
+			.from(shots)
+			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+	).map((r) => r.id);
+
+	const transitionKeys: string[] = [];
+	if (existingShotIds.length > 0) {
+		const tvRows = await db
+			.select({ storageKey: transitionVideos.storageKey })
+			.from(transitionVideos)
+			.where(
+				and(
+					or(
+						inArray(transitionVideos.fromShotId, existingShotIds),
+						inArray(transitionVideos.toShotId, existingShotIds),
+					),
+					isNull(transitionVideos.deletedAt),
+				),
+			);
+		for (const tv of tvRows) {
+			if (tv.storageKey) transitionKeys.push(tv.storageKey);
+		}
+	}
+
+	return { assetKeys, transitionKeys };
+}
+
+async function replaceShotRowsInTx(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	projectId: string,
+	shotPlan: ShotPlanEntry[],
+) {
+	const now = new Date();
+
+	const existingShotIds = (
+		await tx
+			.select({ id: shots.id })
+			.from(shots)
+			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+	).map((r) => r.id);
+
+	if (existingShotIds.length > 0) {
+		await tx
+			.update(shots)
+			.set({ deletedAt: now })
+			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)));
+
+		await tx
+			.update(assets)
+			.set({ deletedAt: now })
+			.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+
+		await tx
+			.update(transitionVideos)
+			.set({ deletedAt: now })
+			.where(
+				and(
+					or(
+						inArray(transitionVideos.fromShotId, existingShotIds),
+						inArray(transitionVideos.toShotId, existingShotIds),
+					),
+					isNull(transitionVideos.deletedAt),
+				),
+			);
+	}
+
+	let cursor = 0;
+	const shotValues = shotPlan.map((shot, i) => {
+		const start = cursor;
+		cursor += shot.durationSec;
+		return {
+			projectId,
+			order: i + 1,
+			description: shot.description,
+			imagePrompt: shot.imagePrompt?.trim() || shot.description,
+			shotType: shot.shotType,
+			shotSize: shot.shotSize ?? "medium",
+			durationSec: shot.durationSec,
+			timestampStart: start,
+			timestampEnd: cursor,
+		};
+	});
+
+	if (shotValues.length > 0) {
+		await tx.insert(shots).values(shotValues);
+	}
+}
+
 function buildSelectionContext(
 	selectedItemId: string | undefined,
 	scriptDraft: ScriptDraft | null,
@@ -275,201 +387,24 @@ Global rules:
 		}
 	});
 
+/**
+ * @deprecated Shot promotion now happens automatically inside generateShots,
+ * reviewAndFixShots, and generateImagePrompts. This server function is kept
+ * as a no-op for backward compatibility with any cached client bundles.
+ * Safe to remove once all clients have updated.
+ */
 export const approveWorkshop = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: {
 			projectId: string;
 			shots: ShotDraftEntry[];
 			imagePrompts?: Array<{ shotIndex: number; prompt: string }>;
-		}) => {
-			if (!data.projectId || typeof data.projectId !== "string") {
-				throw new Error("projectId is required");
-			}
-			const shotsResult = ShotDraftArraySchema.safeParse(data.shots);
-			if (!shotsResult.success) {
-				const issue = shotsResult.error.issues[0];
-				throw new Error(
-					`Invalid shots: ${issue.path.join(".") || "root"} — ${issue.message}`,
-				);
-			}
-			if (data.imagePrompts !== undefined) {
-				const promptsResult = ImagePromptArraySchema.safeParse(
-					data.imagePrompts,
-				);
-				if (!promptsResult.success) {
-					const issue = promptsResult.error.issues[0];
-					throw new Error(
-						`Invalid imagePrompts: ${issue.path.join(".") || "root"} — ${issue.message}`,
-					);
-				}
-			}
-			return {
-				projectId: data.projectId,
-				shots: shotsResult.data,
-				imagePrompts: data.imagePrompts,
-			};
-		},
+		}) => data,
 	)
-	.handler(
-		async ({ data: { projectId, shots: inputShots, imagePrompts } }) => {
-			await assertProjectOwner(projectId, "error");
-			return withWorkshopLock(projectId, async (project) => {
-			// ---------------------------------------------------------------
-			// 1. Convert ShotDraftEntry[] to ShotPlanEntry[] with image prompts
-			// ---------------------------------------------------------------
-			const shotPlan: ShotPlanEntry[] = inputShots.map((shot, shotIdx) => ({
-				description: shot.description,
-				shotType: shot.shotType,
-				shotSize: shot.shotSize,
-				durationSec: shot.durationSec,
-				imagePrompt: imagePrompts?.find((p) => p.shotIndex === shotIdx)?.prompt,
-			}));
-
-			// ---------------------------------------------------------------
-			// 2. Compute cumulative timestamps
-			// ---------------------------------------------------------------
-			let cursor = 0;
-			const timestampedShots = shotPlan.map((shot) => {
-				const start = cursor;
-				cursor += shot.durationSec;
-				return { ...shot, timestampStart: start, timestampEnd: cursor };
-			});
-
-			// ---------------------------------------------------------------
-			// 2b. OUTSIDE transaction: collect existing storage keys for post-commit R2 cleanup
-			// ---------------------------------------------------------------
-			const existingAssetsForCleanup = await db
-				.select({ storageKey: assets.storageKey })
-				.from(assets)
-				.where(
-					and(eq(assets.projectId, projectId), isNull(assets.deletedAt)),
-				);
-
-			const storageKeysToCleanup: string[] = existingAssetsForCleanup
-				.map((a) => a.storageKey)
-				.filter((k): k is string => Boolean(k));
-
-			const existingShotIdsForCleanup = (
-				await db
-					.select({ id: shots.id })
-					.from(shots)
-					.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
-			).map((r) => r.id);
-
-			const transitionKeysToCleanup: string[] = [];
-			if (existingShotIdsForCleanup.length > 0) {
-				const tvRows = await db
-					.select({ storageKey: transitionVideos.storageKey })
-					.from(transitionVideos)
-					.where(
-						and(
-							or(
-								inArray(transitionVideos.fromShotId, existingShotIdsForCleanup),
-								inArray(transitionVideos.toShotId, existingShotIdsForCleanup),
-							),
-							isNull(transitionVideos.deletedAt),
-						),
-					);
-
-				for (const tv of tvRows) {
-					if (tv.storageKey) transitionKeysToCleanup.push(tv.storageKey);
-				}
-			}
-
-			// ---------------------------------------------------------------
-			// 3. INSIDE a single transaction: persist everything
-			// ---------------------------------------------------------------
-			await db.transaction(async (tx) => {
-				const now = new Date();
-
-				// Soft-delete existing shots by projectId
-				const existingShotIds = (
-					await tx
-						.select({ id: shots.id })
-						.from(shots)
-						.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
-				).map((r) => r.id);
-
-				await tx
-					.update(shots)
-					.set({ deletedAt: now })
-					.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)));
-
-				// Soft-delete existing assets by projectId
-				await tx
-					.update(assets)
-					.set({ deletedAt: now })
-					.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
-
-				// Soft-delete existing transition videos by shot IDs
-				if (existingShotIds.length > 0) {
-					await tx
-						.update(transitionVideos)
-						.set({ deletedAt: now })
-						.where(
-							and(
-								or(
-									inArray(transitionVideos.fromShotId, existingShotIds),
-									inArray(transitionVideos.toShotId, existingShotIds),
-								),
-								isNull(transitionVideos.deletedAt),
-							),
-						);
-				}
-
-				// Insert new shot rows flat — already in order
-				const shotValues: Array<{
-					projectId: string;
-					order: number;
-					description: string;
-					imagePrompt: string;
-					shotType: "talking" | "visual";
-					shotSize:
-						| "extreme-wide"
-						| "wide"
-						| "medium"
-						| "close-up"
-						| "extreme-close-up"
-						| "insert";
-					durationSec: number;
-					timestampStart: number;
-					timestampEnd: number;
-				}> = [];
-
-				timestampedShots.forEach((shot, i) => {
-					shotValues.push({
-						projectId,
-						order: i + 1,
-						description: shot.description,
-						imagePrompt: shot.imagePrompt?.trim() || shot.description,
-						shotType: shot.shotType,
-						shotSize: shot.shotSize ?? "medium",
-						durationSec: shot.durationSec,
-						timestampStart: shot.timestampStart,
-						timestampEnd: shot.timestampEnd,
-					});
-				});
-
-				if (shotValues.length > 0) {
-					await tx.insert(shots).values(shotValues);
-				}
-
-				// Update project
-				const directorPrompt = project.name;
-				await tx
-					.update(projects)
-					.set({
-						scriptStatus: "done",
-						directorPrompt,
-					})
-					.where(eq(projects.id, projectId));
-			});
-
-			// R2 cleanup AFTER transaction commits — safe to delete now
-			await cleanupStorageKeys([...storageKeysToCleanup, ...transitionKeysToCleanup]);
-			});
-		},
-	);
+	.handler(async ({ data: { projectId } }) => {
+		await assertProjectOwner(projectId, "error");
+		// no-op: kept for backward compatibility, see deprecation note above
+	});
 
 export const setWorkshopStage = createServerFn({ method: "POST" })
 	.inputValidator(
@@ -678,10 +613,18 @@ Return only this fenced JSON block with a flat array of shots in playback order:
 				stage: "shots",
 			};
 
-			await db
-				.update(projects)
-				.set({ scriptDraft: nextDraft })
-				.where(eq(projects.id, projectId));
+			const { assetKeys, transitionKeys } =
+				await collectShotReplacementCleanupKeys(projectId);
+
+			await db.transaction(async (tx) => {
+				await replaceShotRowsInTx(tx, projectId, parsed);
+				await tx
+					.update(projects)
+					.set({ scriptDraft: nextDraft, scriptStatus: "done" })
+					.where(eq(projects.id, projectId));
+			});
+
+			await cleanupStorageKeys([...assetKeys, ...transitionKeys]);
 
 			return { content: assistantContent };
 		} finally {
@@ -769,10 +712,18 @@ Return only this fenced JSON block:
 					stage: "shots",
 				};
 
-				await db
-					.update(projects)
-					.set({ scriptDraft: nextDraft })
-					.where(eq(projects.id, projectId));
+				const { assetKeys, transitionKeys } =
+					await collectShotReplacementCleanupKeys(projectId);
+
+				await db.transaction(async (tx) => {
+					await replaceShotRowsInTx(tx, projectId, parsed);
+					await tx
+						.update(projects)
+						.set({ scriptDraft: nextDraft, scriptStatus: "done" })
+						.where(eq(projects.id, projectId));
+				});
+
+				await cleanupStorageKeys([...assetKeys, ...transitionKeys]);
 
 				return { content: assistantContent, shotCount: parsed.length };
 			} finally {
@@ -859,10 +810,28 @@ RULES:
 				stage: "prompts",
 			};
 
-			await db
-				.update(projects)
-				.set({ scriptDraft: nextDraft })
-				.where(eq(projects.id, projectId));
+			// Update DB shot rows with the new image prompts. Match by order
+			// (shotIndex 0 -> order 1). This is non-destructive — we only
+			// update the imagePrompt column on each shot.
+			const projectShots = await db.query.shots.findMany({
+				where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+				orderBy: asc(shots.order),
+			});
+
+			await db.transaction(async (tx) => {
+				for (const promptEntry of parsed) {
+					const targetShot = projectShots[promptEntry.shotIndex];
+					if (!targetShot) continue;
+					await tx
+						.update(shots)
+						.set({ imagePrompt: promptEntry.prompt })
+						.where(eq(shots.id, targetShot.id));
+				}
+				await tx
+					.update(projects)
+					.set({ scriptDraft: nextDraft })
+					.where(eq(projects.id, projectId));
+			});
 
 			return { content: assistantContent };
 		} finally {

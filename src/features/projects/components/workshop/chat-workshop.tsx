@@ -41,14 +41,12 @@ interface ChatWorkshopProps {
 		scriptDraft?: ScriptDraft | null;
 		settings?: ProjectSettings | null;
 	};
-	hasApprovedShots?: boolean;
 }
 
 export function ChatWorkshop({
 	projectId,
 	existingMessages,
 	project,
-	hasApprovedShots = false,
 }: ChatWorkshopProps) {
 	const flow = useWorkshopFlow({ projectId, project });
 	const chat = useWorkshopChat({ projectId, existingMessages, stage: flow.stage });
@@ -422,23 +420,6 @@ export function ChatWorkshop({
 								onRegenerate={() =>
 									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
 								}
-								onApprove={() => {
-								chat.setIsSending(true);
-								flow
-									.handleApprove()
-									.catch((err) => {
-										const message =
-											err instanceof Error
-												? err.message
-												: "Failed to approve";
-										chat.appendAssistantMessage(
-											`Something went wrong: ${message}. You can try again.`,
-										);
-									})
-									.finally(() => chat.setIsSending(false));
-							}}
-								isApproving={flow.isGenerating}
-								hasApprovedShots={hasApprovedShots}
 							/>
 						</div>
 					)}

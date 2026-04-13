@@ -1,5 +1,4 @@
-import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowRight, ImageIcon, Loader2, Rocket } from "lucide-react";
+import { AlertTriangle, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ShotDraftEntry } from "../../project-types";
 import { CopyButton } from "./copy-button";
@@ -12,22 +11,15 @@ interface PromptsPanelProps {
 	onSelectItem: (id: string | null) => void;
 	isStale: boolean;
 	onRegenerate: () => void;
-	onApprove?: () => void;
-	isApproving?: boolean;
-	hasApprovedShots?: boolean;
 }
 
 export function PromptsPanel({
-	projectId,
 	shots,
 	imagePrompts,
 	selectedItemId,
 	onSelectItem,
 	isStale,
 	onRegenerate,
-	onApprove,
-	isApproving,
-	hasApprovedShots = false,
 }: PromptsPanelProps) {
 	return (
 		<div className="max-w-4xl space-y-5">
@@ -96,60 +88,6 @@ export function PromptsPanel({
 				})}
 			</div>
 
-			{hasApprovedShots ? (
-				<div className="flex items-center justify-between gap-3 rounded-2xl border bg-background px-5 py-4 shadow-sm">
-					<div>
-						<p className="text-sm font-medium text-foreground">
-							You have an existing storyboard
-						</p>
-						<p className="text-sm text-muted-foreground">
-							Go back to continue working, or re-approve to update shots.
-						</p>
-					</div>
-					<div className="flex items-center gap-2">
-						<Button variant="outline" asChild>
-							<Link
-								to="/projects/$projectId"
-								params={{ projectId }}
-								search={{}}
-								className="gap-2"
-							>
-								Back to Storyboard
-								<ArrowRight size={14} />
-							</Link>
-						</Button>
-						{onApprove && (
-							<Button variant="secondary" onClick={onApprove} disabled={isApproving} className="gap-2">
-								{isApproving ? (
-									<Loader2 size={14} className="animate-spin" />
-								) : (
-									<Rocket size={14} />
-								)}
-								{isApproving ? "Updating..." : "Re-approve shots"}
-							</Button>
-						)}
-					</div>
-				</div>
-			) : onApprove && (
-				<div className="flex items-center justify-between gap-3 rounded-2xl border bg-background px-5 py-4 shadow-sm">
-					<div>
-						<p className="text-sm font-medium text-foreground">
-							Ready to produce?
-						</p>
-						<p className="text-sm text-muted-foreground">
-							Start working with your shots in the storyboard.
-						</p>
-					</div>
-					<Button onClick={onApprove} disabled={isApproving} variant="accent" className="gap-2">
-						{isApproving ? (
-							<Loader2 size={14} className="animate-spin" />
-						) : (
-							<Rocket size={14} />
-						)}
-						{isApproving ? "Starting..." : "Start production"}
-					</Button>
-				</div>
-			)}
 		</div>
 	);
 }
