@@ -8,6 +8,7 @@ import {
 	resolveGenerationToast,
 	updateGenerationToast,
 } from "../generation-toast";
+import { getImageModelDefinition } from "../image-models";
 import {
 	readImageSettings,
 	writeImageSettings,
@@ -428,6 +429,8 @@ export function useImageStudio({
 				location,
 			});
 			const href = `/projects/${projectId}?shot=${selectedShotId}&mediaTab=images`;
+			const modelDef = getImageModelDefinition(settingsOverrides.model);
+			const aspectRatio = settingsOverrides.modelOptions.aspect_ratio as string | undefined;
 			beginGenerationToast({
 				id: result.batchId,
 				title: "Generating image",
@@ -435,6 +438,10 @@ export function useImageStudio({
 				medium: "image",
 				status: "Queued",
 				href,
+				metadata: {
+					model: modelDef.label,
+					aspectRatio: aspectRatio ?? undefined,
+				},
 			});
 			startPolling(selectedShotId);
 			const wasEditing = !!editingReferenceUrl;

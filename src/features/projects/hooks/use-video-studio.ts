@@ -33,6 +33,7 @@ import {
 	pollTransitionVideos,
 	selectTransitionVideo,
 } from "../transition-actions";
+import { getVideoModelDefinition } from "../video-models";
 import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
@@ -582,6 +583,9 @@ export function useVideoStudio({
 				title: "Generating transition video",
 				location,
 			});
+			const modelDef = getVideoModelDefinition(videoSettings.model);
+			const aspectRatio = videoSettings.modelOptions.aspect_ratio as string | undefined;
+			const duration = videoSettings.modelOptions.duration as number | undefined;
 			beginGenerationToast({
 				id: result.transitionVideoId,
 				title: "Generating transition video",
@@ -589,6 +593,11 @@ export function useVideoStudio({
 				medium: "video",
 				status: "Queued",
 				href,
+				metadata: {
+					model: modelDef.label,
+					aspectRatio: aspectRatio ?? undefined,
+					duration: duration ? `${duration}s` : undefined,
+				},
 			});
 			startPolling(pair);
 			console.info(`${logPrefix} queue:done`, pair);

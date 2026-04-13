@@ -33,6 +33,7 @@ import {
 	pollShotVideos,
 	selectShotVideo,
 } from "../shot-actions";
+import { getVideoModelDefinition } from "../video-models";
 import { isPendingVideoStatus } from "../video-status";
 
 type ToastFn = (message: string, variant: "success" | "error") => void;
@@ -616,6 +617,9 @@ export function useShotVideoStudio({
 				title: "Generating video",
 				location,
 			});
+			const modelDef = getVideoModelDefinition(videoSettings.model);
+			const aspectRatio = videoSettings.modelOptions.aspect_ratio as string | undefined;
+			const duration = videoSettings.modelOptions.duration as number | undefined;
 			beginGenerationToast({
 				id: result.assetId,
 				title: "Generating video",
@@ -623,6 +627,11 @@ export function useShotVideoStudio({
 				medium: "video",
 				status: "Queued",
 				href,
+				metadata: {
+					model: modelDef.label,
+					aspectRatio: aspectRatio ?? undefined,
+					duration: duration ? `${duration}s` : undefined,
+				},
 			});
 			startPolling(shotId);
 			console.info(`${logPrefix} queue:done`, { shotId });

@@ -10,6 +10,12 @@ function GradientSpinner() {
 type GenerationMedium = "image" | "video" | "workshop";
 type GenerationPhase = "loading" | "success" | "error";
 
+interface GenerationMetadata {
+	model?: string;
+	aspectRatio?: string;
+	duration?: string;
+}
+
 interface GenerationToastRecord {
 	id: string;
 	title: string;
@@ -19,6 +25,7 @@ interface GenerationToastRecord {
 	phase: GenerationPhase;
 	message?: string;
 	href?: string;
+	metadata?: GenerationMetadata;
 }
 
 const generationToasts = new Map<string, GenerationToastRecord>();
@@ -80,8 +87,27 @@ function renderGenerationToast(record: GenerationToastRecord) {
 						</p>
 					</div>
 				)}
+				{record.metadata && (record.metadata.model || record.metadata.aspectRatio || record.metadata.duration) && (
+					<div className="mt-2 flex flex-wrap gap-1.5">
+						{record.metadata.model && (
+							<span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+								{record.metadata.model}
+							</span>
+						)}
+						{record.metadata.aspectRatio && (
+							<span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+								{record.metadata.aspectRatio}
+							</span>
+						)}
+						{record.metadata.duration && (
+							<span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+								{record.metadata.duration}
+							</span>
+						)}
+					</div>
+				)}
 				{normalizedMessage && record.phase === "error" ? (
-					<p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+					<p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
 						{normalizedMessage}
 					</p>
 				) : null}
@@ -109,6 +135,7 @@ export function beginGenerationToast(args: {
 	status?: string;
 	message?: string;
 	href?: string;
+	metadata?: GenerationMetadata;
 }) {
 	upsertGenerationToast(
 		{
@@ -120,6 +147,7 @@ export function beginGenerationToast(args: {
 			phase: "loading",
 			message: args.message,
 			href: args.href,
+			metadata: args.metadata,
 		},
 		Number.POSITIVE_INFINITY,
 	);
