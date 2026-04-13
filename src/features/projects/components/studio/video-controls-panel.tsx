@@ -7,6 +7,7 @@ import {
 	Film,
 	Loader2,
 	Sparkles,
+	Video,
 	Wand2,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -328,6 +329,13 @@ export function VideoControlsPanel({
 	prevShotReferenceImage,
 	usePrevShotReferenceImage,
 	onUsePrevShotReferenceImageChange,
+	// Batch generation
+	showBatchGenerate,
+	onBatchGenerate,
+	isBatchGenerating,
+	batchRegenerateExisting,
+	onBatchRegenerateExistingChange,
+	batchDisabled,
 }: {
 	contextSection: ReactNode | null;
 	videoPrompt: string;
@@ -364,6 +372,13 @@ export function VideoControlsPanel({
 	prevShotReferenceImage?: ReferenceImageOption | null;
 	usePrevShotReferenceImage?: boolean;
 	onUsePrevShotReferenceImageChange?: (value: boolean) => void;
+	// Batch generation (for transition videos)
+	showBatchGenerate?: boolean;
+	onBatchGenerate?: () => void;
+	isBatchGenerating?: boolean;
+	batchRegenerateExisting?: boolean;
+	onBatchRegenerateExistingChange?: (value: boolean) => void;
+	batchDisabled?: boolean;
 }) {
 	const isBusy = isGeneratingPrompt || isEnhancingPrompt;
 	const motionPromptId = useId();
@@ -844,7 +859,7 @@ export function VideoControlsPanel({
 				</div>
 			</div>
 
-			<div className="p-4 border-t bg-card">
+			<div className="p-4 border-t bg-card space-y-3">
 				<Button
 					onClick={onGenerate}
 					disabled={isQueueing || !videoPrompt.trim()}
@@ -859,6 +874,36 @@ export function VideoControlsPanel({
 					)}
 					{isQueueing ? generatingButtonLabel : generateButtonLabel}
 				</Button>
+
+				{showBatchGenerate && onBatchGenerate && (
+					<div className="flex items-center gap-2 pt-2 border-t border-border/50">
+						{onBatchRegenerateExistingChange && (
+							<label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+								<input
+									type="checkbox"
+									checked={batchRegenerateExisting ?? false}
+									onChange={(e) => onBatchRegenerateExistingChange(e.target.checked)}
+									className="w-3 h-3 rounded border-border"
+								/>
+								Regenerate all
+							</label>
+						)}
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={isBatchGenerating || batchDisabled}
+							onClick={onBatchGenerate}
+							className="gap-1.5 flex-1"
+						>
+							{isBatchGenerating ? (
+								<Loader2 size={12} className="animate-spin" />
+							) : (
+								<Video size={12} />
+							)}
+							Generate all transitions
+						</Button>
+					</div>
+				)}
 			</div>
 		</div>
 	);

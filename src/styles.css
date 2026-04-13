@@ -640,38 +640,78 @@ code {
    Subtle dark toast with accent indicator
    ============================================ */
 
-/* Override sonner toast styles */
-[data-sonner-toaster] [data-sonner-toast] {
-  background: oklch(0.13 0.01 260 / 0.95) !important;
-  backdrop-filter: blur(8px) !important;
-  border: 1px solid oklch(1 0 0 / 0.06) !important;
-  box-shadow:
-    0 4px 12px oklch(0 0 0 / 0.25),
-    0 1px 4px oklch(0 0 0 / 0.15) !important;
-  min-width: 360px !important;
-  max-width: 420px !important;
+/* Toast entry animation */
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
-/* Accent pill on left side */
+@keyframes toast-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+/* Override sonner toast styles */
+[data-sonner-toaster] [data-sonner-toast] {
+  background: oklch(0.12 0.015 260 / 0.75) !important;
+  backdrop-filter: blur(16px) saturate(1.2) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.2) !important;
+  border: none !important;
+  border-radius: 10px !important;
+  box-shadow:
+    0 8px 32px oklch(0 0 0 / 0.35),
+    0 2px 8px oklch(0 0 0 / 0.2),
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    0 0 0 1px oklch(1 0 0 / 0.05) !important;
+  min-width: 360px !important;
+  max-width: 420px !important;
+  animation: toast-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-removed="true"] {
+  animation: toast-slide-out 0.2s ease-out forwards !important;
+}
+
+/* Gradient border around entire toast */
 [data-sonner-toaster] [data-sonner-toast]::before {
   content: '';
   position: absolute;
-  left: 6px;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, var(--gradient-start), var(--gradient-end));
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    var(--gradient-start),
+    var(--gradient-end)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.6;
 }
 
-/* Success toast accent */
-[data-sonner-toaster] [data-sonner-toast][data-type="success"]::before {
-  background: var(--success);
+/* Toast text colors - ensure visibility in dark theme */
+[data-sonner-toaster] [data-sonner-toast] [data-title],
+[data-sonner-toaster] [data-sonner-toast] [data-content] {
+  color: oklch(0.95 0 0) !important;
 }
 
-/* Error toast accent */
-[data-sonner-toaster] [data-sonner-toast][data-type="error"]::before {
-  background: var(--destructive);
+[data-sonner-toaster] [data-sonner-toast] [data-description] {
+  color: oklch(0.65 0.01 240) !important;
 }
 
 /* Toast close button */
