@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Check, Film, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Film, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
 	AlertDialog,
@@ -80,6 +80,13 @@ function ProjectPage() {
 	const { shot: shotParam, from, to, mediaTab } = Route.useSearch();
 	const navigate = useNavigate();
 
+	// Workshop selection lives at the route level so the header can read
+	// it for the "Open shot detail" affordance. ChatWorkshop receives it
+	// as a controlled prop pair.
+	const [workshopSelectedItemId, setWorkshopSelectedItemId] = useState<
+		string | null
+	>(null);
+
 	// Resolve "first" to the actual first shot ID
 	const shot =
 		shotParam === "first" && projectShots.length > 0
@@ -97,6 +104,18 @@ function ProjectPage() {
 	}
 
 	const isDetailView = Boolean(shot || (from && to));
+
+	// Resolve the workshop selection to a real DB shot ID, if applicable.
+	// Selections of the form "shot-N" or "prompt-N" point at projectShots[N].
+	// Outline selections have no corresponding shot, so the button hides.
+	const selectedShotForDetail = (() => {
+		if (!workshopSelectedItemId) return null;
+		const match = workshopSelectedItemId.match(/^(shot|prompt)-(\d+)$/);
+		if (!match) return null;
+		const index = Number.parseInt(match[2], 10);
+		if (Number.isNaN(index)) return null;
+		return projectShots[index] ?? null;
+	})();
 
 	return (
 		<div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
@@ -150,6 +169,29 @@ function ProjectPage() {
 
 					{/* Right side: actions */}
 					<div className="flex items-center gap-2 shrink-0">
+						{!isDetailView && selectedShotForDetail && (
+							<Button
+								variant="accent"
+								size="xs"
+								className="gap-1"
+								onClick={() => {
+									navigate({
+										to: "/projects/$projectId",
+										params: { projectId: project.id },
+										search: {
+											scene: undefined,
+											shot: selectedShotForDetail.id,
+											from: undefined,
+											to: undefined,
+											mediaTab: undefined,
+										},
+									});
+								}}
+							>
+								Open shot detail
+								<ArrowRight size={12} />
+							</Button>
+						)}
 						{!isDetailView && (
 							<DeleteProjectDialog
 								projectName={project.name}
@@ -187,6 +229,8 @@ function ProjectPage() {
 					existingMessages={projectMessages}
 					projectSettings={project.settings}
 					scriptDraft={project.scriptDraft}
+					selectedItemId={workshopSelectedItemId}
+					onSelectedItemIdChange={setWorkshopSelectedItemId}
 				/>
 			)}
 		</div>

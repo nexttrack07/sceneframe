@@ -29,80 +29,131 @@ const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
 
 /**
- * Replace all shots for a project with a new shot list.
+ * Reconcile DB shot rows for a project against a new shot list.
  *
- * Soft-deletes existing shots, their assets, and any transition videos
- * that referenced them, then inserts the new shot rows with cumulative
- * timestamps. Returns the storage keys that need R2 cleanup AFTER the
- * caller commits the transaction.
+ * Behaviour:
+ * - Existing shots are matched to the new list by order. Surviving rows
+ *   are updated in place — their IDs and any attached assets stay intact.
+ * - If the new list is longer than the existing list, the extra shots are
+ *   inserted with fresh IDs.
+ * - If the new list is shorter, the trailing shots that no longer have a
+ *   counterpart are soft-deleted along with their assets and any
+ *   transition videos that referenced them. Their R2 storage keys are
+ *   collected and returned so the caller can clean them up after the
+ *   transaction commits.
  *
- * Used by generateShots and reviewAndFixShots so that workshop-stage
- * generation auto-promotes draft shots into real DB rows. First-time
- * generation is a clean insert (nothing to delete). Re-generation is
- * inherently destructive — that is the cost of regenerating shots.
+ * This means regenerating shots no longer wipes the project. Only shots
+ * that are genuinely removed lose their assets. First-time generation is
+ * still a clean insert because there are no existing rows to reconcile.
  */
-async function collectShotReplacementCleanupKeys(projectId: string) {
-	const existingAssets = await db
-		.select({ storageKey: assets.storageKey })
-		.from(assets)
-		.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
-	const assetKeys: string[] = existingAssets
-		.map((a) => a.storageKey)
-		.filter((k): k is string => Boolean(k));
+async function upsertShotRowsInTx(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	projectId: string,
+	shotPlan: ShotPlanEntry[],
+): Promise<{ assetKeys: string[]; transitionKeys: string[] }> {
+	const now = new Date();
 
-	const existingShotIds = (
-		await db
-			.select({ id: shots.id })
-			.from(shots)
-			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
-	).map((r) => r.id);
+	const existing = await tx
+		.select({ id: shots.id, order: shots.order })
+		.from(shots)
+		.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+		.orderBy(asc(shots.order));
 
+	let cursor = 0;
+	const timestamped = shotPlan.map((shot) => {
+		const start = cursor;
+		cursor += shot.durationSec;
+		return { ...shot, timestampStart: start, timestampEnd: cursor };
+	});
+
+	const overlap = Math.min(existing.length, timestamped.length);
+
+	// Update overlapping shots in place. Surviving shot IDs stay stable so
+	// their attached assets/transitions remain valid (though their content
+	// may now be stale relative to the new description — that's a UX
+	// concern, not a data integrity one).
+	for (let i = 0; i < overlap; i++) {
+		const target = existing[i];
+		const next = timestamped[i];
+		await tx
+			.update(shots)
+			.set({
+				description: next.description,
+				imagePrompt: next.imagePrompt?.trim() || next.description,
+				shotType: next.shotType,
+				shotSize: next.shotSize ?? "medium",
+				durationSec: next.durationSec,
+				timestampStart: next.timestampStart,
+				timestampEnd: next.timestampEnd,
+			})
+			.where(eq(shots.id, target.id));
+	}
+
+	// Insert any shots beyond the existing count.
+	const toInsert = timestamped.slice(overlap);
+	if (toInsert.length > 0) {
+		await tx.insert(shots).values(
+			toInsert.map((shot, i) => ({
+				projectId,
+				order: overlap + i + 1,
+				description: shot.description,
+				imagePrompt: shot.imagePrompt?.trim() || shot.description,
+				shotType: shot.shotType,
+				shotSize: shot.shotSize ?? "medium",
+				durationSec: shot.durationSec,
+				timestampStart: shot.timestampStart,
+				timestampEnd: shot.timestampEnd,
+			})),
+		);
+	}
+
+	// Soft-delete any existing shots beyond the new length and clean up
+	// their attached assets + transitions. Collect storage keys before
+	// the soft-delete so the caller can do R2 cleanup post-commit.
+	const orphanShots = existing.slice(overlap);
+	const assetKeys: string[] = [];
 	const transitionKeys: string[] = [];
-	if (existingShotIds.length > 0) {
-		const tvRows = await db
+
+	if (orphanShots.length > 0) {
+		const orphanIds = orphanShots.map((s) => s.id);
+
+		const orphanAssets = await tx
+			.select({ storageKey: assets.storageKey })
+			.from(assets)
+			.where(
+				and(inArray(assets.shotId, orphanIds), isNull(assets.deletedAt)),
+			);
+		for (const a of orphanAssets) {
+			if (a.storageKey) assetKeys.push(a.storageKey);
+		}
+
+		const orphanTransitions = await tx
 			.select({ storageKey: transitionVideos.storageKey })
 			.from(transitionVideos)
 			.where(
 				and(
 					or(
-						inArray(transitionVideos.fromShotId, existingShotIds),
-						inArray(transitionVideos.toShotId, existingShotIds),
+						inArray(transitionVideos.fromShotId, orphanIds),
+						inArray(transitionVideos.toShotId, orphanIds),
 					),
 					isNull(transitionVideos.deletedAt),
 				),
 			);
-		for (const tv of tvRows) {
-			if (tv.storageKey) transitionKeys.push(tv.storageKey);
+		for (const t of orphanTransitions) {
+			if (t.storageKey) transitionKeys.push(t.storageKey);
 		}
-	}
 
-	return { assetKeys, transitionKeys };
-}
-
-async function replaceShotRowsInTx(
-	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-	projectId: string,
-	shotPlan: ShotPlanEntry[],
-) {
-	const now = new Date();
-
-	const existingShotIds = (
-		await tx
-			.select({ id: shots.id })
-			.from(shots)
-			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
-	).map((r) => r.id);
-
-	if (existingShotIds.length > 0) {
 		await tx
 			.update(shots)
 			.set({ deletedAt: now })
-			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)));
+			.where(inArray(shots.id, orphanIds));
 
 		await tx
 			.update(assets)
 			.set({ deletedAt: now })
-			.where(and(eq(assets.projectId, projectId), isNull(assets.deletedAt)));
+			.where(
+				and(inArray(assets.shotId, orphanIds), isNull(assets.deletedAt)),
+			);
 
 		await tx
 			.update(transitionVideos)
@@ -110,34 +161,15 @@ async function replaceShotRowsInTx(
 			.where(
 				and(
 					or(
-						inArray(transitionVideos.fromShotId, existingShotIds),
-						inArray(transitionVideos.toShotId, existingShotIds),
+						inArray(transitionVideos.fromShotId, orphanIds),
+						inArray(transitionVideos.toShotId, orphanIds),
 					),
 					isNull(transitionVideos.deletedAt),
 				),
 			);
 	}
 
-	let cursor = 0;
-	const shotValues = shotPlan.map((shot, i) => {
-		const start = cursor;
-		cursor += shot.durationSec;
-		return {
-			projectId,
-			order: i + 1,
-			description: shot.description,
-			imagePrompt: shot.imagePrompt?.trim() || shot.description,
-			shotType: shot.shotType,
-			shotSize: shot.shotSize ?? "medium",
-			durationSec: shot.durationSec,
-			timestampStart: start,
-			timestampEnd: cursor,
-		};
-	});
-
-	if (shotValues.length > 0) {
-		await tx.insert(shots).values(shotValues);
-	}
+	return { assetKeys, transitionKeys };
 }
 
 function buildSelectionContext(
@@ -613,18 +645,23 @@ Return only this fenced JSON block with a flat array of shots in playback order:
 				stage: "shots",
 			};
 
-			const { assetKeys, transitionKeys } =
-				await collectShotReplacementCleanupKeys(projectId);
+			let cleanup: { assetKeys: string[]; transitionKeys: string[] } = {
+				assetKeys: [],
+				transitionKeys: [],
+			};
 
 			await db.transaction(async (tx) => {
-				await replaceShotRowsInTx(tx, projectId, parsed);
+				cleanup = await upsertShotRowsInTx(tx, projectId, parsed);
 				await tx
 					.update(projects)
 					.set({ scriptDraft: nextDraft, scriptStatus: "done" })
 					.where(eq(projects.id, projectId));
 			});
 
-			await cleanupStorageKeys([...assetKeys, ...transitionKeys]);
+			await cleanupStorageKeys([
+				...cleanup.assetKeys,
+				...cleanup.transitionKeys,
+			]);
 
 			return { content: assistantContent };
 		} finally {
@@ -712,18 +749,23 @@ Return only this fenced JSON block:
 					stage: "shots",
 				};
 
-				const { assetKeys, transitionKeys } =
-					await collectShotReplacementCleanupKeys(projectId);
+				let cleanup: { assetKeys: string[]; transitionKeys: string[] } = {
+					assetKeys: [],
+					transitionKeys: [],
+				};
 
 				await db.transaction(async (tx) => {
-					await replaceShotRowsInTx(tx, projectId, parsed);
+					cleanup = await upsertShotRowsInTx(tx, projectId, parsed);
 					await tx
 						.update(projects)
 						.set({ scriptDraft: nextDraft, scriptStatus: "done" })
 						.where(eq(projects.id, projectId));
 				});
 
-				await cleanupStorageKeys([...assetKeys, ...transitionKeys]);
+				await cleanupStorageKeys([
+					...cleanup.assetKeys,
+					...cleanup.transitionKeys,
+				]);
 
 				return { content: assistantContent, shotCount: parsed.length };
 			} finally {

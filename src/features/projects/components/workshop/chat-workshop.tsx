@@ -41,36 +41,40 @@ interface ChatWorkshopProps {
 		scriptDraft?: ScriptDraft | null;
 		settings?: ProjectSettings | null;
 	};
+	selectedItemId: string | null;
+	onSelectedItemIdChange: (id: string | null) => void;
 }
 
 export function ChatWorkshop({
 	projectId,
 	existingMessages,
 	project,
+	selectedItemId,
+	onSelectedItemIdChange,
 }: ChatWorkshopProps) {
 	const flow = useWorkshopFlow({ projectId, project });
 	const chat = useWorkshopChat({ projectId, existingMessages, stage: flow.stage });
 
 	const selectionLabel = useMemo(
-		() => getSelectionLabel(flow.selectedItemId, project.scriptDraft ?? null),
-		[flow.selectedItemId, project.scriptDraft],
+		() => getSelectionLabel(selectedItemId, project.scriptDraft ?? null),
+		[selectedItemId, project.scriptDraft],
 	);
 
 	const handleSend = useCallback(async () => {
 		if (!chat.input.trim() || chat.isSending || flow.isGenerating) return;
 		const content = chat.input.trim();
 		chat.clearInput();
-		await chat.runChatMessage(content, flow.selectedItemId);
-	}, [chat, flow.isGenerating, flow.selectedItemId]);
+		await chat.runChatMessage(content, selectedItemId);
+	}, [chat, flow.isGenerating, selectedItemId]);
 
 	const handleSelectItem = useCallback(
 		(id: string | null) => {
-			flow.setSelectedItemId(id);
+			onSelectedItemIdChange(id);
 			if (id !== null) {
 				requestAnimationFrame(() => chat.textareaRef.current?.focus());
 			}
 		},
-		[chat.textareaRef, flow],
+		[chat.textareaRef, onSelectedItemIdChange],
 	);
 
 	const [transcriptCopied, setTranscriptCopied] = useState(false);
@@ -281,7 +285,7 @@ export function ChatWorkshop({
 							</span>
 							<button
 								type="button"
-								onClick={() => flow.setSelectedItemId(null)}
+								onClick={() => onSelectedItemIdChange(null)}
 								className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground"
 								title="Clear selection"
 								aria-label="Clear selection"
@@ -372,7 +376,7 @@ export function ChatWorkshop({
 						<div className="animate-fade-in-up">
 							<OutlinePanel
 								outline={flow.outline}
-								selectedItemId={flow.selectedItemId}
+								selectedItemId={selectedItemId}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("outline")}
 								onRegenerate={() =>
@@ -392,7 +396,7 @@ export function ChatWorkshop({
 						<div className="animate-fade-in-up">
 							<ShotsPanel
 								shots={flow.shots}
-								selectedItemId={flow.selectedItemId}
+								selectedItemId={selectedItemId}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("shots")}
 								onRegenerate={() => void handleGenerateShotsWithReview()}
@@ -414,7 +418,7 @@ export function ChatWorkshop({
 								projectId={projectId}
 								shots={flow.shots}
 								imagePrompts={flow.imagePrompts ?? []}
-								selectedItemId={flow.selectedItemId}
+								selectedItemId={selectedItemId}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("prompts")}
 								onRegenerate={() =>

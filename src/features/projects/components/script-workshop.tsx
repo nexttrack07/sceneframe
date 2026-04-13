@@ -7,11 +7,15 @@ export function ScriptWorkshop({
 	existingMessages,
 	projectSettings,
 	scriptDraft,
+	selectedItemId,
+	onSelectedItemIdChange,
 }: {
 	projectId: string;
 	existingMessages: Message[];
 	projectSettings: ProjectSettings | null;
 	scriptDraft?: ScriptDraft | null;
+	selectedItemId: string | null;
+	onSelectedItemIdChange: (id: string | null) => void;
 }) {
 	return (
 		<ChatWorkshop
@@ -21,6 +25,8 @@ export function ScriptWorkshop({
 				scriptDraft: scriptDraft ?? null,
 				settings: projectSettings,
 			}}
+			selectedItemId={selectedItemId}
+			onSelectedItemIdChange={onSelectedItemIdChange}
 		/>
 	);
 }

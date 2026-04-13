@@ -29,7 +29,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [generatingStage, setGeneratingStage] = useState<WorkshopStage | null>(null);
-	const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
 	const draft = project.scriptDraft ?? null;
 	const serverStage: WorkshopStage = draft?.stage ?? "outline";
@@ -139,8 +138,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		staleStages,
 		intake,
 		setStage,
-		selectedItemId,
-		setSelectedItemId,
 		handleGenerateOutline,
 		handleGenerateShots,
 		handleReviewShots,
