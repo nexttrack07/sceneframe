@@ -65,9 +65,15 @@ export function ChatWorkshop({
 		await chat.runChatMessage(content, flow.selectedItemId);
 	}, [chat, flow.isGenerating, flow.selectedItemId]);
 
-	const focusChat = useCallback(() => {
-		chat.textareaRef.current?.focus();
-	}, [chat.textareaRef]);
+	const handleSelectItem = useCallback(
+		(id: string | null) => {
+			flow.setSelectedItemId(id);
+			if (id !== null) {
+				requestAnimationFrame(() => chat.textareaRef.current?.focus());
+			}
+		},
+		[chat.textareaRef, flow],
+	);
 
 	const [transcriptCopied, setTranscriptCopied] = useState(false);
 	const toastIdRef = useRef(0);
@@ -369,8 +375,7 @@ export function ChatWorkshop({
 							<OutlinePanel
 								outline={flow.outline}
 								selectedItemId={flow.selectedItemId}
-								onSelectItem={flow.setSelectedItemId}
-								onRequestEdit={focusChat}
+								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("outline")}
 								onRegenerate={() =>
 									void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
@@ -390,8 +395,7 @@ export function ChatWorkshop({
 							<ShotsPanel
 								shots={flow.shots}
 								selectedItemId={flow.selectedItemId}
-								onSelectItem={flow.setSelectedItemId}
-								onRequestEdit={focusChat}
+								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("shots")}
 								onRegenerate={() => void handleGenerateShotsWithReview()}
 								onGeneratePrompts={() =>
@@ -413,8 +417,7 @@ export function ChatWorkshop({
 								shots={flow.shots}
 								imagePrompts={flow.imagePrompts ?? []}
 								selectedItemId={flow.selectedItemId}
-								onSelectItem={flow.setSelectedItemId}
-								onRequestEdit={focusChat}
+								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("prompts")}
 								onRegenerate={() =>
 									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")

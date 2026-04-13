@@ -6,7 +6,6 @@ interface OutlinePanelProps {
 	outline: OutlineEntry[];
 	selectedItemId: string | null;
 	onSelectItem: (id: string | null) => void;
-	onRequestEdit?: () => void;
 	isStale: boolean;
 	onRegenerate: () => void;
 	onBreakdownToShots?: () => void;
@@ -17,7 +16,6 @@ export function OutlinePanel({
 	outline,
 	selectedItemId,
 	onSelectItem,
-	onRequestEdit,
 	isStale,
 	onRegenerate,
 	onBreakdownToShots,
@@ -46,34 +44,22 @@ export function OutlinePanel({
 				const itemId = `outline-${i}`;
 				const isSelected = selectedItemId === itemId;
 				return (
-					<div key={itemId} className="space-y-1.5">
-						<button
-							type="button"
-							onClick={() => onSelectItem(isSelected ? null : itemId)}
-							className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
-								isSelected
-									? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
-									: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
-							}`}
-						>
-							<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
-								Scene {i + 1}
-							</p>
-							<p className="text-sm font-medium text-foreground">{entry.title}</p>
-							<p className="text-sm text-muted-foreground mt-1">{entry.summary}</p>
-						</button>
-						{isSelected && onRequestEdit && (
-							<div className="flex items-center gap-2 pl-4">
-								<Button size="sm" variant="accent" onClick={onRequestEdit} className="h-7 gap-1 text-xs">
-									<Sparkles size={12} />
-									Edit with AI
-								</Button>
-								<span className="text-xs text-muted-foreground">
-									or describe changes in the chat →
-								</span>
-							</div>
-						)}
-					</div>
+					<button
+						key={itemId}
+						type="button"
+						onClick={() => onSelectItem(isSelected ? null : itemId)}
+						className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
+							isSelected
+								? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
+								: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
+						}`}
+					>
+						<p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
+							Scene {i + 1}
+						</p>
+						<p className="text-sm font-medium text-foreground">{entry.title}</p>
+						<p className="text-sm text-muted-foreground mt-1">{entry.summary}</p>
+					</button>
 				);
 			})}
 

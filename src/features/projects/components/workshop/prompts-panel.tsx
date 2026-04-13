@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowRight, ImageIcon, Loader2, Rocket, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, ImageIcon, Loader2, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ShotDraftEntry } from "../../project-types";
 import { CopyButton } from "./copy-button";
@@ -10,7 +10,6 @@ interface PromptsPanelProps {
 	imagePrompts: Array<{ shotIndex: number; prompt: string }>;
 	selectedItemId: string | null;
 	onSelectItem: (id: string | null) => void;
-	onRequestEdit?: () => void;
 	isStale: boolean;
 	onRegenerate: () => void;
 	onApprove?: () => void;
@@ -24,7 +23,6 @@ export function PromptsPanel({
 	imagePrompts,
 	selectedItemId,
 	onSelectItem,
-	onRequestEdit,
 	isStale,
 	onRegenerate,
 	onApprove,
@@ -56,56 +54,44 @@ export function PromptsPanel({
 					const itemId = `prompt-${shotIdx}`;
 					const isSelected = selectedItemId === itemId;
 					return (
-						<div key={itemId} className="space-y-1.5">
-							<button
-								type="button"
-								onClick={() => onSelectItem(isSelected ? null : itemId)}
-								className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
-									isSelected
-										? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
-										: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
-								}`}
-							>
-								<div className="flex items-center gap-2 mb-1">
-									<span className="text-xs font-semibold text-primary uppercase tracking-wide">
-										Shot {shotIdx + 1}
-									</span>
-									<span className="text-xs text-muted-foreground">·</span>
-									<span className="text-xs font-medium text-muted-foreground uppercase">
-										{shot.shotSize}
-									</span>
-									<span className="text-xs text-muted-foreground">·</span>
-									<span className="text-xs text-muted-foreground">
-										{shot.shotType}
-									</span>
-								</div>
-								{prompt ? (
-									<>
-										<p className="text-sm text-foreground leading-relaxed">
-											{prompt.prompt}
-										</p>
-										<div className="flex justify-end mt-2">
-											<CopyButton text={prompt.prompt} title="Copy image prompt" />
-										</div>
-									</>
-								) : (
-									<p className="text-xs text-muted-foreground italic">
-										No prompt generated for this shot yet.
+						<button
+							key={itemId}
+							type="button"
+							onClick={() => onSelectItem(isSelected ? null : itemId)}
+							className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
+								isSelected
+									? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
+									: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
+							}`}
+						>
+							<div className="flex items-center gap-2 mb-1">
+								<span className="text-xs font-semibold text-primary uppercase tracking-wide">
+									Shot {shotIdx + 1}
+								</span>
+								<span className="text-xs text-muted-foreground">·</span>
+								<span className="text-xs font-medium text-muted-foreground uppercase">
+									{shot.shotSize}
+								</span>
+								<span className="text-xs text-muted-foreground">·</span>
+								<span className="text-xs text-muted-foreground">
+									{shot.shotType}
+								</span>
+							</div>
+							{prompt ? (
+								<>
+									<p className="text-sm text-foreground leading-relaxed">
+										{prompt.prompt}
 									</p>
-								)}
-							</button>
-							{isSelected && onRequestEdit && (
-								<div className="flex items-center gap-2 pl-4">
-									<Button size="sm" variant="accent" onClick={onRequestEdit} className="h-7 gap-1 text-xs">
-										<Sparkles size={12} />
-										Edit with AI
-									</Button>
-									<span className="text-xs text-muted-foreground">
-										or describe changes in the chat →
-									</span>
-								</div>
+									<div className="flex justify-end mt-2">
+										<CopyButton text={prompt.prompt} title="Copy image prompt" />
+									</div>
+								</>
+							) : (
+								<p className="text-xs text-muted-foreground italic">
+									No prompt generated for this shot yet.
+								</p>
 							)}
-						</div>
+						</button>
 					);
 				})}
 			</div>
