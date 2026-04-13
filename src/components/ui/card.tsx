@@ -2,15 +2,31 @@ import type * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+interface CardProps extends React.ComponentProps<"div"> {
+	/** Use glassmorphism style with blur effect */
+	glass?: boolean;
+	/** Add glow border effect on hover */
+	glow?: boolean;
+}
+
+function Card({ className, glass = false, glow = false, ...props }: CardProps) {
 	return (
 		<div
 			data-slot="card"
 			className={cn(
-				"bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6",
-				"shadow-[0_2px_8px_rgba(0,0,0,0.3),0_1px_2px_rgba(0,0,0,0.2)]",
-				"hover:shadow-[0_4px_16px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.3)]",
-				"transition-shadow duration-200",
+				"flex flex-col gap-6 rounded-xl py-6 transition-all duration-200",
+				// Default solid style
+				!glass && [
+					"bg-card text-card-foreground border",
+					"shadow-[0_2px_8px_rgba(0,0,0,0.3),0_1px_2px_rgba(0,0,0,0.2)]",
+					"hover:shadow-[0_4px_16px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.3)]",
+				],
+				// Glassmorphism style
+				glass && [
+					"glass glass-glow text-card-foreground",
+				],
+				// Glow border effect
+				glow && "glow-border",
 				className,
 			)}
 			{...props}

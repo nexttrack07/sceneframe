@@ -299,7 +299,7 @@ function NewProjectPage() {
 				{error && <p className="text-sm text-destructive">{error}</p>}
 
 				<div className="flex items-center gap-3 pt-2">
-					<Button type="submit" disabled={isPending}>
+					<Button type="submit" variant="accent" disabled={isPending}>
 						{isPending ? "Creating…" : "Create project"}
 					</Button>
 					<Button type="button" variant="ghost" asChild>

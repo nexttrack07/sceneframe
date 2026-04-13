@@ -30,9 +30,17 @@ code {
   --popover: oklch(0.12 0.01 240);
   --popover-foreground: oklch(0.95 0 0);
 
-  /* Primary — indigo blue */
+  /* Primary — indigo blue (solid fallback) */
   --primary: oklch(0.55 0.22 260);
   --primary-foreground: oklch(0.98 0 0);
+
+  /* Primary gradient colors — blue to purple */
+  --gradient-start: #196cfa;   /* Blue: rgba(25, 108, 250, 1) */
+  --gradient-end: #573fcc;     /* Purple: rgba(87, 63, 204, 1) */
+
+  /* Alternate gradient — cyan to blue */
+  --gradient-alt-start: oklch(0.65 0.18 195);  /* Cyan */
+  --gradient-alt-end: oklch(0.55 0.22 250);    /* Blue */
 
   /* Secondary/Muted */
   --secondary: oklch(0.16 0.01 240);
@@ -253,4 +261,321 @@ code {
   box-shadow:
     0 0 0 2px var(--background),
     0 0 0 4px var(--primary);
+}
+
+/* ============================================
+   AMBIENT GRADIENT BACKGROUND
+   Floating color orbs for depth and vibrancy
+   ============================================ */
+
+@keyframes gradient-float {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.05);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.95);
+  }
+}
+
+@keyframes gradient-float-reverse {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(-30px, 20px) scale(0.95);
+  }
+  66% {
+    transform: translate(20px, -20px) scale(1.05);
+  }
+}
+
+.ambient-gradient-container {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.4;
+}
+
+.ambient-orb-1 {
+  width: 600px;
+  height: 600px;
+  background: oklch(0.35 0.15 260); /* Deep indigo */
+  top: -200px;
+  right: -100px;
+  animation: gradient-float 20s ease-in-out infinite;
+}
+
+.ambient-orb-2 {
+  width: 500px;
+  height: 500px;
+  background: oklch(0.30 0.12 280); /* Purple */
+  bottom: -150px;
+  left: -100px;
+  animation: gradient-float-reverse 25s ease-in-out infinite;
+}
+
+.ambient-orb-3 {
+  width: 400px;
+  height: 400px;
+  background: oklch(0.25 0.10 200); /* Cyan tint */
+  top: 40%;
+  left: 30%;
+  animation: gradient-float 30s ease-in-out infinite;
+  opacity: 0.25;
+}
+
+/* Subtle variant - less intense for content-heavy pages */
+.ambient-gradient-container.subtle .ambient-orb {
+  opacity: 0.2;
+  filter: blur(120px);
+}
+
+/* ============================================
+   GLASSMORPHISM UTILITIES
+   Frosted glass effects for cards and panels
+   ============================================ */
+
+.glass {
+  background: oklch(0.12 0.01 240 / 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid oklch(1 0 0 / 0.08);
+}
+
+.glass-subtle {
+  background: oklch(0.10 0.01 240 / 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid oklch(1 0 0 / 0.05);
+}
+
+.glass-strong {
+  background: oklch(0.14 0.01 240 / 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(1 0 0 / 0.1);
+}
+
+/* Inner glow for glass elements - improves visibility */
+.glass-glow {
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.05),
+    0 0 0 1px oklch(1 0 0 / 0.05),
+    0 4px 16px oklch(0 0 0 / 0.3);
+}
+
+/* ============================================
+   GLOW BORDER EFFECTS
+   Interactive borders that respond to hover
+   ============================================ */
+
+.glow-border {
+  position: relative;
+  transition: box-shadow 0.3s ease;
+}
+
+.glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    oklch(0.55 0.22 260 / 0.3),
+    oklch(0.50 0.18 280 / 0.1),
+    oklch(0.45 0.15 200 / 0.2)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.glow-border:hover::before {
+  opacity: 1;
+}
+
+.glow-border:hover {
+  box-shadow:
+    0 0 20px oklch(0.55 0.22 260 / 0.15),
+    0 4px 16px oklch(0 0 0 / 0.3);
+}
+
+/* Always-on subtle glow variant */
+.glow-border-subtle::before {
+  opacity: 0.5;
+}
+
+.glow-border-subtle:hover::before {
+  opacity: 1;
+}
+
+/* Primary color glow for important elements */
+.glow-primary {
+  transition: box-shadow 0.3s ease;
+}
+
+.glow-primary:hover {
+  box-shadow:
+    0 0 24px oklch(0.55 0.22 260 / 0.4),
+    0 0 48px oklch(0.55 0.22 260 / 0.2);
+}
+
+/* ============================================
+   ACCENT GRADIENT SYSTEM
+   Primary brand gradient for text, backgrounds, borders
+   ============================================ */
+
+/* Accent text — blue to purple gradient */
+.accent-text {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-start) 0%,
+    var(--gradient-end) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Animated accent text — shifting colors */
+.accent-text-animated {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-start),
+    var(--gradient-end),
+    var(--gradient-start)
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: accent-shift 4s ease infinite;
+}
+
+@keyframes accent-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Accent background — for buttons, badges, highlights */
+.accent-bg {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-start) 0%,
+    var(--gradient-end) 100%
+  );
+}
+
+/* Accent background with hover intensify */
+.accent-bg-hover {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-start) 0%,
+    var(--gradient-end) 100%
+  );
+  background-size: 150% 150%;
+  background-position: 0% 50%;
+  transition: background-position 0.4s ease;
+}
+
+.accent-bg-hover:hover {
+  background-position: 100% 50%;
+}
+
+/* Subtle accent background — for cards, sections */
+.accent-bg-subtle {
+  background: linear-gradient(
+    90deg,
+    oklch(0.10 0.02 240) 0%,
+    oklch(0.11 0.02 270) 100%
+  );
+}
+
+/* Accent border — for cards, inputs, buttons */
+.accent-border {
+  position: relative;
+  background: var(--card);
+  border: none;
+}
+
+.accent-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    var(--gradient-start),
+    var(--gradient-end)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Animated accent border */
+.accent-border-animated::before {
+  background: linear-gradient(
+    var(--gradient-angle, 90deg),
+    var(--gradient-start),
+    var(--gradient-end),
+    var(--gradient-start)
+  );
+  background-size: 200% 200%;
+  animation: accent-rotate 4s linear infinite;
+}
+
+@keyframes accent-rotate {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Secondary gradient — cyan to blue */
+.secondary-text {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-alt-start) 0%,
+    var(--gradient-alt-end) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.secondary-bg {
+  background: linear-gradient(
+    90deg,
+    var(--gradient-alt-start) 0%,
+    var(--gradient-alt-end) 100%
+  );
 }

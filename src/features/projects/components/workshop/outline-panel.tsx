@@ -73,7 +73,7 @@ export function OutlinePanel({
 							Break each scene down into individual shots.
 						</p>
 					</div>
-					<Button onClick={onBreakdownToShots} disabled={isGenerating} className="gap-2">
+					<Button onClick={onBreakdownToShots} disabled={isGenerating} variant="accent" className="gap-2">
 						{isGenerating ? (
 							<Loader2 size={14} className="animate-spin" />
 						) : (

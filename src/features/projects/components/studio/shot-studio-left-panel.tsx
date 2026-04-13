@@ -274,6 +274,7 @@ export function ShotStudioLeftPanel({
 				<Button
 					onClick={onGenerate}
 					disabled={isQueueing}
+					variant="accent"
 					className="w-full gap-2"
 					size="lg"
 				>

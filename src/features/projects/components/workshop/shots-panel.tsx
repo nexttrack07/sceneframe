@@ -100,7 +100,7 @@ export function ShotsPanel({
 							Generate image prompts for each shot.
 						</p>
 					</div>
-					<Button onClick={onGeneratePrompts} disabled={isGenerating} className="gap-2">
+					<Button onClick={onGeneratePrompts} disabled={isGenerating} variant="accent" className="gap-2">
 						{isGenerating ? (
 							<Loader2 size={14} className="animate-spin" />
 						) : (

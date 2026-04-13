@@ -140,7 +140,7 @@ export function PromptsPanel({
 							Start working with your shots in the storyboard.
 						</p>
 					</div>
-					<Button onClick={onApprove} disabled={isApproving} className="gap-2">
+					<Button onClick={onApprove} disabled={isApproving} variant="accent" className="gap-2">
 						{isApproving ? (
 							<Loader2 size={14} className="animate-spin" />
 						) : (

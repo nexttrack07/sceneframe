@@ -43,11 +43,7 @@ function App() {
 						<Button asChild variant="ghost" size="sm">
 							<Link to="/sign-in">Sign in</Link>
 						</Button>
-						<Button
-							asChild
-							size="sm"
-							className="bg-primary hover:bg-primary/90"
-						>
+						<Button asChild size="sm" variant="accent">
 							<Link to="/sign-in">Get started</Link>
 						</Button>
 					</div>
@@ -66,7 +62,7 @@ function App() {
 						scene-by-scene asset planning.
 					</p>
 					<div className="flex items-center justify-center gap-3">
-						<Button asChild className="bg-primary hover:bg-primary/90">
+						<Button asChild variant="accent">
 							<Link to="/sign-in">Start building your next video</Link>
 						</Button>
 						<Button asChild variant="outline">
@@ -162,7 +158,7 @@ function App() {
 							<li>Scene approvals and storyboard management</li>
 							<li>Asset organization per scene</li>
 						</ul>
-						<Button asChild className="w-full bg-primary hover:bg-primary/90">
+						<Button asChild variant="accent" className="w-full">
 							<Link to="/sign-in">Get started</Link>
 						</Button>
 					</div>
@@ -176,7 +172,7 @@ function App() {
 						SceneFrame helps creators move from rough idea to production-ready
 						scene assets with a workflow that stays clear at every step.
 					</p>
-					<Button asChild size="lg" className="bg-primary hover:bg-primary/90">
+					<Button asChild size="lg" variant="accent">
 						<Link to="/sign-in">Create your first project</Link>
 					</Button>
 				</section>

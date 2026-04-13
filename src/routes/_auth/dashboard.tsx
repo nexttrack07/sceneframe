@@ -64,7 +64,7 @@ function DashboardPage() {
 						Each project is a Director Prompt and its generated scene pipeline.
 					</p>
 				</div>
-				<Button asChild>
+				<Button asChild variant="accent">
 					<Link to="/projects/new">
 						<Plus size={16} className="mr-1.5" />
 						New Project
@@ -105,7 +105,7 @@ function EmptyState() {
 				Create your first project by writing a Director Prompt — a short concept
 				for your video.
 			</p>
-			<Button asChild>
+			<Button asChild variant="accent">
 				<Link to="/projects/new">
 					<Plus size={16} className="mr-1.5" />
 					New Project
