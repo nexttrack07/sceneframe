@@ -367,8 +367,8 @@ function DeleteProjectDialog({
 			}}
 		>
 			<AlertDialogTrigger asChild>
-				<Button variant="destructive" size="sm" className="gap-1.5">
-					<Trash2 size={14} />
+				<Button variant="destructive" size="xs" className="gap-1">
+					<Trash2 size={12} />
 					Delete project
 				</Button>
 			</AlertDialogTrigger>
