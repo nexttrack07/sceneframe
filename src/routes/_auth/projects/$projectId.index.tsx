@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ProjectMenu } from "@/features/projects/components/project-menu";
 import { ScriptWorkshop } from "@/features/projects/components/script-workshop";
 import { Storyboard } from "@/features/projects/components/storyboard";
 import type { ShotMediaTab } from "@/features/projects/components/studio/shot-media-tabs";
@@ -192,6 +193,7 @@ function ProjectPage() {
 								<ArrowRight size={12} />
 							</Button>
 						)}
+						{!isDetailView && <ProjectMenu projectId={project.id} />}
 						{!isDetailView && (
 							<DeleteProjectDialog
 								projectName={project.name}
