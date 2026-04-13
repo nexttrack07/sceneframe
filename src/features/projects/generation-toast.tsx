@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 import { toast as sonnerToast } from "sonner";
 import { getRouter } from "@/router";
 
-type GenerationMedium = "image" | "video";
+type GenerationMedium = "image" | "video" | "workshop";
 type GenerationPhase = "loading" | "success" | "error";
 
 interface GenerationToastRecord {

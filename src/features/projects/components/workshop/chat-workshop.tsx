@@ -1,8 +1,12 @@
 import { ClipboardCopy, Film, Loader2, MessageSquare, Send, Sparkles } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Message } from "@/db/schema";
+import {
+	beginGenerationToast,
+	resolveGenerationToast,
+} from "../../generation-toast";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
 import type { ProjectSettings, ScriptDraft } from "../../project-types";
@@ -36,14 +40,38 @@ export function ChatWorkshop({
 		await chat.runChatMessage(content);
 	}, [chat, flow.isGenerating]);
 
+	const toastIdRef = useRef(0);
+
 	const handleGenerateWithChat = useCallback(
-		async (generateFn: (feedback?: string) => Promise<string>) => {
+		async (
+			generateFn: (feedback?: string) => Promise<string>,
+			operationName: string,
+		) => {
+			const toastId = `workshop-${++toastIdRef.current}`;
 			chat.setIsSending(true);
 			chat.setError(null);
+
+			beginGenerationToast({
+				id: toastId,
+				title: operationName,
+				location: "Script Workshop",
+				medium: "workshop",
+				status: "Generating...",
+			});
+
 			try {
 				await generateFn();
+				resolveGenerationToast(toastId, {
+					status: "Complete",
+					message: `${operationName} finished`,
+				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : "Generation failed";
+				resolveGenerationToast(toastId, {
+					status: "Failed",
+					message,
+					error: true,
+				});
 				chat.appendAssistantMessage(
 					`Something went wrong: ${message}. You can try again.`,
 				);
@@ -198,7 +226,7 @@ export function ChatWorkshop({
 										</p>
 										<Button
 											onClick={() =>
-												void handleGenerateWithChat(flow.handleGenerateOutline)
+												void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
 											}
 										>
 											<Sparkles size={14} className="mr-2" />
@@ -235,10 +263,10 @@ export function ChatWorkshop({
 							onSelectItem={flow.setSelectedItemId}
 							isStale={flow.staleStages.includes("outline")}
 							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateOutline)
+								void handleGenerateWithChat(flow.handleGenerateOutline, "Generating outline")
 							}
 							onBreakdownToShots={() =>
-								void handleGenerateWithChat(flow.handleGenerateShots)
+								void handleGenerateWithChat(flow.handleGenerateShots, "Breaking down to shots")
 							}
 							isGenerating={flow.isGenerating}
 						/>
@@ -251,10 +279,10 @@ export function ChatWorkshop({
 							onSelectItem={flow.setSelectedItemId}
 							isStale={flow.staleStages.includes("shots")}
 							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateShots)
+								void handleGenerateWithChat(flow.handleGenerateShots, "Breaking down to shots")
 							}
 							onGeneratePrompts={() =>
-								void handleGenerateWithChat(flow.handleGenerateImagePrompts)
+								void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
 							}
 							isGenerating={flow.isGenerating}
 						/>
@@ -268,7 +296,7 @@ export function ChatWorkshop({
 							onSelectItem={flow.setSelectedItemId}
 							isStale={flow.staleStages.includes("prompts")}
 							onRegenerate={() =>
-								void handleGenerateWithChat(flow.handleGenerateImagePrompts)
+								void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
 							}
 							onApprove={() => {
 							chat.setIsSending(true);
