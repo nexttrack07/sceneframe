@@ -1,5 +1,16 @@
-import { Check, ClipboardCopy, Film, Loader2, MessageSquare, Send, Sparkles } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import {
+	Check,
+	ClipboardCopy,
+	FileText,
+	Film,
+	Image as ImageIcon,
+	Loader2,
+	MessageSquare,
+	Send,
+	Sparkles,
+	X,
+} from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Message } from "@/db/schema";
@@ -10,6 +21,7 @@ import {
 } from "../../generation-toast";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
+import { getSelectionLabel } from "../../lib/script-helpers";
 import type { ProjectSettings, ScriptDraft } from "../../project-types";
 import { ChatBubble } from "../chat-bubble";
 import { OutlinePanel } from "./outline-panel";
@@ -40,6 +52,11 @@ export function ChatWorkshop({
 }: ChatWorkshopProps) {
 	const flow = useWorkshopFlow({ projectId, project });
 	const chat = useWorkshopChat({ projectId, existingMessages, stage: flow.stage });
+
+	const selectionLabel = useMemo(
+		() => getSelectionLabel(flow.selectedItemId, project.scriptDraft ?? null),
+		[flow.selectedItemId, project.scriptDraft],
+	);
 
 	const handleSend = useCallback(async () => {
 		if (!chat.input.trim() || chat.isSending || flow.isGenerating) return;
@@ -229,6 +246,39 @@ export function ChatWorkshop({
 								className="text-destructive/50 hover:text-destructive"
 							>
 								✕
+							</button>
+						</div>
+					)}
+					{selectionLabel && (
+						<div className="mb-2 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-xs">
+							<span className="shrink-0 text-primary">
+								{selectionLabel.kind === "outline" ? (
+									<FileText size={12} />
+								) : selectionLabel.kind === "shot" ? (
+									<Film size={12} />
+								) : (
+									<ImageIcon size={12} />
+								)}
+							</span>
+							<span className="shrink-0 font-medium text-primary">
+								Editing {selectionLabel.kind === "outline"
+									? `beat ${selectionLabel.index + 1}`
+									: selectionLabel.kind === "shot"
+										? `shot ${selectionLabel.index + 1}`
+										: `prompt ${selectionLabel.index + 1}`}
+								:
+							</span>
+							<span className="flex-1 truncate text-muted-foreground">
+								{selectionLabel.label}
+							</span>
+							<button
+								type="button"
+								onClick={() => flow.setSelectedItemId(null)}
+								className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground"
+								title="Clear selection"
+								aria-label="Clear selection"
+							>
+								<X size={12} />
 							</button>
 						</div>
 					)}

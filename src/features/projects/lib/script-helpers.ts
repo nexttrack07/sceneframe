@@ -1,4 +1,40 @@
-import type { IntakeAnswers } from "../project-types";
+import type { IntakeAnswers, ScriptDraft } from "../project-types";
+
+export interface SelectionLabel {
+	kind: "outline" | "shot" | "prompt";
+	index: number;
+	label: string;
+}
+
+export function getSelectionLabel(
+	selectedItemId: string | null | undefined,
+	scriptDraft: ScriptDraft | null | undefined,
+): SelectionLabel | null {
+	if (!selectedItemId || !scriptDraft) return null;
+
+	const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
+	if (!match) return null;
+
+	const kind = match[1] as "outline" | "shot" | "prompt";
+	const index = Number.parseInt(match[2], 10);
+	if (Number.isNaN(index)) return null;
+
+	if (kind === "outline") {
+		const entry = scriptDraft.outline?.[index];
+		if (!entry) return null;
+		return { kind, index, label: entry.title };
+	}
+
+	if (kind === "shot") {
+		const shot = scriptDraft.shots?.[index];
+		if (!shot) return null;
+		return { kind, index, label: shot.description };
+	}
+
+	const shot = scriptDraft.shots?.[index];
+	if (!shot) return null;
+	return { kind, index, label: shot.description };
+}
 
 export function composeBrief(intake: IntakeAnswers): string {
 	const parts: string[] = [];
