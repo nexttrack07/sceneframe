@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRealtimeRunsWithTag } from "@trigger.dev/react-hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
 import {
 	buildShotLabelMap,
@@ -21,16 +22,16 @@ import type {
 	PromptAssetTypeSelection,
 	TransitionVideoSummary,
 	TriggerRunSummary,
+	TriggerRunUiStatus,
 	VideoDefaults,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
+import { getRealtimeToken } from "../realtime-actions";
 import {
 	deleteTransitionVideo,
 	enhanceTransitionVideoPrompt,
 	generateTransitionVideo,
 	generateTransitionVideoPrompt,
-	getTransitionVideoRunStatuses,
-	pollTransitionVideos,
 	selectTransitionVideo,
 } from "../transition-actions";
 import { getVideoModelDefinition } from "../video-models";
@@ -120,7 +121,6 @@ export function useVideoStudio({
 		normalizeVideoDefaults(null),
 	);
 	const [isQueueingVideo, setIsQueueingVideo] = useState(false);
-	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
@@ -130,22 +130,92 @@ export function useVideoStudio({
 		useState<PromptAssetType | null>(null);
 	const [promptTypeSelection, setPromptTypeSelection] =
 		useState<PromptAssetTypeSelection>("auto");
+	const [realtimeToken, setRealtimeToken] = useState<string | null>(null);
 	const allTransitionVideosRef = useRef(allTransitionVideos);
 	const trackedToastMetaRef = useRef(
 		new Map<string, { title: string; location: string }>(),
 	);
-	const cancelPollingRef = useRef(false);
-	const isPollingRef = useRef(false);
-	const completedRunIdsRef = useRef<Set<string>>(new Set());
 	const autoPromptPairKeysRef = useRef<Set<string>>(new Set());
-	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-		null,
-	);
+	const processedRunIdsRef = useRef<Set<string>>(new Set());
 	allTransitionVideosRef.current = allTransitionVideos;
-	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
-		Record<string, TriggerRunSummary>
-	>({});
 	const shotLabelMap = buildShotLabelMap(storyShots);
+
+	// Fetch realtime token on mount
+	useEffect(() => {
+		let cancelled = false;
+		getRealtimeToken({ data: { projectId } })
+			.then(({ token }) => {
+				if (!cancelled) setRealtimeToken(token);
+			})
+			.catch((err) => {
+				console.error(`${logPrefix} Failed to get realtime token:`, err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId]);
+
+	// Subscribe to realtime run updates for this project
+	const { runs: realtimeRuns } = useRealtimeRunsWithTag(
+		[`project:${projectId}`],
+		{
+			accessToken: realtimeToken ?? undefined,
+			enabled: !!realtimeToken,
+			createdAt: "1h", // Only show runs from the last hour
+		},
+	);
+
+	// Derive run statuses from realtime runs, keyed by video ID
+	const runStatusesByVideoId = useMemo(() => {
+		if (!realtimeRuns) return {};
+		const statusMap: Record<string, TriggerRunSummary> = {};
+		for (const run of realtimeRuns) {
+			// Extract video ID from tags (format: "video:{id}")
+			const videoTag = run.tags?.find((tag) => tag.startsWith("video:"));
+			if (!videoTag) continue;
+			const videoId = videoTag.replace("video:", "");
+			// Map realtime run status to TriggerRunUiStatus
+			const statusMapping: Record<string, TriggerRunUiStatus> = {
+				PENDING: "queued",
+				QUEUED: "queued",
+				EXECUTING: "running",
+				REATTEMPTING: "retrying",
+				COMPLETED: "completed",
+				FAILED: "failed",
+				CANCELED: "canceled",
+				SYSTEM_FAILURE: "failed",
+				EXPIRED: "failed",
+				CRASHED: "failed",
+				INTERRUPTED: "canceled",
+				TIMED_OUT: "failed",
+			};
+			const uiStatus = statusMapping[run.status] ?? "unknown";
+			statusMap[videoId] = {
+				assetId: videoId,
+				jobId: run.id,
+				status: uiStatus,
+				attemptCount: 1,
+				createdAt: run.createdAt?.toISOString() ?? null,
+				startedAt: run.startedAt?.toISOString() ?? null,
+				finishedAt: run.finishedAt?.toISOString() ?? null,
+				errorMessage: typeof run.error === "object" && run.error !== null && "message" in run.error
+					? String(run.error.message)
+					: null,
+			};
+		}
+		return statusMap;
+	}, [realtimeRuns]);
+
+	// Derive isGeneratingVideo from allTransitionVideos for selected pair
+	const isGeneratingVideo = useMemo(() => {
+		if (!selectedTransitionPair) return false;
+		return allTransitionVideos.some(
+			(video) =>
+				video.fromShotId === selectedTransitionPair.fromShotId &&
+				video.toShotId === selectedTransitionPair.toShotId &&
+				isPendingVideoStatus(video.status),
+		);
+	}, [allTransitionVideos, selectedTransitionPair]);
 	const setVideoSettings = useCallback(
 		(next: VideoDefaults) => {
 			const explicitAspectRatio =
@@ -160,21 +230,9 @@ export function useVideoStudio({
 		[projectId],
 	);
 
-	const stopPolling = useCallback(() => {
-		cancelPollingRef.current = true;
-		if (pollingIntervalRef.current) {
-			clearInterval(pollingIntervalRef.current);
-			pollingIntervalRef.current = null;
-		}
-		isPollingRef.current = false;
-		setIsGeneratingVideo(false);
-	}, []);
-
+	// Reset state when transition pair changes
 	useEffect(() => {
-		if (!selectedTransitionPair) {
-			stopPolling();
-			return;
-		}
+		if (!selectedTransitionPair) return;
 
 		const pairVideos = allTransitionVideosRef.current.filter(
 			(tv) =>
@@ -199,17 +257,11 @@ export function useVideoStudio({
 					null,
 			});
 
-		// Check if there are any generating videos for this pair
-		const hasGeneratingVideos = pairVideos.some((tv) =>
-			isPendingVideoStatus(tv.status),
-		);
-
 		setVideoPrompt(initialPrompt);
 		setVideoSettingsState(
 			applyProjectAspectRatioToVideoDefaults(projectId, initialSettings),
 		);
 		setIsQueueingVideo(false);
-		setIsGeneratingVideo(hasGeneratingVideos); // Keep true if videos are generating
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
@@ -217,11 +269,8 @@ export function useVideoStudio({
 		setUsePrevShotContext(true);
 		setDetectedPromptAssetType(null);
 		setPromptTypeSelection("auto");
-		setRunStatusesByVideoId({});
-		completedRunIdsRef.current.clear();
-		stopPolling();
-		cancelPollingRef.current = false;
-	}, [selectedTransitionPair, stopPolling, projectId]);
+		processedRunIdsRef.current.clear();
+	}, [selectedTransitionPair, projectId]);
 
 	useEffect(() => {
 		const pair = selectedTransitionPair;
@@ -297,148 +346,60 @@ export function useVideoStudio({
 		writeTransitionSettings(videoSettings);
 	}, [selectedTransitionPair, videoSettings]);
 
-	// Keep local loading state aligned with fresh query data for the selected transition pair.
+	// Reset isQueueingVideo when no longer generating
 	useEffect(() => {
 		if (!selectedTransitionPair) {
 			setIsQueueingVideo(false);
-			setIsGeneratingVideo(false);
-			setRunStatusesByVideoId({});
 			return;
 		}
+		if (!isGeneratingVideo) {
+			setIsQueueingVideo(false);
+		}
+	}, [isGeneratingVideo, selectedTransitionPair]);
 
-		const hasGeneratingVideos = allTransitionVideos.some(
-			(video) =>
-				video.fromShotId === selectedTransitionPair.fromShotId &&
-				video.toShotId === selectedTransitionPair.toShotId &&
-				isPendingVideoStatus(video.status),
+	// Handle realtime run completions - refetch data and auto-select
+	useEffect(() => {
+		if (!realtimeRuns || !selectedTransitionPair) return;
+
+		const pairVideoIds = new Set(
+			allTransitionVideos
+				.filter(
+					(tv) =>
+						tv.fromShotId === selectedTransitionPair.fromShotId &&
+						tv.toShotId === selectedTransitionPair.toShotId,
+				)
+				.map((tv) => tv.id),
 		);
 
-		if (!hasGeneratingVideos) {
-			if (isPollingRef.current) {
-				stopPolling();
-			} else {
-				setIsGeneratingVideo(false);
+		for (const run of realtimeRuns) {
+			// Skip if already processed
+			if (processedRunIdsRef.current.has(run.id)) continue;
+
+			// Extract video ID from tags
+			const videoTag = run.tags?.find((tag) => tag.startsWith("video:"));
+			if (!videoTag) continue;
+			const videoId = videoTag.replace("video:", "");
+
+			// Only process runs for videos in the current pair
+			if (!pairVideoIds.has(videoId)) continue;
+
+			// Process completed or failed runs
+			if (run.status === "COMPLETED" || run.status === "FAILED" || run.status === "CANCELED") {
+				processedRunIdsRef.current.add(run.id);
+				console.info(`${logPrefix} realtime:run-finished`, {
+					runId: run.id,
+					videoId,
+					status: run.status,
+				});
+
+				// Refetch project data to get updated video status
+				void queryClient.refetchQueries({
+					queryKey: projectKeys.project(projectId),
+					type: "active",
+				});
 			}
-			setIsQueueingVideo(false);
-			setRunStatusesByVideoId({});
 		}
-	}, [allTransitionVideos, selectedTransitionPair, stopPolling]);
-
-	useEffect(() => {
-		return () => {
-			stopPolling();
-		};
-	}, [stopPolling]);
-
-	const startPolling = useCallback(
-		(pair: { fromShotId: string; toShotId: string }) => {
-			if (isPollingRef.current) return;
-
-			console.info(`${logPrefix} poll:start`, pair);
-
-			cancelPollingRef.current = false;
-			isPollingRef.current = true;
-			setIsGeneratingVideo(true);
-
-			const POLL_TIMEOUT_MS = 12 * 60 * 1000;
-			const deadline = Date.now() + POLL_TIMEOUT_MS;
-
-			pollingIntervalRef.current = setInterval(async () => {
-				if (cancelPollingRef.current || Date.now() > deadline) {
-					console.warn(`${logPrefix} poll:stopped`, {
-						...pair,
-						cancelled: cancelPollingRef.current,
-						pastDeadline: Date.now() > deadline,
-					});
-					stopPolling();
-					return;
-				}
-
-				try {
-					const runStatusResult = await getTransitionVideoRunStatuses({
-						data: pair,
-					});
-					const interestingRuns = runStatusResult.runs.filter(
-						(run) =>
-							run.status === "completed" ||
-							run.status === "failed" ||
-							run.status === "canceled",
-					);
-					if (interestingRuns.length > 0) {
-						console.info(`${logPrefix} run:stage`, {
-							...pair,
-							runs: interestingRuns.map((run) => ({
-								assetId: run.assetId,
-								status: run.status,
-							})),
-						});
-					}
-					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
-						if (run.status !== "completed" || !run.jobId) return false;
-						if (completedRunIdsRef.current.has(run.jobId)) return false;
-						completedRunIdsRef.current.add(run.jobId);
-						return true;
-					});
-					setRunStatusesByVideoId(
-						Object.fromEntries(
-							runStatusResult.runs.map((run) => [run.assetId, run]),
-						),
-					);
-					if (newlyCompletedRuns.length > 0) {
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-						console.info(`${logPrefix} run:completed-refetch`, pair);
-					}
-
-					const result = await pollTransitionVideos({
-						data: pair,
-					});
-
-					if (result.isGenerating) {
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-					} else {
-						stopPolling();
-						setRunStatusesByVideoId({});
-						if (!result.selectedDoneId && result.latestDoneId) {
-							try {
-								await selectTransitionVideo({
-									data: { transitionVideoId: result.latestDoneId },
-								});
-							} catch (error) {
-								console.warn(`${logPrefix} auto-select failed`, {
-									...pair,
-									videoId: result.latestDoneId,
-									error: error instanceof Error ? error.message : String(error),
-								});
-							}
-						}
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-						console.info(`${logPrefix} poll:complete`, {
-							...pair,
-							latestDoneId: result.latestDoneId,
-							doneCount: result.doneCount,
-							erroredCount: result.erroredCount,
-						});
-					}
-				} catch (error) {
-					// Transient error, keep polling.
-					console.error(`${logPrefix} poll error`, {
-						...pair,
-						error: error instanceof Error ? error.message : String(error),
-					});
-				}
-			}, 3000);
-		},
-		[projectId, queryClient, stopPolling],
-	);
+	}, [realtimeRuns, selectedTransitionPair, allTransitionVideos, projectId, queryClient]);
 
 	useEffect(() => {
 		for (const [videoId, meta] of trackedToastMetaRef.current.entries()) {
@@ -478,18 +439,6 @@ export function useVideoStudio({
 		}
 	}, [allTransitionVideos]);
 
-	useEffect(() => {
-		const pair = selectedTransitionPair;
-		if (!pair) return;
-		const generatingTv = allTransitionVideos.find(
-			(tv) =>
-				tv.fromShotId === pair.fromShotId &&
-				tv.toShotId === pair.toShotId &&
-				isPendingVideoStatus(tv.status),
-		);
-		if (!generatingTv || isPollingRef.current) return;
-		return startPolling(pair);
-	}, [allTransitionVideos, selectedTransitionPair, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedTransitionPair) return;
@@ -554,7 +503,6 @@ export function useVideoStudio({
 			model: videoSettings.model,
 		});
 		setIsQueueingVideo(true);
-		cancelPollingRef.current = false;
 		setError(null);
 		try {
 			const result = await generateTransitionVideo({
@@ -599,7 +547,6 @@ export function useVideoStudio({
 					duration: duration ? `${duration}s` : undefined,
 				},
 			});
-			startPolling(pair);
 			console.info(`${logPrefix} queue:done`, pair);
 		} catch (err) {
 			const msg =
@@ -610,7 +557,6 @@ export function useVideoStudio({
 			});
 			setError(msg);
 			toast(msg, "error");
-			stopPolling();
 		} finally {
 			setIsQueueingVideo(false);
 		}

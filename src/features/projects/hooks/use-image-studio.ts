@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useRealtimeRunsWithTag } from "@trigger.dev/react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
 import { updateShotPromptContext } from "../character-actions";
@@ -26,15 +27,15 @@ import type {
 	PromptAssetTypeSelection,
 	SceneAssetSummary,
 	TriggerRunSummary,
+	TriggerRunUiStatus,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
+import { getRealtimeToken } from "../realtime-actions";
 import { deleteAsset } from "../audio-actions";
 import {
 	enhanceShotImagePrompt,
 	generateShotImagePrompt,
 	generateShotImages,
-	getShotImageRunStatuses,
-	pollShotAssets,
 	selectShotAsset,
 	uploadShotReferenceImage,
 } from "../shot-actions";
@@ -59,24 +60,19 @@ export function useImageStudio({
 	setError: (msg: string | null) => void;
 }) {
 	const queryClient = useQueryClient();
+	const logPrefix = "[ImageStudio]";
 	const storyShotsRef = useRef(storyShots);
 	const assetsByShotIdRef = useRef(assetsByShotId);
 	const trackedBatchMetaRef = useRef(
 		new Map<string, { title: string; location: string }>(),
 	);
-	const cancelPollingRef = useRef(false);
-	const isPollingRef = useRef(false);
-	const completedRunIdsRef = useRef<Set<string>>(new Set());
-	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-		null,
-	);
+	const processedRunIdsRef = useRef<Set<string>>(new Set());
 	storyShotsRef.current = storyShots;
 	assetsByShotIdRef.current = assetsByShotId;
 	const [prompt, setPrompt] = useState("");
 	const [settingsOverrides, setSettingsOverridesState] =
 		useState<ImageDefaults>(normalizeImageDefaults(null));
 	const [isQueueing, setIsQueueing] = useState(false);
-	const [isGenerating, setIsGenerating] = useState(false);
 	const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
 	const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false);
 	const [isSelectingAssetId, setIsSelectingAssetId] = useState<string | null>(
@@ -103,10 +99,79 @@ export function useImageStudio({
 		useState<PromptAssetType | null>(null);
 	const [promptTypeSelection, setPromptTypeSelection] =
 		useState<PromptAssetTypeSelection>("auto");
-	const [runStatusesByAssetId, setRunStatusesByAssetId] = useState<
-		Record<string, TriggerRunSummary>
-	>({});
+	const [realtimeToken, setRealtimeToken] = useState<string | null>(null);
 	const shotLabelMap = buildShotLabelMap(storyShots);
+
+	// Fetch realtime token on mount
+	useEffect(() => {
+		let cancelled = false;
+		getRealtimeToken({ data: { projectId } })
+			.then(({ token }) => {
+				if (!cancelled) setRealtimeToken(token);
+			})
+			.catch((err) => {
+				console.error(`${logPrefix} Failed to get realtime token:`, err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId]);
+
+	// Subscribe to realtime run updates for this project
+	const { runs: realtimeRuns } = useRealtimeRunsWithTag(
+		[`project:${projectId}`],
+		{
+			accessToken: realtimeToken ?? undefined,
+			enabled: !!realtimeToken,
+			createdAt: "1h",
+		},
+	);
+
+	// Derive run statuses from realtime runs, keyed by asset ID (image)
+	const runStatusesByAssetId = useMemo(() => {
+		if (!realtimeRuns) return {};
+		const statusMap: Record<string, TriggerRunSummary> = {};
+		for (const run of realtimeRuns) {
+			const imageTag = run.tags?.find((tag) => tag.startsWith("image:"));
+			if (!imageTag) continue;
+			const assetId = imageTag.replace("image:", "");
+			const statusMapping: Record<string, TriggerRunUiStatus> = {
+				PENDING: "queued",
+				QUEUED: "queued",
+				EXECUTING: "running",
+				REATTEMPTING: "retrying",
+				COMPLETED: "completed",
+				FAILED: "failed",
+				CANCELED: "canceled",
+				SYSTEM_FAILURE: "failed",
+				EXPIRED: "failed",
+				CRASHED: "failed",
+				INTERRUPTED: "canceled",
+				TIMED_OUT: "failed",
+			};
+			const uiStatus = statusMapping[run.status] ?? "unknown";
+			statusMap[assetId] = {
+				assetId,
+				jobId: run.id,
+				status: uiStatus,
+				attemptCount: 1,
+				createdAt: run.createdAt?.toISOString() ?? null,
+				startedAt: run.startedAt?.toISOString() ?? null,
+				finishedAt: run.finishedAt?.toISOString() ?? null,
+				errorMessage: typeof run.error === "object" && run.error !== null && "message" in run.error
+					? String(run.error.message)
+					: null,
+			};
+		}
+		return statusMap;
+	}, [realtimeRuns]);
+
+	// Derive isGenerating from assets for selected shot
+	const isGenerating = useMemo(() => {
+		if (!selectedShotId) return false;
+		const assets = assetsByShotId.get(selectedShotId) ?? [];
+		return assets.some((asset) => asset.status === "generating");
+	}, [assetsByShotId, selectedShotId]);
 	const allCharacterIds = useMemo(
 		() => projectSettings?.characters?.map((character) => character.id) ?? [],
 		[projectSettings?.characters],
@@ -128,82 +193,38 @@ export function useImageStudio({
 		},
 		[projectId],
 	);
-	const pollingParamsRef = useRef({
-		projectId,
-		queryClient,
-	});
-	pollingParamsRef.current = {
-		projectId,
-		queryClient,
-	};
+	// Handle realtime run completions - refetch data
+	useEffect(() => {
+		if (!realtimeRuns || !selectedShotId) return;
 
-	const stopPolling = useCallback(() => {
-		cancelPollingRef.current = true;
-		if (pollingIntervalRef.current) {
-			clearInterval(pollingIntervalRef.current);
-			pollingIntervalRef.current = null;
+		const shotAssetIds = new Set(
+			(assetsByShotId.get(selectedShotId) ?? []).map((a) => a.id),
+		);
+
+		for (const run of realtimeRuns) {
+			if (processedRunIdsRef.current.has(run.id)) continue;
+
+			const imageTag = run.tags?.find((tag) => tag.startsWith("image:"));
+			if (!imageTag) continue;
+			const assetId = imageTag.replace("image:", "");
+
+			if (!shotAssetIds.has(assetId)) continue;
+
+			if (run.status === "COMPLETED" || run.status === "FAILED" || run.status === "CANCELED") {
+				processedRunIdsRef.current.add(run.id);
+				console.info(`${logPrefix} realtime:run-finished`, {
+					runId: run.id,
+					assetId,
+					status: run.status,
+				});
+
+				void queryClient.refetchQueries({
+					queryKey: projectKeys.project(projectId),
+					type: "active",
+				});
+			}
 		}
-		isPollingRef.current = false;
-		setIsGenerating(false);
-	}, []);
-
-	const startPolling = useCallback(
-		(shotId: string) => {
-			if (isPollingRef.current) return;
-
-			cancelPollingRef.current = false;
-			isPollingRef.current = true;
-			setIsGenerating(true);
-
-			const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-			const deadline = Date.now() + POLL_TIMEOUT_MS;
-
-			pollingIntervalRef.current = setInterval(async () => {
-				if (cancelPollingRef.current || Date.now() > deadline) {
-					stopPolling();
-					return;
-				}
-
-				try {
-					const runStatusResult = await getShotImageRunStatuses({
-						data: { shotId },
-					});
-					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
-						if (run.status !== "completed" || !run.jobId) return false;
-						if (completedRunIdsRef.current.has(run.jobId)) return false;
-						completedRunIdsRef.current.add(run.jobId);
-						return true;
-					});
-					setRunStatusesByAssetId(
-						Object.fromEntries(
-							runStatusResult.runs.map((run) => [run.assetId, run]),
-						),
-					);
-					if (newlyCompletedRuns.length > 0) {
-						await pollingParamsRef.current.queryClient.invalidateQueries({
-							queryKey: projectKeys.project(pollingParamsRef.current.projectId),
-							refetchType: "active",
-						});
-					}
-
-					const result = await pollShotAssets({
-						data: { shotId },
-					});
-
-					if (!result.isGenerating) {
-						stopPolling();
-						setRunStatusesByAssetId({});
-						await pollingParamsRef.current.queryClient.invalidateQueries({
-							queryKey: projectKeys.project(pollingParamsRef.current.projectId),
-						});
-					}
-				} catch {
-					// Transient error, keep polling
-				}
-			}, 3000);
-		},
-		[stopPolling],
-	);
+	}, [realtimeRuns, selectedShotId, assetsByShotId, projectId, queryClient]);
 
 	// Expose reset for use when selecting a shot
 	const resetForShot = (useRefImageReset = true) => {
@@ -218,11 +239,8 @@ export function useImageStudio({
 
 	// Reset image studio state when selected shot changes
 	useEffect(() => {
-		if (!selectedShotId) {
-			stopPolling();
-			return;
-		}
-		stopPolling();
+		if (!selectedShotId) return;
+
 		const shot = storyShotsRef.current.find((s) => s.id === selectedShotId);
 		const shotAssets = assetsByShotIdRef.current.get(selectedShotId) ?? [];
 		const lastAssetSettings =
@@ -233,11 +251,6 @@ export function useImageStudio({
 						new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
 				)[0]?.modelSettings ?? null;
 		const persistedImageSettings = readImageSettings();
-
-		// Check if there are any generating assets for this shot
-		const hasGeneratingAssets = shotAssets.some(
-			(a) => a.status === "generating",
-		);
 
 		setUseProjectCharacters(
 			projectSettings?.shotPromptContext?.[selectedShotId]
@@ -274,7 +287,6 @@ export function useImageStudio({
 		);
 		setExpandedImageId(null);
 		setIsQueueing(false);
-		setIsGenerating(hasGeneratingAssets); // Keep true if assets are generating
 		setIsGeneratingPrompt(false);
 		setIsEnhancingPrompt(false);
 		setIsSelectingAssetId(null);
@@ -284,12 +296,9 @@ export function useImageStudio({
 		setIsUploadingReference(false);
 		setDetectedPromptAssetType(null);
 		setPromptTypeSelection("auto");
-		setRunStatusesByAssetId({});
-		completedRunIdsRef.current.clear();
-		cancelPollingRef.current = false;
+		processedRunIdsRef.current.clear();
 	}, [
 		selectedShotId,
-		stopPolling,
 		projectId,
 		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
 			?.useProjectCharacters,
@@ -307,19 +316,16 @@ export function useImageStudio({
 		writeImageSettings(settingsOverrides);
 	}, [settingsOverrides]);
 
-	// Auto-resume polling for generating assets when switching to a shot
+	// Reset isQueueing when no longer generating
 	useEffect(() => {
-		if (!selectedShotId) return;
-		const shotAssets = assetsByShotIdRef.current.get(selectedShotId) ?? [];
-		const hasGeneratingAssets = shotAssets.some(
-			(a) => a.status === "generating",
-		);
-
-		if (!hasGeneratingAssets || isPollingRef.current) return;
-		startPolling(selectedShotId);
-	}, [selectedShotId, startPolling]);
-
-	useEffect(() => stopPolling, [stopPolling]);
+		if (!selectedShotId) {
+			setIsQueueing(false);
+			return;
+		}
+		if (!isGenerating) {
+			setIsQueueing(false);
+		}
+	}, [isGenerating, selectedShotId]);
 
 	// Previous shot for reference image
 	const selectedShot = selectedShotId
@@ -443,7 +449,6 @@ export function useImageStudio({
 					aspectRatio: aspectRatio ?? undefined,
 				},
 			});
-			startPolling(selectedShotId);
 			const wasEditing = !!editingReferenceUrl;
 			if (wasEditing) setEditingReferenceUrl(null);
 		} catch (err) {

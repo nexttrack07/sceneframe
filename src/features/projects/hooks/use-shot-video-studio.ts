@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useRealtimeRunsWithTag } from "@trigger.dev/react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Shot } from "@/db/schema";
 import { updateShotPromptContext } from "../character-actions";
@@ -21,16 +22,16 @@ import type {
 	SceneAssetSummary,
 	ShotVideoSummary,
 	TriggerRunSummary,
+	TriggerRunUiStatus,
 	VideoDefaults,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
+import { getRealtimeToken } from "../realtime-actions";
 import {
 	deleteShotVideo,
 	enhanceShotVideoPrompt,
 	generateShotVideo,
 	generateShotVideoPrompt,
-	getShotVideoRunStatuses,
-	pollShotVideos,
 	selectShotVideo,
 } from "../shot-actions";
 import { getVideoModelDefinition } from "../video-models";
@@ -118,7 +119,6 @@ export function useShotVideoStudio({
 		normalizeVideoDefaults(null),
 	);
 	const [isQueueingVideo, setIsQueueingVideo] = useState(false);
-	const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 	const [isGeneratingVideoPrompt, setIsGeneratingVideoPrompt] = useState(false);
 	const [isEnhancingVideoPrompt, setIsEnhancingVideoPrompt] = useState(false);
 	const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
@@ -137,20 +137,86 @@ export function useShotVideoStudio({
 		useState<PromptAssetType | null>(null);
 	const [promptTypeSelection, setPromptTypeSelection] =
 		useState<PromptAssetTypeSelection>("auto");
+	const [realtimeToken, setRealtimeToken] = useState<string | null>(null);
 	const allShotVideosRef = useRef(allShotVideos);
 	const trackedToastMetaRef = useRef(
 		new Map<string, { title: string; location: string }>(),
 	);
-	const cancelPollingRef = useRef(false);
-	const isPollingRef = useRef(false);
-	const completedRunIdsRef = useRef<Set<string>>(new Set());
-	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-		null,
-	);
+	const processedRunIdsRef = useRef<Set<string>>(new Set());
 	allShotVideosRef.current = allShotVideos;
-	const [runStatusesByVideoId, setRunStatusesByVideoId] = useState<
-		Record<string, TriggerRunSummary>
-	>({});
+
+	// Fetch realtime token on mount
+	useEffect(() => {
+		let cancelled = false;
+		getRealtimeToken({ data: { projectId } })
+			.then(({ token }) => {
+				if (!cancelled) setRealtimeToken(token);
+			})
+			.catch((err) => {
+				console.error(`${logPrefix} Failed to get realtime token:`, err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId]);
+
+	// Subscribe to realtime run updates for this project
+	const { runs: realtimeRuns } = useRealtimeRunsWithTag(
+		[`project:${projectId}`],
+		{
+			accessToken: realtimeToken ?? undefined,
+			enabled: !!realtimeToken,
+			createdAt: "1h",
+		},
+	);
+
+	// Derive run statuses from realtime runs, keyed by video ID
+	const runStatusesByVideoId = useMemo(() => {
+		if (!realtimeRuns) return {};
+		const statusMap: Record<string, TriggerRunSummary> = {};
+		for (const run of realtimeRuns) {
+			const videoTag = run.tags?.find((tag) => tag.startsWith("video:"));
+			if (!videoTag) continue;
+			const videoId = videoTag.replace("video:", "");
+			const statusMapping: Record<string, TriggerRunUiStatus> = {
+				PENDING: "queued",
+				QUEUED: "queued",
+				EXECUTING: "running",
+				REATTEMPTING: "retrying",
+				COMPLETED: "completed",
+				FAILED: "failed",
+				CANCELED: "canceled",
+				SYSTEM_FAILURE: "failed",
+				EXPIRED: "failed",
+				CRASHED: "failed",
+				INTERRUPTED: "canceled",
+				TIMED_OUT: "failed",
+			};
+			const uiStatus = statusMapping[run.status] ?? "unknown";
+			statusMap[videoId] = {
+				assetId: videoId,
+				jobId: run.id,
+				status: uiStatus,
+				attemptCount: 1,
+				createdAt: run.createdAt?.toISOString() ?? null,
+				startedAt: run.startedAt?.toISOString() ?? null,
+				finishedAt: run.finishedAt?.toISOString() ?? null,
+				errorMessage: typeof run.error === "object" && run.error !== null && "message" in run.error
+					? String(run.error.message)
+					: null,
+			};
+		}
+		return statusMap;
+	}, [realtimeRuns]);
+
+	// Derive isGeneratingVideo from allShotVideos for selected shot
+	const isGeneratingVideo = useMemo(() => {
+		if (!selectedShotId) return false;
+		return allShotVideos.some(
+			(video) =>
+				video.shotId === selectedShotId && isPendingVideoStatus(video.status),
+		);
+	}, [allShotVideos, selectedShotId]);
 	const allCharacterIds = useMemo(
 		() => projectSettings?.characters?.map((character) => character.id) ?? [],
 		[projectSettings?.characters],
@@ -173,22 +239,9 @@ export function useShotVideoStudio({
 		[projectId],
 	);
 
-	const stopPolling = useCallback(() => {
-		cancelPollingRef.current = true;
-		if (pollingIntervalRef.current) {
-			clearInterval(pollingIntervalRef.current);
-			pollingIntervalRef.current = null;
-		}
-		isPollingRef.current = false;
-		setIsGeneratingVideo(false);
-	}, []);
-
 	// Reset state when shot changes
 	useEffect(() => {
-		if (!selectedShotId) {
-			stopPolling();
-			return;
-		}
+		if (!selectedShotId) return;
 
 		const shotVideos = allShotVideosRef.current.filter(
 			(v) => v.shotId === selectedShotId,
@@ -209,17 +262,11 @@ export function useShotVideoStudio({
 					null,
 			});
 
-		// Check if there are any generating videos for this shot
-		const hasGeneratingVideos = shotVideos.some((v) =>
-			isPendingVideoStatus(v.status),
-		);
-
 		setVideoPrompt(initialPrompt);
 		setVideoSettingsState(
 			applyProjectAspectRatioToVideoDefaults(projectId, initialSettings),
 		);
 		setIsQueueingVideo(false);
-		setIsGeneratingVideo(hasGeneratingVideos);
 		setIsGeneratingVideoPrompt(false);
 		setIsEnhancingVideoPrompt(false);
 		setDeletingVideoId(null);
@@ -255,13 +302,9 @@ export function useShotVideoStudio({
 		setReferenceImageIds([]);
 		setDetectedPromptAssetType(null);
 		setPromptTypeSelection("auto");
-		setRunStatusesByVideoId({});
-		completedRunIdsRef.current.clear();
-		stopPolling();
-		cancelPollingRef.current = false;
+		processedRunIdsRef.current.clear();
 	}, [
 		selectedShotId,
-		stopPolling,
 		projectId,
 		projectSettings?.shotPromptContext?.[selectedShotId ?? ""]
 			?.useProjectCharacters,
@@ -287,35 +330,16 @@ export function useShotVideoStudio({
 		writeShotVideoSettings(videoSettings);
 	}, [selectedShotId, videoSettings]);
 
-	// Keep local loading state aligned with fresh query data for the selected shot.
+	// Reset isQueueingVideo when no longer generating
 	useEffect(() => {
 		if (!selectedShotId) {
-			setIsGeneratingVideo(false);
-			setRunStatusesByVideoId({});
+			setIsQueueingVideo(false);
 			return;
 		}
-
-		const hasGeneratingVideos = allShotVideos.some(
-			(video) =>
-				video.shotId === selectedShotId && isPendingVideoStatus(video.status),
-		);
-
-		if (!hasGeneratingVideos) {
-			if (isPollingRef.current) {
-				stopPolling();
-			} else {
-				setIsGeneratingVideo(false);
-			}
-			setRunStatusesByVideoId({});
+		if (!isGeneratingVideo) {
+			setIsQueueingVideo(false);
 		}
-	}, [allShotVideos, selectedShotId, stopPolling]);
-
-	// Cleanup on unmount
-	useEffect(() => {
-		return () => {
-			stopPolling();
-		};
-	}, [stopPolling]);
+	}, [isGeneratingVideo, selectedShotId]);
 
 	const selectedShot = selectedShotId
 		? (storyShots.find((shot) => shot.id === selectedShotId) ?? null)
@@ -342,118 +366,40 @@ export function useShotVideoStudio({
 		setUsePrevShotImage(Boolean(prevShotSelectedImage));
 	}, [selectedShotId, prevShotSelectedImage]);
 
-	const startPolling = useCallback(
-		(shotId: string) => {
-			if (isPollingRef.current) return;
+	// Handle realtime run completions - refetch data
+	useEffect(() => {
+		if (!realtimeRuns || !selectedShotId) return;
 
-			console.info(`${logPrefix} poll:start`, { shotId });
+		const shotVideoIds = new Set(
+			allShotVideos
+				.filter((v) => v.shotId === selectedShotId)
+				.map((v) => v.id),
+		);
 
-			cancelPollingRef.current = false;
-			isPollingRef.current = true;
-			setIsGeneratingVideo(true);
+		for (const run of realtimeRuns) {
+			if (processedRunIdsRef.current.has(run.id)) continue;
 
-			const POLL_TIMEOUT_MS = 12 * 60 * 1000;
-			const deadline = Date.now() + POLL_TIMEOUT_MS;
+			const videoTag = run.tags?.find((tag) => tag.startsWith("video:"));
+			if (!videoTag) continue;
+			const videoId = videoTag.replace("video:", "");
 
-			pollingIntervalRef.current = setInterval(async () => {
-				if (cancelPollingRef.current || Date.now() > deadline) {
-					console.warn(`${logPrefix} poll:stopped`, {
-						shotId,
-						cancelled: cancelPollingRef.current,
-						pastDeadline: Date.now() > deadline,
-					});
-					stopPolling();
-					return;
-				}
+			if (!shotVideoIds.has(videoId)) continue;
 
-				try {
-					const runStatusResult = await getShotVideoRunStatuses({
-						data: { shotId },
-					});
-					const interestingRuns = runStatusResult.runs.filter(
-						(run) =>
-							run.status === "completed" ||
-							run.status === "failed" ||
-							run.status === "canceled",
-					);
-					if (interestingRuns.length > 0) {
-						console.info(`${logPrefix} run:stage`, {
-							shotId,
-							runs: interestingRuns.map((run) => ({
-								assetId: run.assetId,
-								status: run.status,
-							})),
-						});
-					}
-					const newlyCompletedRuns = runStatusResult.runs.filter((run) => {
-						if (run.status !== "completed" || !run.jobId) return false;
-						if (completedRunIdsRef.current.has(run.jobId)) return false;
-						completedRunIdsRef.current.add(run.jobId);
-						return true;
-					});
-					setRunStatusesByVideoId(
-						Object.fromEntries(
-							runStatusResult.runs.map((run) => [run.assetId, run]),
-						),
-					);
-					if (newlyCompletedRuns.length > 0) {
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-						console.info(`${logPrefix} run:completed-refetch`, {
-							shotId,
-							count: newlyCompletedRuns.length,
-						});
-					}
+			if (run.status === "COMPLETED" || run.status === "FAILED" || run.status === "CANCELED") {
+				processedRunIdsRef.current.add(run.id);
+				console.info(`${logPrefix} realtime:run-finished`, {
+					runId: run.id,
+					videoId,
+					status: run.status,
+				});
 
-					const result = await pollShotVideos({
-						data: { shotId },
-					});
-
-					if (result.isGenerating) {
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-					} else {
-						console.info(`${logPrefix} poll:complete`, {
-							shotId,
-							latestDoneId: result.latestDoneId,
-							doneCount: result.doneCount,
-							erroredCount: result.erroredCount,
-						});
-						stopPolling();
-						setRunStatusesByVideoId({});
-						if (!result.selectedDoneId && result.latestDoneId) {
-							try {
-								await selectShotVideo({
-									data: { videoId: result.latestDoneId },
-								});
-							} catch (error) {
-								console.warn(`${logPrefix} auto-select failed`, {
-									shotId,
-									videoId: result.latestDoneId,
-									error: error instanceof Error ? error.message : String(error),
-								});
-							}
-						}
-						await queryClient.refetchQueries({
-							queryKey: projectKeys.project(projectId),
-							type: "active",
-						});
-					}
-				} catch (err) {
-					// Transient error, keep polling.
-					console.error(`${logPrefix} poll error`, {
-						shotId,
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}
-			}, 3000);
-		},
-		[projectId, queryClient, stopPolling],
-	);
+				void queryClient.refetchQueries({
+					queryKey: projectKeys.project(projectId),
+					type: "active",
+				});
+			}
+		}
+	}, [realtimeRuns, selectedShotId, allShotVideos, projectId, queryClient]);
 
 	useEffect(() => {
 		for (const [videoId, meta] of trackedToastMetaRef.current.entries()) {
@@ -493,16 +439,6 @@ export function useShotVideoStudio({
 		}
 	}, [allShotVideos]);
 
-	// Auto-start polling if there are generating videos on mount
-	useEffect(() => {
-		const shotId = selectedShotId;
-		if (!shotId) return;
-		const generatingVideo = allShotVideos.find(
-			(v) => v.shotId === shotId && isPendingVideoStatus(v.status),
-		);
-		if (!generatingVideo || isPollingRef.current) return;
-		startPolling(shotId);
-	}, [allShotVideos, selectedShotId, startPolling]);
 
 	async function handleGenerateVideoPrompt() {
 		if (!selectedShotId) return;
@@ -592,7 +528,6 @@ export function useShotVideoStudio({
 			referenceCount: effectiveReferenceImageIds.length,
 		});
 		setIsQueueingVideo(true);
-		cancelPollingRef.current = false;
 		setError(null);
 		try {
 			const result = await generateShotVideo({
@@ -633,7 +568,6 @@ export function useShotVideoStudio({
 					duration: duration ? `${duration}s` : undefined,
 				},
 			});
-			startPolling(shotId);
 			console.info(`${logPrefix} queue:done`, { shotId });
 		} catch (err) {
 			const msg =
@@ -644,7 +578,6 @@ export function useShotVideoStudio({
 			});
 			setError(msg);
 			toast(msg, "error");
-			stopPolling();
 		} finally {
 			setIsQueueingVideo(false);
 		}

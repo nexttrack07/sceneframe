@@ -15,7 +15,6 @@ import {
 	Timer,
 	Trash2,
 	Users,
-	Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -62,6 +61,7 @@ import {
 	deleteShot,
 	reorderShot,
 } from "../shot-actions";
+import { beginBatchGenerationToast } from "../generation-toast";
 import { generateAllTransitionVideos } from "../transition-actions";
 import { isPendingVideoStatus } from "../video-status";
 import { ResetDialog } from "./reset-dialog";
@@ -519,8 +519,15 @@ export function Storyboard({
 			const result = await generateAllTransitionVideos({
 				data: { projectId, regenerateExisting },
 			});
-			if (result.queued > 0) {
-				toast(`Queued ${result.queued} transition video${result.queued > 1 ? "s" : ""}`, "success");
+			if (result.queued > 0 && result.details?.results && result.batchId) {
+				const videoIds = result.details.results.map((r) => r.transitionVideoId);
+				beginBatchGenerationToast({
+					id: `batch-transitions-${projectId}-${Date.now()}`,
+					projectId,
+					batchId: result.batchId,
+					videoIds,
+					skipped: result.skipped,
+				});
 			} else if (result.skipped > 0) {
 				toast("All transitions already have videos or are missing images", "info");
 			} else {
@@ -1134,6 +1141,12 @@ export function Storyboard({
 							isGenerating={videoStudio.isGeneratingVideo}
 							isQueueing={videoStudio.isQueueingVideo}
 							onGenerate={videoStudio.handleGenerateVideo}
+							showBatchGenerate
+							onBatchGenerate={handleGenerateAllTransitions}
+							isBatchGenerating={isGeneratingAllTransitions}
+							batchRegenerateExisting={regenerateExisting}
+							onBatchRegenerateExistingChange={setRegenerateExisting}
+							batchDisabled={storyShots.length < 2}
 						/>
 					) : null}
 				</div>
@@ -1337,31 +1350,6 @@ export function Storyboard({
 							)}
 							Copy script
 						</Button>
-						<div className="flex items-center gap-2 border-l pl-3 ml-1">
-							<label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-								<input
-									type="checkbox"
-									checked={regenerateExisting}
-									onChange={(e) => setRegenerateExisting(e.target.checked)}
-									className="w-3 h-3 rounded border-border"
-								/>
-								Regenerate all
-							</label>
-							<Button
-								size="sm"
-								variant="outline"
-								disabled={isGeneratingAllTransitions || storyShots.length < 2}
-								onClick={handleGenerateAllTransitions}
-								className="gap-1.5"
-							>
-								{isGeneratingAllTransitions ? (
-									<Loader2 size={12} className="animate-spin" />
-								) : (
-									<Video size={12} />
-								)}
-								Generate transitions
-							</Button>
-						</div>
 						<ResetDialog isResetting={isResetting} onConfirm={handleReset} />
 					</div>
 				</div>

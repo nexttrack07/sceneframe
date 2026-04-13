@@ -522,13 +522,18 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 				})
 				.returning({ id: transitionVideos.id });
 
-			const handle = await startTransitionVideoGeneration.trigger({
-				transitionVideoId: placeholder.id,
-				userId,
-				modelId,
-				prompt,
-				modelOptions: normalizedModelOptions,
-			});
+			const handle = await startTransitionVideoGeneration.trigger(
+				{
+					transitionVideoId: placeholder.id,
+					userId,
+					modelId,
+					prompt,
+					modelOptions: normalizedModelOptions,
+				},
+				{
+					tags: [`project:${project.id}`, `video:${placeholder.id}`],
+				},
+			);
 
 			await db
 				.update(transitionVideos)
@@ -538,6 +543,39 @@ export const generateTransitionVideo = createServerFn({ method: "POST" })
 			return { transitionVideoId: placeholder.id, jobId: handle.id };
 		},
 	);
+
+export const pollTransitionVideosByIds = createServerFn({ method: "POST" })
+	.inputValidator((data: { videoIds: string[]; projectId: string }) => data)
+	.handler(async ({ data: { videoIds, projectId } }) => {
+		await assertProjectOwner(projectId, "error");
+
+		if (videoIds.length === 0) {
+			return { queued: 0, generating: 0, done: 0, errored: 0, videos: [] };
+		}
+
+		const videos = await db.query.transitionVideos.findMany({
+			where: and(
+				inArray(transitionVideos.id, videoIds),
+				eq(transitionVideos.projectId, projectId),
+				isNull(transitionVideos.deletedAt),
+			),
+		});
+
+		const queued = videos.filter((v) => v.status === "queued").length;
+		const generating = videos.filter((v) => v.status === "generating" || v.status === "finalizing").length;
+		const done = videos.filter((v) => v.status === "done" && v.url).length;
+		const errored = videos.filter((v) => v.status === "error").length;
+
+		return {
+			queued,
+			generating,
+			done,
+			errored,
+			total: videoIds.length,
+			isComplete: queued === 0 && generating === 0,
+			videos: videos.map((v) => ({ id: v.id, status: v.status })),
+		};
+	});
 
 export const pollTransitionVideos = createServerFn({ method: "POST" })
 	.inputValidator((data: { fromShotId: string; toShotId: string }) => data)
@@ -907,6 +945,7 @@ export const generateAllTransitionVideos = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data: { projectId, regenerateExisting } }) => {
 		const { userId, project } = await assertProjectOwner(projectId, "error");
+		const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
 		// Get all shots ordered by position
 		const projectShots = await db.query.shots.findMany({
@@ -1065,13 +1104,18 @@ export const generateAllTransitionVideos = createServerFn({ method: "POST" })
 					})
 					.returning({ id: transitionVideos.id });
 
-				const handle = await startTransitionVideoGeneration.trigger({
-					transitionVideoId: placeholder.id,
-					userId,
-					modelId,
-					prompt,
-					modelOptions: normalizedModelOptions,
-				});
+				const handle = await startTransitionVideoGeneration.trigger(
+					{
+						transitionVideoId: placeholder.id,
+						userId,
+						modelId,
+						prompt,
+						modelOptions: normalizedModelOptions,
+					},
+					{
+						tags: [`project:${project.id}`, `video:${placeholder.id}`, `batch:${batchId}`],
+					},
+				);
 
 				await db
 					.update(transitionVideos)
@@ -1097,6 +1141,7 @@ export const generateAllTransitionVideos = createServerFn({ method: "POST" })
 			queued: results.length,
 			skipped: skipped.length,
 			errors: errors.length,
+			batchId,
 			details: { results, skipped, errors },
 			message: `Queued ${results.length} transition videos${skipped.length > 0 ? `, skipped ${skipped.length}` : ""}${errors.length > 0 ? `, ${errors.length} errors` : ""}`,
 		};

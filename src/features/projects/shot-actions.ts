@@ -1158,19 +1158,24 @@ export const generateShotImages = createServerFn({ method: "POST" })
 			// Trigger all image generation tasks in parallel
 			const enqueuedRuns = await Promise.all(
 				placeholders.map(async (placeholder, index) => {
-					const handle = await generateShotImageAsset.trigger({
-						assetId: placeholder.id,
-						userId,
-						projectId: project.id,
-						shotId: shot.id,
-						generationId: placeholder.generationId ?? batchId,
-						batchId,
-						sequenceIndex: index,
-						prompt: finalPrompt,
-						model: imageDefaults.model,
-						modelOptions: imageDefaults.modelOptions,
-						referenceImageUrls: effectiveReferenceImageUrls,
-					});
+					const handle = await generateShotImageAsset.trigger(
+						{
+							assetId: placeholder.id,
+							userId,
+							projectId: project.id,
+							shotId: shot.id,
+							generationId: placeholder.generationId ?? batchId,
+							batchId,
+							sequenceIndex: index,
+							prompt: finalPrompt,
+							model: imageDefaults.model,
+							modelOptions: imageDefaults.modelOptions,
+							referenceImageUrls: effectiveReferenceImageUrls,
+						},
+						{
+							tags: [`project:${project.id}`, `shot:${shot.id}`, `image:${placeholder.id}`, `batch:${batchId}`],
+						},
+					);
 
 					await db
 						.update(assets)
@@ -1537,15 +1542,20 @@ export const generateShotVideo = createServerFn({ method: "POST" })
 				})
 				.returning({ id: assets.id });
 
-			const handle = await startShotVideoGeneration.trigger({
-				assetId: placeholder.id,
-				userId,
-				modelId: normalizedVideo.model,
-				prompt,
-				modelOptions: normalizedVideo.modelOptions,
-				referenceImageIds:
-					safeReferenceImageIds.length > 0 ? safeReferenceImageIds : undefined,
-			});
+			const handle = await startShotVideoGeneration.trigger(
+				{
+					assetId: placeholder.id,
+					userId,
+					modelId: normalizedVideo.model,
+					prompt,
+					modelOptions: normalizedVideo.modelOptions,
+					referenceImageIds:
+						safeReferenceImageIds.length > 0 ? safeReferenceImageIds : undefined,
+				},
+				{
+					tags: [`project:${shot.projectId}`, `shot:${shot.id}`, `video:${placeholder.id}`],
+				},
+			);
 
 			await db
 				.update(assets)
