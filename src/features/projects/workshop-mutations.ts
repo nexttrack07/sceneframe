@@ -673,7 +673,11 @@ Return only this fenced JSON block:
 [{"shotIndex": 0, "prompt": "Detailed image prompt..."}]
 \`\`\`
 
-Generate exactly one entry per shot, matching the shotIndex values shown above. Each prompt must be a self-contained visual description including framing (the shot size like wide, close-up, etc.), environment, subject, lighting, mood, color palette, and style. Do not reference other shots.`;
+RULES:
+- Generate exactly one entry per shot, matching the shotIndex values shown above.
+- Each prompt must be a self-contained visual description including framing (the shot size like wide, close-up, etc.), environment, subject, lighting, mood, color palette, and style.
+- Do NOT include camera movement, motion, or action — describe only the static visual at a single frozen moment in time. The image represents the key frame of the shot.
+- Do not reference other shots.`;
 
 		try {
 			const chunks: string[] = [];
