@@ -1,7 +1,11 @@
-import { AlertCircle, CheckCircle2, LoaderCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import { toast as sonnerToast } from "sonner";
 import { getRouter } from "@/router";
+
+function GradientSpinner() {
+	return <div className="gradient-spinner" />;
+}
 
 type GenerationMedium = "image" | "video" | "workshop";
 type GenerationPhase = "loading" | "success" | "error";
@@ -20,21 +24,7 @@ interface GenerationToastRecord {
 const generationToasts = new Map<string, GenerationToastRecord>();
 
 function renderGenerationToast(record: GenerationToastRecord) {
-	const isQueued = record.phase === "loading" && record.status === "Queued";
-	const statusTone =
-		record.phase === "error"
-			? "text-destructive"
-			: record.phase === "success"
-				? "text-success"
-				: isQueued
-					? "text-warning"
-					: "text-primary";
-	const Icon =
-		record.phase === "error"
-			? AlertCircle
-			: record.phase === "success"
-				? CheckCircle2
-				: LoaderCircle;
+	const isLoading = record.phase === "loading";
 
 	const currentLocation =
 		typeof window === "undefined"
@@ -57,12 +47,14 @@ function renderGenerationToast(record: GenerationToastRecord) {
 
 	return (
 		<div className="pointer-events-auto flex w-full items-center gap-3 p-3">
-			<div className={`mt-0.5 shrink-0 ${statusTone}`}>
-				<Icon
-					size={30}
-					strokeWidth={1.9}
-					className={record.phase === "loading" ? "animate-spin" : ""}
-				/>
+			<div className="mt-0.5 shrink-0">
+				{isLoading ? (
+					<GradientSpinner />
+				) : record.phase === "error" ? (
+					<AlertCircle size={28} strokeWidth={1.8} className="text-destructive" />
+				) : (
+					<CheckCircle2 size={28} strokeWidth={1.8} className="text-success" />
+				)}
 			</div>
 			<div className="min-w-0 flex-1">
 				{showJumpIcon ? (

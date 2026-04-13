@@ -579,3 +579,125 @@ code {
     var(--gradient-alt-end) 100%
   );
 }
+
+/* ============================================
+   GRADIENT SPINNER
+   Animated loading spinner with accent gradient
+   ============================================ */
+
+.gradient-spinner {
+  --spinner-size: 28px;
+  --spinner-thickness: 3px;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
+  border-radius: 50%;
+  position: relative;
+  animation: gradient-spinner-rotate 1s linear infinite;
+}
+
+.gradient-spinner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  padding: var(--spinner-thickness);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--gradient-start) 60deg,
+    var(--gradient-end) 180deg,
+    transparent 270deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* Glow effect behind spinner */
+.gradient-spinner::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--gradient-start) 60deg,
+    var(--gradient-end) 180deg,
+    transparent 270deg
+  );
+  filter: blur(8px);
+  opacity: 0.4;
+  animation: gradient-spinner-rotate 1s linear infinite;
+}
+
+@keyframes gradient-spinner-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Size variants */
+.gradient-spinner-sm {
+  --spinner-size: 20px;
+  --spinner-thickness: 2px;
+}
+
+.gradient-spinner-lg {
+  --spinner-size: 36px;
+  --spinner-thickness: 4px;
+}
+
+/* ============================================
+   TOAST STYLES
+   Enhanced toast with glassmorphism and accents
+   ============================================ */
+
+/* Override sonner toast styles */
+[data-sonner-toaster] [data-sonner-toast] {
+  background: oklch(0.12 0.015 260 / 0.85) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  border: 1px solid oklch(1 0 0 / 0.08) !important;
+  box-shadow:
+    0 8px 32px oklch(0 0 0 / 0.4),
+    0 2px 8px oklch(0 0 0 / 0.3),
+    inset 0 1px 0 oklch(1 0 0 / 0.05) !important;
+}
+
+/* Accent border on left side */
+[data-sonner-toaster] [data-sonner-toast]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(180deg, var(--gradient-start), var(--gradient-end));
+}
+
+/* Success toast accent */
+[data-sonner-toaster] [data-sonner-toast][data-type="success"]::before {
+  background: var(--success);
+}
+
+/* Error toast accent */
+[data-sonner-toaster] [data-sonner-toast][data-type="error"]::before {
+  background: var(--destructive);
+}
+
+/* Toast close button */
+[data-sonner-toaster] [data-sonner-toast] [data-close-button] {
+  background: oklch(0.18 0.01 260 / 0.8) !important;
+  border-color: oklch(1 0 0 / 0.1) !important;
+  color: oklch(0.7 0 0) !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-close-button]:hover {
+  background: oklch(0.25 0.01 260 / 0.9) !important;
+  color: oklch(0.95 0 0) !important;
+}

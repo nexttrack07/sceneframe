@@ -53,17 +53,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 				toastOptions={{
 					classNames: {
 						toast:
-							"group rounded-[10px] border border-border/60 bg-background/95 text-foreground shadow-[0_10px_28px_rgba(15,23,42,0.10)] backdrop-blur-sm",
+							"group rounded-xl border-0 text-foreground pl-5",
 						title: "text-sm font-medium tracking-[-0.01em]",
 						description: "text-xs text-muted-foreground",
-						closeButton:
-							"border-border/70 bg-background/90 text-muted-foreground hover:text-foreground",
+						closeButton: "",
 					},
 				}}
 				icons={{
-					success: <CheckCircle2 size={16} className="text-success" />,
-					error: <AlertCircle size={16} className="text-destructive" />,
-					info: <Info size={16} className="text-muted-foreground" />,
+					success: <CheckCircle2 size={18} className="text-success" />,
+					error: <AlertCircle size={18} className="text-destructive" />,
+					info: <Info size={18} className="text-primary" />,
 				}}
 			/>
 		</ToastContext.Provider>
