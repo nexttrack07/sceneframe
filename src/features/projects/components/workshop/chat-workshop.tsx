@@ -45,8 +45,8 @@ export function ChatWorkshop({
 		if (!chat.input.trim() || chat.isSending || flow.isGenerating) return;
 		const content = chat.input.trim();
 		chat.clearInput();
-		await chat.runChatMessage(content);
-	}, [chat, flow.isGenerating]);
+		await chat.runChatMessage(content, flow.selectedItemId);
+	}, [chat, flow.isGenerating, flow.selectedItemId]);
 
 	const [transcriptCopied, setTranscriptCopied] = useState(false);
 	const toastIdRef = useRef(0);

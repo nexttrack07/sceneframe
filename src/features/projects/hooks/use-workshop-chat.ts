@@ -87,7 +87,7 @@ export function useWorkshopChat({
 	}, []);
 
 	const runChatMessage = useCallback(
-		async (content: string) => {
+		async (content: string, selectedItemId?: string | null) => {
 			const trimmed = content.trim();
 			const clientMessageId = crypto.randomUUID();
 			const tempId = appendUserMessage(trimmed, clientMessageId);
@@ -96,7 +96,13 @@ export function useWorkshopChat({
 
 			try {
 				const result = await sendMessage({
-					data: { projectId, content: trimmed, stage, clientMessageId },
+					data: {
+						projectId,
+						content: trimmed,
+						stage,
+						clientMessageId,
+						selectedItemId: selectedItemId ?? undefined,
+					},
 				});
 				appendAssistantMessage(result.content);
 			} catch (err) {

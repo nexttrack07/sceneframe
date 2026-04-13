@@ -28,6 +28,57 @@ const MAX_MESSAGE_LENGTH = 5_000;
 const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
 
+function buildSelectionContext(
+	selectedItemId: string | undefined,
+	scriptDraft: ScriptDraft | null,
+): string {
+	if (!selectedItemId || !scriptDraft) return "";
+
+	const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
+	if (!match) return "";
+
+	const kind = match[1] as "outline" | "shot" | "prompt";
+	const index = Number.parseInt(match[2], 10);
+	if (Number.isNaN(index)) return "";
+
+	if (kind === "outline") {
+		const entry = scriptDraft.outline?.[index];
+		if (!entry) return "";
+		return `
+
+SELECTED ITEM — the user is pointing at this beat:
+Outline beat ${index + 1}: "${entry.title}"
+Summary: ${entry.summary}
+
+When the user says "this", "that", "it", or gives instructions without naming a target, apply them to THIS beat only. Do not touch the other beats.`;
+	}
+
+	if (kind === "shot") {
+		const shot = scriptDraft.shots?.[index];
+		if (!shot) return "";
+		return `
+
+SELECTED ITEM — the user is pointing at this shot:
+Shot ${index + 1} (${shot.shotSize}, ${shot.shotType}, ${shot.durationSec}s): ${shot.description}
+
+When the user says "this", "that", "it", or gives instructions without naming a target, apply them to THIS shot only. Do not touch the other shots.`;
+	}
+
+	// prompt
+	const promptEntry = scriptDraft.imagePrompts?.find(
+		(p) => p.shotIndex === index,
+	);
+	const shot = scriptDraft.shots?.[index];
+	if (!promptEntry && !shot) return "";
+	return `
+
+SELECTED ITEM — the user is pointing at this image prompt:
+Shot ${index + 1}${shot ? ` (${shot.description})` : ""}
+Current prompt: ${promptEntry?.prompt ?? "(none yet)"}
+
+When the user says "this", "that", "it", or gives instructions without naming a target, apply them to THIS prompt only. Do not touch the other prompts.`;
+}
+
 export const saveIntake = createServerFn({ method: "POST" })
 	.inputValidator((data: { projectId: string; intake: IntakeAnswers }) => {
 		const { intake } = data;
@@ -59,6 +110,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 			content: string;
 			stage?: "outline" | "shots" | "prompts";
 			clientMessageId?: string;
+			selectedItemId?: string;
 		}) => {
 			const trimmed = data.content.trim();
 			if (trimmed.length === 0) throw new Error("Message cannot be empty");
@@ -71,10 +123,11 @@ export const sendMessage = createServerFn({ method: "POST" })
 				content: trimmed,
 				stage: data.stage,
 				clientMessageId: data.clientMessageId,
+				selectedItemId: data.selectedItemId,
 			};
 		},
 	)
-	.handler(async ({ data: { projectId, content, stage, clientMessageId } }) => {
+	.handler(async ({ data: { projectId, content, stage, clientMessageId, selectedItemId } }) => {
 		const { userId, project } = await assertProjectOwner(projectId, "error");
 
 		// Idempotency: if the client retried with the same clientMessageId, short-circuit.
@@ -143,6 +196,8 @@ CREATIVE DIRECTION (from project setup):
 			? `\nCURRENT OUTLINE (${scriptDraft.outline.length} beats generated)`
 			: "";
 
+		const selectionContext = buildSelectionContext(selectedItemId, scriptDraft);
+
 		const hasOutline = Boolean(scriptDraft?.outline?.length);
 		const stageInstruction =
 			currentStage === "outline" && !hasOutline
@@ -160,24 +215,26 @@ STRICT RULES:
 				: currentStage === "outline"
 					? `You are in the OUTLINE phase. A narrative outline is visible in the right panel.
 - Help the user refine individual beats in the outline through conversation.
-- If the user selects a specific beat, focus on that beat only.
+- If a SELECTED ITEM is included below, the user is pointing directly at that beat — focus your suggestions there.
 - Do NOT regenerate the entire outline unless explicitly asked.
 - Do NOT write shot descriptions — that's the next stage.`
 					: currentStage === "shots"
 						? `You are in the SHOTS phase. A flat shot list is visible in the right panel.
 - Help the user refine specific shot descriptions through conversation.
+- If a SELECTED ITEM is included below, the user is pointing directly at that shot — focus there.
 - Focus on cinematography, framing, visual detail, and production-ready direction.
 - Each shot should be visually distinct from its neighbors.
 - Do NOT regenerate all shots unless explicitly asked.`
 						: `You are in the IMAGE PROMPTS phase. Per-shot image prompts are visible in the right panel.
 - Help the user refine image generation prompts for specific shots.
+- If a SELECTED ITEM is included below, the user is pointing directly at that prompt — focus there.
 - Each prompt should be a standalone visual description suitable for AI image generation.`;
 
 		const systemPrompt = `You are a creative director and cinematographer helping plan a video project called "${project.name}".
 
 ${stageInstruction}
 
-${intakeContext}${draftContext}
+${intakeContext}${draftContext}${selectionContext}
 
 Global rules:
 - Be conversational and collaborative, like a real cinematographer in a creative session.
