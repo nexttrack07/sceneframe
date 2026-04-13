@@ -28,6 +28,7 @@ import { OutlinePanel } from "./outline-panel";
 import { PromptsPanel } from "./prompts-panel";
 import { ShotsPanel } from "./shots-panel";
 import { StageIndicator } from "./stage-indicator";
+import { WorkshopBadges } from "./workshop-badges";
 import {
 	OutlinePanelSkeleton,
 	PromptsPanelSkeleton,
@@ -323,6 +324,10 @@ export function ChatWorkshop({
 
 			{/* Right panel */}
 			<div className="flex-1 min-h-0 bg-muted/20 overflow-hidden flex flex-col">
+				<WorkshopBadges
+					settings={project.settings ?? null}
+					shots={flow.shots}
+				/>
 				<StageIndicator
 					currentStage={flow.stage}
 					staleStages={flow.staleStages}
