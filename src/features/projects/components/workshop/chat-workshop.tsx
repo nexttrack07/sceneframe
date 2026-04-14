@@ -59,6 +59,7 @@ export function ChatWorkshop({
 		projectId,
 		existingMessages,
 		stage: flow.stage,
+		selectedItemId,
 		onEditApplied: () => {
 			// Refresh the flow data after an edit is applied
 			flow.refetch();
@@ -72,10 +73,25 @@ export function ChatWorkshop({
 
 	const handleSend = useCallback(async () => {
 		if (!chat.input.trim() || chat.isSending || flow.isGenerating) return;
-		const content = chat.input.trim();
+		const userText = chat.input.trim();
 		chat.clearInput();
+
+		// Prepend a visible focus marker so both the user and the LLM see exactly
+		// which item this message is about. Without this, the model tends to
+		// drift back to whatever was being discussed earlier in a long session.
+		const focusPrefix = selectionLabel
+			? `[Editing ${
+					selectionLabel.kind === "outline"
+						? `beat ${selectionLabel.index + 1}`
+						: selectionLabel.kind === "shot"
+							? `shot ${selectionLabel.index + 1}`
+							: `prompt for shot ${selectionLabel.index + 1}`
+				}]`
+			: null;
+		const content = focusPrefix ? `${focusPrefix}\n\n${userText}` : userText;
+
 		await chat.runChatMessage(content, selectedItemId);
-	}, [chat, flow.isGenerating, selectedItemId]);
+	}, [chat, flow.isGenerating, selectedItemId, selectionLabel]);
 
 	const handleSelectItem = useCallback(
 		(id: string | null) => {

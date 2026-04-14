@@ -55,7 +55,10 @@ export function ChatBubble({ message }: { message: Message }) {
 
 	const displayText = !isUser
 		? stripSuggestions(
-				message.content.replace(/```scenes\s*[\s\S]*?```/, "").trim(),
+				message.content
+					.replace(/```scenes\s*[\s\S]*?```/, "")
+					.replace(/```workshop-edit\s*[\s\S]*?```/, "")
+					.trim(),
 			)
 		: message.content;
 

@@ -12,6 +12,7 @@ interface UseWorkshopChatArgs {
 	projectId: string;
 	existingMessages: Message[];
 	stage?: WorkshopStage;
+	selectedItemId?: string | null;
 	onEditApplied?: () => void;
 }
 
@@ -19,6 +20,7 @@ export function useWorkshopChat({
 	projectId,
 	existingMessages,
 	stage,
+	selectedItemId,
 	onEditApplied,
 }: UseWorkshopChatArgs) {
 	const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages);
@@ -154,6 +156,7 @@ export function useWorkshopChat({
 					action: pendingEdit.action,
 					index: pendingEdit.index,
 					data: pendingEdit.data as Record<string, unknown>,
+					selectedItemId: selectedItemId ?? null,
 				},
 			});
 			setPendingEdit(null);
@@ -165,7 +168,7 @@ export function useWorkshopChat({
 		} finally {
 			setIsApplyingEdit(false);
 		}
-	}, [pendingEdit, projectId, onEditApplied]);
+	}, [pendingEdit, projectId, selectedItemId, onEditApplied]);
 
 	const handleDismissEdit = useCallback(() => {
 		setPendingEdit(null);

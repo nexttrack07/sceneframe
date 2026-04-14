@@ -170,9 +170,8 @@ function ProjectPage() {
 					<div className="flex items-center gap-2 shrink-0">
 						{!isDetailView && selectedShotForDetail && (
 							<Button
-								variant="accent"
-								size="xs"
-								className="gap-1"
+								variant="glass-accent"
+								size="sm"
 								onClick={() => {
 									navigate({
 										to: "/projects/$projectId",
@@ -188,28 +187,30 @@ function ProjectPage() {
 								}}
 							>
 								Open shot detail
-								<ArrowRight size={12} />
+								<ArrowRight />
 							</Button>
 						)}
 						{!isDetailView && (
-							<Link
-								to="/projects/$projectId/references"
-								params={{ projectId: project.id }}
-								className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-							>
-								<Users size={12} />
-								Characters
-							</Link>
+							<Button variant="glass-secondary" size="sm" asChild>
+								<Link
+									to="/projects/$projectId/references"
+									params={{ projectId: project.id }}
+								>
+									<Users />
+									Characters
+								</Link>
+							</Button>
 						)}
 						{!isDetailView && (
-							<Link
-								to="/projects/$projectId/references"
-								params={{ projectId: project.id }}
-								className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-							>
-								<MapPinned size={12} />
-								Locations
-							</Link>
+							<Button variant="glass-secondary" size="sm" asChild>
+								<Link
+									to="/projects/$projectId/references"
+									params={{ projectId: project.id }}
+								>
+									<MapPinned />
+									Locations
+								</Link>
+							</Button>
 						)}
 						{!isDetailView && <ProjectMenu projectId={project.id} />}
 						{!isDetailView && (
@@ -385,8 +386,8 @@ function DeleteProjectDialog({
 			}}
 		>
 			<AlertDialogTrigger asChild>
-				<Button variant="destructive" size="xs" className="gap-1">
-					<Trash2 size={12} />
+				<Button variant="glass-destructive" size="sm">
+					<Trash2 />
 					Delete project
 				</Button>
 			</AlertDialogTrigger>

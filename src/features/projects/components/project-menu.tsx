@@ -98,13 +98,12 @@ export function ProjectMenu({ projectId, onError }: ProjectMenuProps) {
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
-						variant="outline"
-						size="xs"
-						className="gap-1 px-1.5"
+						variant="glass-ghost"
+						size="icon-sm"
 						aria-label="Project menu"
 						disabled={isWorking}
 					>
-						<MoreHorizontal size={14} />
+						<MoreHorizontal />
 					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent>

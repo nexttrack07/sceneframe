@@ -440,7 +440,7 @@ ${selectedItemId ? EDIT_INSTRUCTION_PROMPT : ""}`;
 
 ${stageInstruction}
 
-${intakeContext}${draftContext}${selectionContext}
+${intakeContext}${draftContext}
 
 Global rules:
 - Be conversational and collaborative, like a real cinematographer in a creative session.
@@ -451,7 +451,15 @@ Global rules:
 		const llmMessages = recentHistory.map((m) =>
 			m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`,
 		);
-		const prompt = `${systemPrompt}\n\n${llmMessages.join("\n\n")}`;
+
+		// Selection context is placed AFTER the message history so that it overrides
+		// whatever topic the conversation was drifting toward. With long chat
+		// histories, a top-of-prompt selection line gets lost in the noise.
+		const currentFocus = selectionContext
+			? `\n\n---\nCURRENT FOCUS (overrides anything discussed earlier):${selectionContext}\nThe user's latest message applies to the CURRENT FOCUS above, not to items discussed earlier in this conversation.`
+			: "";
+
+		const prompt = `${systemPrompt}\n\n${llmMessages.join("\n\n")}${currentFocus}`;
 
 		const replicate = new Replicate({ auth: apiKey });
 		const controller = new AbortController();
@@ -492,6 +500,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 			action: "update_shot" | "update_prompt" | "update_outline";
 			index: number;
 			data: Record<string, unknown>;
+			selectedItemId?: string | null;
 		}) => {
 			if (typeof data.index !== "number" || data.index < 0) {
 				throw new Error("Invalid index");
@@ -502,9 +511,32 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 			return data;
 		},
 	)
-	.handler(async ({ data: { projectId, action, index, data: editData } }) => {
+	.handler(async ({ data: { projectId, action, index: llmIndex, data: editData, selectedItemId } }) => {
 		const { project } = await assertProjectOwner(projectId, "error");
 		const draft = (project.workshop ?? {}) as WorkshopState;
+
+		// The LLM is unreliable at echoing 0-based indices. If the UI has an
+		// authoritative selection, trust that over whatever the LLM emitted.
+		let index = llmIndex;
+		if (selectedItemId) {
+			const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
+			if (match) {
+				const kind = match[1];
+				const parsed = Number.parseInt(match[2], 10);
+				const expectedKind =
+					action === "update_outline"
+						? "outline"
+						: action === "update_shot"
+							? "shot"
+							: "prompt";
+				if (kind !== expectedKind) {
+					throw new Error(
+						`Selected item (${kind}) doesn't match edit action (${action})`,
+					);
+				}
+				if (!Number.isNaN(parsed)) index = parsed;
+			}
+		}
 
 		if (action === "update_outline") {
 			if (!draft.outline || !draft.outline[index]) {

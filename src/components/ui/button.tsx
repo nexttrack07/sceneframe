@@ -22,14 +22,25 @@ const buttonVariants = cva(
 				ghost:
 					"hover:bg-accent hover:text-accent-foreground",
 				link: "text-primary underline-offset-4 hover:underline",
+				// Glass variants - glassmorphism style with backdrop blur
+				"glass-primary":
+					"bg-primary/20 text-primary-foreground backdrop-blur-md border border-white/20 shadow-[0_4px_16px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,0.2)] hover:bg-primary/30 hover:shadow-[0_8px_24px_rgba(99,102,241,0.2),inset_0_1px_0_rgba(255,255,255,0.25)] hover:border-white/30",
+				"glass-accent":
+					"bg-indigo-500/25 text-white backdrop-blur-md border border-indigo-300/30 shadow-[0_4px_16px_rgba(99,102,241,0.15),inset_0_1px_0_rgba(255,255,255,0.2)] hover:bg-indigo-500/35 hover:shadow-[0_8px_24px_rgba(99,102,241,0.3),inset_0_1px_0_rgba(255,255,255,0.3)] hover:border-indigo-300/40",
+				"glass-secondary":
+					"bg-white/10 text-foreground backdrop-blur-md border border-white/15 shadow-[0_2px_8px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.15)] hover:bg-white/15 hover:shadow-[0_4px_12px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.2)] hover:border-white/25",
+				"glass-ghost":
+					"bg-white/5 text-muted-foreground backdrop-blur-sm border border-transparent hover:bg-white/10 hover:text-foreground hover:border-white/10",
+				"glass-destructive":
+					"bg-destructive/20 text-destructive-foreground backdrop-blur-md border border-red-300/20 shadow-[0_4px_16px_rgba(239,68,68,0.1),inset_0_1px_0_rgba(255,255,255,0.15)] hover:bg-destructive/30 hover:shadow-[0_8px_24px_rgba(239,68,68,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:border-red-300/30",
 			},
 			size: {
 				default: "h-9 px-4 py-2 has-[>svg]:px-3",
-				xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+				xs: "h-7 gap-1.5 rounded-md px-2.5 text-xs has-[>svg]:px-2 [&_svg:not([class*='size-'])]:size-3.5",
 				sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
 				lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
 				icon: "size-9",
-				"icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
+				"icon-xs": "size-7 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
 				"icon-sm": "size-8",
 				"icon-lg": "size-10",
 			},
