@@ -497,7 +497,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 	.inputValidator(
 		(data: {
 			projectId: string;
-			action: "update_shot" | "update_prompt" | "update_outline";
+			action: "update_shot" | "update_prompt" | "update_outline" | "delete_shot" | "manual_edit";
 			index: number;
 			data: Record<string, unknown>;
 			selectedItemId?: string | null;
@@ -615,6 +615,320 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 			.where(eq(projects.id, projectId));
 
 		return { success: true };
+	});
+
+// ---------------------------------------------------------------------------
+// applyWorkshopEdits (batch) — applies multiple edits in a single transaction
+// Returns preState snapshot for undo support
+// ---------------------------------------------------------------------------
+
+interface WorkshopEditInput {
+	action: "update_shot" | "update_prompt" | "update_outline" | "delete_shot" | "manual_edit";
+	/** Array of indices to apply this edit to */
+	indices: number[];
+	data: Record<string, unknown>;
+}
+
+/**
+ * Resolves shot IDs from the shots table by position index.
+ * Used for lazy upgrading imagePrompts from shotIndex to shotId.
+ */
+async function getShotIdsByIndex(
+	projectId: string,
+): Promise<Map<number, string>> {
+	const shotRows = await db
+		.select({ id: shots.id, order: shots.order })
+		.from(shots)
+		.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+		.orderBy(asc(shots.order));
+
+	const map = new Map<number, string>();
+	shotRows.forEach((row, idx) => {
+		map.set(idx, row.id);
+	});
+	return map;
+}
+
+/**
+ * Upgrades legacy imagePrompts entries from shotIndex to shotId.
+ * Mutates the imagePrompts array in place.
+ */
+function upgradeImagePromptsToShotId(
+	imagePrompts: WorkshopState["imagePrompts"],
+	shotIdMap: Map<number, string>,
+): void {
+	if (!imagePrompts) return;
+
+	for (const entry of imagePrompts) {
+		// If already has shotId, skip
+		if (entry.shotId) continue;
+
+		// Upgrade from shotIndex
+		if (typeof entry.shotIndex === "number") {
+			const shotId = shotIdMap.get(entry.shotIndex);
+			if (shotId) {
+				entry.shotId = shotId;
+			}
+		}
+	}
+}
+
+/**
+ * Finds an imagePrompt entry by shotId or shotIndex (for back-compat).
+ */
+function findImagePromptEntry(
+	imagePrompts: WorkshopState["imagePrompts"],
+	index: number,
+	shotIdMap: Map<number, string>,
+): import("./project-types").ImagePromptEntry | undefined {
+	if (!imagePrompts) return undefined;
+
+	const shotId = shotIdMap.get(index);
+
+	// Try to find by shotId first (v2)
+	if (shotId) {
+		const byId = imagePrompts.find((p) => p.shotId === shotId);
+		if (byId) return byId;
+	}
+
+	// Fall back to shotIndex (v1 legacy)
+	return imagePrompts.find((p) => p.shotIndex === index);
+}
+
+export const applyWorkshopEdits = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			edits: WorkshopEditInput[];
+			selectedItemId?: string | null;
+		}) => {
+			if (!Array.isArray(data.edits) || data.edits.length === 0) {
+				throw new Error("At least one edit is required");
+			}
+			for (const edit of data.edits) {
+				if (!edit.action) throw new Error("Missing action");
+				if (!Array.isArray(edit.indices) || edit.indices.length === 0) {
+					throw new Error("At least one index is required per edit");
+				}
+				if (edit.indices.some((i) => typeof i !== "number" || i < 0)) {
+					throw new Error("Invalid index");
+				}
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { projectId, edits, selectedItemId } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
+
+		// Capture preState for undo
+		const preState = structuredClone(project.workshop ?? {}) as WorkshopState;
+
+		const draft = (project.workshop ?? {}) as WorkshopState;
+
+		// Get shot ID map for imagePrompts migration
+		const shotIdMap = await getShotIdsByIndex(projectId);
+
+		// Upgrade any legacy imagePrompts to use shotId
+		upgradeImagePromptsToShotId(draft.imagePrompts, shotIdMap);
+
+		// Get current shot rows for DB updates
+		const shotRows = await db
+			.select()
+			.from(shots)
+			.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+			.orderBy(asc(shots.order));
+
+		// Track which DB shots need updates
+		const shotUpdates: Map<string, { description?: string; imagePrompt?: string }> = new Map();
+
+		// Apply each edit
+		for (const edit of edits) {
+			const { action, indices, data: editData } = edit;
+
+			// If selectedItemId is provided and this is a single-index edit,
+			// use the selectedItemId's index instead (LLM can be unreliable)
+			let resolvedIndices = indices;
+			if (selectedItemId && indices.length === 1) {
+				const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
+				if (match) {
+					const parsed = Number.parseInt(match[2], 10);
+					if (!Number.isNaN(parsed)) {
+						resolvedIndices = [parsed];
+					}
+				}
+			}
+
+			for (const index of resolvedIndices) {
+				if (action === "update_outline" || (action === "manual_edit" && selectedItemId?.startsWith("outline-"))) {
+					if (!draft.outline || !draft.outline[index]) {
+						throw new Error(`Outline beat ${index + 1} not found`);
+					}
+					const { title, summary } = editData as { title?: string; summary?: string };
+					if (title) draft.outline[index].title = title;
+					if (summary) draft.outline[index].summary = summary;
+				} else if (action === "update_shot" || (action === "manual_edit" && selectedItemId?.startsWith("shot-"))) {
+					if (!draft.shots || !draft.shots[index]) {
+						throw new Error(`Shot ${index + 1} not found`);
+					}
+					const { description, shotSize, shotType, durationSec } = editData as {
+						description?: string;
+						shotSize?: ShotDraftEntry["shotSize"];
+						shotType?: ShotDraftEntry["shotType"];
+						durationSec?: number;
+					};
+					if (description) draft.shots[index].description = description;
+					if (shotSize) draft.shots[index].shotSize = shotSize;
+					if (shotType) draft.shots[index].shotType = shotType;
+					if (typeof durationSec === "number") draft.shots[index].durationSec = durationSec;
+
+					// Queue DB update
+					if (shotRows[index] && description) {
+						const existing = shotUpdates.get(shotRows[index].id) ?? {};
+						existing.description = description;
+						shotUpdates.set(shotRows[index].id, existing);
+					}
+				} else if (action === "update_prompt" || (action === "manual_edit" && selectedItemId?.startsWith("prompt-"))) {
+					if (!draft.imagePrompts) {
+						draft.imagePrompts = [];
+					}
+					const { prompt } = editData as { prompt: string };
+					if (!prompt) throw new Error("Prompt is required");
+
+					const shotId = shotIdMap.get(index);
+					const existing = findImagePromptEntry(draft.imagePrompts, index, shotIdMap);
+
+					if (existing) {
+						existing.prompt = prompt;
+						// Ensure shotId is set on upgrade
+						if (shotId && !existing.shotId) {
+							existing.shotId = shotId;
+						}
+					} else {
+						// Create new entry with shotId (v2 format)
+						draft.imagePrompts.push({
+							shotId: shotId,
+							shotIndex: shotId ? undefined : index, // Only keep shotIndex if no shotId available
+							prompt,
+						});
+					}
+
+					// Queue DB update
+					if (shotRows[index]) {
+						const existingUpdate = shotUpdates.get(shotRows[index].id) ?? {};
+						existingUpdate.imagePrompt = prompt;
+						shotUpdates.set(shotRows[index].id, existingUpdate);
+					}
+				} else if (action === "delete_shot") {
+					// delete_shot will be fully implemented in Phase 3
+					// For now, just validate the shot exists
+					if (!draft.shots || !draft.shots[index]) {
+						throw new Error(`Shot ${index + 1} not found`);
+					}
+					// Placeholder: actual deletion logic comes in Phase 3
+					throw new Error("delete_shot is not yet implemented");
+				}
+			}
+		}
+
+		// Apply all changes in a transaction
+		await db.transaction(async (tx) => {
+			// Update shot rows
+			for (const [shotId, updates] of shotUpdates) {
+				await tx
+					.update(shots)
+					.set({
+						...(updates.description && { description: updates.description }),
+						...(updates.imagePrompt && { imagePrompt: updates.imagePrompt }),
+						updatedAt: new Date(),
+					})
+					.where(eq(shots.id, shotId));
+			}
+
+			// Save the updated draft
+			await tx
+				.update(projects)
+				.set({ workshop: draft })
+				.where(eq(projects.id, projectId));
+		});
+
+		return { success: true, preState };
+	});
+
+// ---------------------------------------------------------------------------
+// restoreWorkshopSnapshot — restores a previous WorkshopState for undo
+// ---------------------------------------------------------------------------
+
+export const restoreWorkshopSnapshot = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			snapshot: WorkshopState;
+		}) => {
+			if (!data.snapshot) {
+				throw new Error("Snapshot is required");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { projectId, snapshot } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
+
+		// Capture current state before restoring (in case user wants to redo)
+		const preState = structuredClone(project.workshop ?? {}) as WorkshopState;
+
+		// Restore the snapshot
+		await db.transaction(async (tx) => {
+			// Update the workshop state
+			await tx
+				.update(projects)
+				.set({ workshop: snapshot })
+				.where(eq(projects.id, projectId));
+
+			// Re-sync shots table from the restored snapshot
+			if (snapshot.shots && snapshot.shots.length > 0) {
+				const shotPlan: ShotPlanEntry[] = snapshot.shots.map((s) => ({
+					description: s.description,
+					shotType: s.shotType,
+					shotSize: s.shotSize,
+					durationSec: s.durationSec,
+				}));
+
+				// Use the existing upsert logic to sync DB shots
+				await upsertShotRowsInTx(tx, projectId, shotPlan);
+
+				// Also restore image prompts to shots table
+				if (snapshot.imagePrompts) {
+					const shotRows = await tx
+						.select({ id: shots.id, order: shots.order })
+						.from(shots)
+						.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+						.orderBy(asc(shots.order));
+
+					for (const promptEntry of snapshot.imagePrompts) {
+						// Resolve index from shotId or shotIndex
+						let targetIndex: number | undefined;
+
+						if (promptEntry.shotId) {
+							const shotRow = shotRows.find((r) => r.id === promptEntry.shotId);
+							if (shotRow) {
+								targetIndex = shotRows.indexOf(shotRow);
+							}
+						} else if (typeof promptEntry.shotIndex === "number") {
+							targetIndex = promptEntry.shotIndex;
+						}
+
+						if (targetIndex !== undefined && shotRows[targetIndex]) {
+							await tx
+								.update(shots)
+								.set({ imagePrompt: promptEntry.prompt })
+								.where(eq(shots.id, shotRows[targetIndex].id));
+						}
+					}
+				}
+			}
+		});
+
+		return { success: true, preState };
 	});
 
 /**

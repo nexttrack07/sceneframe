@@ -45,10 +45,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const stage: WorkshopStage = localStage;
 	const outline: OutlineEntry[] | null = draft?.outline ?? null;
 	const shots: ShotDraftEntry[] | null = draft?.shots ?? null;
-	const imagePrompts: Array<{
-		shotIndex: number;
-		prompt: string;
-	}> | null = draft?.imagePrompts ?? null;
+	const imagePrompts = draft?.imagePrompts ?? null;
 	const staleStages: Array<"outline" | "shots" | "prompts"> =
 		draft?.staleStages ?? [];
 	const intake: IntakeAnswers | null =

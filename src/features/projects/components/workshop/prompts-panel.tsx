@@ -1,12 +1,12 @@
 import { AlertTriangle, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ShotDraftEntry } from "../../project-types";
+import type { ImagePromptEntry, ShotDraftEntry } from "../../project-types";
 import { CopyButton } from "./copy-button";
 
 interface PromptsPanelProps {
 	projectId: string;
 	shots: ShotDraftEntry[];
-	imagePrompts: Array<{ shotIndex: number; prompt: string }>;
+	imagePrompts: ImagePromptEntry[];
 	selectedItemId: string | null;
 	onSelectItem: (id: string | null) => void;
 	isStale: boolean;
@@ -42,6 +42,7 @@ export function PromptsPanel({
 
 			<div className="space-y-2">
 				{shots.map((shot, shotIdx) => {
+					// Support both v2 (shotId - not available in draft) and v1 (shotIndex)
 					const prompt = imagePrompts.find((p) => p.shotIndex === shotIdx);
 					const itemId = `prompt-${shotIdx}`;
 					const isSelected = selectedItemId === itemId;

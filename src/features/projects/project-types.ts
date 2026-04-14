@@ -66,11 +66,26 @@ export interface ShotDraftEntry {
 	durationSec: number;
 }
 
+/**
+ * Image prompt entry in WorkshopState.
+ * V2 uses shotId for stable linking; shotIndex is kept for legacy read compatibility.
+ */
+export interface ImagePromptEntry {
+	/** Stable shot ID (v2). Required for new entries. */
+	shotId?: string;
+	/** Position-based index (v1, deprecated). Used only for legacy data migration. */
+	shotIndex?: number;
+	/** The image generation prompt text. */
+	prompt: string;
+	/** Hash of shot.description when this prompt was generated. Used for staleness detection. */
+	sourceHash?: string;
+}
+
 export interface WorkshopState {
 	stage: WorkshopStage;
 	outline?: OutlineEntry[];
 	shots?: ShotDraftEntry[];
-	imagePrompts?: Array<{ shotIndex: number; prompt: string }>;
+	imagePrompts?: ImagePromptEntry[];
 	staleStages?: Array<"outline" | "shots" | "prompts">;
 }
 
