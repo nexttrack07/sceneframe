@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Check, Film, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Film, Loader2, MapPinned, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import {
 	AlertDialog,
@@ -190,6 +190,26 @@ function ProjectPage() {
 								Open shot detail
 								<ArrowRight size={12} />
 							</Button>
+						)}
+						{!isDetailView && (
+							<Link
+								to="/projects/$projectId/references"
+								params={{ projectId: project.id }}
+								className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+							>
+								<Users size={12} />
+								Characters
+							</Link>
+						)}
+						{!isDetailView && (
+							<Link
+								to="/projects/$projectId/references"
+								params={{ projectId: project.id }}
+								className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+							>
+								<MapPinned size={12} />
+								Locations
+							</Link>
 						)}
 						{!isDetailView && <ProjectMenu projectId={project.id} />}
 						{!isDetailView && (
