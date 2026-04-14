@@ -1,20 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import {
-	CheckCircle2,
 	Copy,
-	Download,
-	Film,
-	Loader2,
-	MapPinned,
-	MessageSquare,
 	PanelLeft,
 	PanelLeftClose,
 	Play,
-	Plus,
 	Timer,
 	Trash2,
-	Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -28,9 +20,6 @@ import {
 	AlertDialogTitle,
 	AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ErrorAlert } from "@/components/ui/error-alert";
 import { useToast } from "@/components/ui/toast";
 import type { Shot } from "@/db/schema";
 import { useImageStudio } from "../hooks/use-image-studio";
@@ -42,31 +31,19 @@ import {
 	deleteShotMotionGraphic,
 	importShotMotionGraphicToEditor,
 } from "../motion-graphics-actions";
-import { resetWorkshop } from "../project-mutations";
-import { exportProjectHandoff } from "../project-queries";
 import type {
-	BackgroundMusicAssetSummary,
 	MotionGraphicPreset,
 	MotionGraphicSummary,
 	ProjectSettings,
 	SceneAssetSummary,
 	ShotVideoSummary,
 	TransitionVideoSummary,
-	VoiceoverAssetSummary,
 } from "../project-types";
 import { projectKeys } from "../query-keys";
-import {
-	addShot,
-	cloneShot,
-	deleteShot,
-	reorderShot,
-} from "../shot-actions";
+import { cloneShot, deleteShot, reorderShot } from "../shot-actions";
 import { beginBatchGenerationToast } from "../generation-toast";
 import { generateAllTransitionVideos } from "../transition-actions";
 import { isPendingVideoStatus } from "../video-status";
-import { ResetDialog } from "./reset-dialog";
-import { ShotCard } from "./shot-card";
-import { AudioGrid } from "./studio/audio-grid";
 import { ShotContextSection } from "./studio/shot-context-section";
 import { type ShotMediaTab, ShotMediaTabs } from "./studio/shot-media-tabs";
 import { ShotMotionGraphicsPanel } from "./studio/shot-motion-graphics-panel";
@@ -92,8 +69,6 @@ export function Storyboard({
 	transitionVideos: allTransitionVideos,
 	shotVideoAssets: allShotVideoAssets,
 	motionGraphics: allMotionGraphics,
-	voiceovers: allVoiceovers,
-	backgroundMusic: allBackgroundMusic,
 	initialShotId,
 	initialFromShotId,
 	initialToShotId,
@@ -106,8 +81,6 @@ export function Storyboard({
 	transitionVideos: TransitionVideoSummary[];
 	shotVideoAssets: ShotVideoSummary[];
 	motionGraphics: MotionGraphicSummary[];
-	voiceovers: VoiceoverAssetSummary[];
-	backgroundMusic: BackgroundMusicAssetSummary[];
 	initialShotId?: string;
 	initialFromShotId?: string;
 	initialToShotId?: string;
@@ -116,12 +89,9 @@ export function Storyboard({
 	const queryClient = useQueryClient();
 	const navigate = useNavigate({ from: "/projects/$projectId" });
 	const { toast } = useToast();
-	const [isResetting, setIsResetting] = useState(false);
-	const [isExporting, setIsExporting] = useState(false);
-	const [isCopyingScript, setIsCopyingScript] = useState(false);
 	const [isGeneratingAllTransitions, setIsGeneratingAllTransitions] = useState(false);
 	const [regenerateExisting, setRegenerateExisting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [, setError] = useState<string | null>(null);
 	const [selectedShotId, setSelectedShotIdState] = useState<string | null>(
 		initialShotId ?? null,
 	);
@@ -429,24 +399,6 @@ export function Storyboard({
 		return () => window.removeEventListener("click", handleClick);
 	}, [cloneMenuShotId]);
 
-	const totalDuration = previewShots.reduce(
-		(sum, shot) => sum + shot.durationSec,
-		0,
-	);
-
-	// Progress: count shots that have a selected image
-	const { readyCount, totalCount, allReady } = useMemo(() => {
-		const count = previewShots.filter((shot) => {
-			const shotAssets = assetsByShotId.get(shot.id) ?? [];
-			return shotAssets.some((a) => a.isSelected);
-		}).length;
-		return {
-			readyCount: count,
-			totalCount: previewShots.length,
-			allReady: count === previewShots.length && previewShots.length > 0,
-		};
-	}, [previewShots, assetsByShotId]);
-
 	// Global shot index map (1-based)
 	const globalShotIndex = useMemo(() => {
 		const indexMap = new Map<string, number>();
@@ -455,62 +407,6 @@ export function Storyboard({
 		});
 		return indexMap;
 	}, [previewShots]);
-
-	async function handleReset() {
-		setIsResetting(true);
-		setError(null);
-		try {
-			await resetWorkshop({ data: projectId });
-			await queryClient.invalidateQueries({
-				queryKey: projectKeys.project(projectId),
-			});
-			toast("Project reset successfully", "success");
-		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to restart brief and chat",
-			);
-		} finally {
-			setIsResetting(false);
-		}
-	}
-
-	async function handleExport(format: "json" | "markdown") {
-		setIsExporting(true);
-		setError(null);
-		try {
-			const result = await exportProjectHandoff({
-				data: { projectId, format },
-			});
-			const blob = new Blob([result.content], { type: result.mimeType });
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = result.filename;
-			a.click();
-			URL.revokeObjectURL(url);
-			toast("Export downloaded", "success");
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to export handoff");
-		} finally {
-			setIsExporting(false);
-		}
-	}
-
-	async function handleCopyScript() {
-		setIsCopyingScript(true);
-		setError(null);
-		try {
-			const result = await exportProjectHandoff({
-				data: { projectId, format: "markdown" },
-			});
-			await navigator.clipboard.writeText(result.content);
-			toast("Script copied to clipboard", "success");
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to copy script");
-		} finally {
-			setIsCopyingScript(false);
-		}
-	}
 
 	async function handleGenerateAllTransitions() {
 		setIsGeneratingAllTransitions(true);
@@ -562,30 +458,6 @@ export function Storyboard({
 			toast("Shot deleted", "success");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to delete shot");
-		}
-	}
-
-	async function handleAddShot() {
-		setError(null);
-		try {
-			const afterOrder =
-				previewShots.length > 0
-					? previewShots[previewShots.length - 1].order
-					: 0;
-			await addShot({
-				data: {
-					projectId,
-					description: "New shot",
-					shotType: "visual",
-					afterOrder,
-				},
-			});
-			await queryClient.invalidateQueries({
-				queryKey: projectKeys.project(projectId),
-			});
-			toast("Shot added", "success");
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to add shot");
 		}
 	}
 
@@ -675,11 +547,10 @@ export function Storyboard({
 			null)
 		: null;
 
-	// 3-column layout when shot or transition is selected
-	if (selectedShotId || selectedTransitionPair) {
-		return (
-			<div className="flex h-full min-h-0 overflow-hidden">
-				{/* Col 1: Storyboard sidebar — flat shot list */}
+	// 3-column layout for shot / transition detail
+	return (
+		<div className="flex h-full min-h-0 overflow-hidden">
+			{/* Col 1: Storyboard sidebar — flat shot list */}
 				<div className={`${sidebarCollapsed ? "w-10" : "w-[240px]"} border-r flex-shrink-0 overflow-hidden bg-card transition-all duration-200 flex flex-col`}>
 					{/* Sidebar toggle */}
 					<div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "justify-end"} p-2 border-b`}>
@@ -1220,221 +1091,4 @@ export function Storyboard({
 				</div>
 			</div>
 		);
-	}
-
-	// Main storyboard view — flat shot list
-	return (
-		<div className="h-full min-h-0 flex">
-			<div className="flex-1 overflow-y-auto p-6">
-				<div className="flex items-center justify-between mb-4">
-					<div className="space-y-1">
-						<h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-							Storyboard
-						</h2>
-						<div className="flex items-center gap-2 flex-wrap">
-							{projectSettings?.intake?.audience && (
-								<Badge variant="outline">
-									Audience: {projectSettings.intake.audience}
-								</Badge>
-							)}
-							{projectSettings?.intake?.viewerAction && (
-								<Badge variant="outline">
-									Goal: {projectSettings.intake.viewerAction}
-								</Badge>
-							)}
-							{totalDuration > 0 && (
-								<Badge variant="outline" className="gap-1">
-									<Timer size={11} /> {totalDuration}s total
-								</Badge>
-							)}
-							{totalCount > 0 && (
-								<Badge
-									variant="outline"
-									className={`gap-1 ${allReady ? "text-emerald-600 border-emerald-600/30" : ""}`}
-								>
-									<CheckCircle2 size={11} />
-									{readyCount} / {totalCount} shots have selected images
-								</Badge>
-							)}
-						</div>
-					</div>
-					<div className="flex items-center gap-2">
-						<Link
-							to="/projects/$projectId"
-							params={{ projectId }}
-							search={{ workshop: "true" }}
-							className="inline-flex"
-						>
-							<Button size="sm" variant="outline" className="gap-1.5">
-								<MessageSquare size={12} />
-								Script Workshop
-							</Button>
-						</Link>
-						<Link
-							to="/projects/$projectId/references"
-							params={{ projectId }}
-							className="inline-flex"
-						>
-							<Button size="sm" variant="outline" className="gap-1.5">
-								<Users size={12} />
-								Characters
-								{projectSettings?.characters?.length ? (
-									<Badge
-										variant="secondary"
-										className="ml-1 h-4 px-1 text-[10px]"
-									>
-										{projectSettings.characters.length}
-									</Badge>
-								) : null}
-							</Button>
-						</Link>
-						<Link
-							to="/projects/$projectId/references"
-							params={{ projectId }}
-							className="inline-flex"
-						>
-							<Button size="sm" variant="outline" className="gap-1.5">
-								<MapPinned size={12} />
-								Locations
-								{projectSettings?.locations?.length ? (
-									<Badge
-										variant="secondary"
-										className="ml-1 h-4 px-1 text-[10px]"
-									>
-										{projectSettings.locations.length}
-									</Badge>
-								) : null}
-							</Button>
-						</Link>
-						<Link
-							to="/projects/$projectId/editor"
-							params={{ projectId }}
-							search={{ shot: undefined, from: undefined, to: undefined }}
-						>
-							<Button size="sm" variant="outline" className="gap-1.5">
-								<Film size={12} />
-								Editor
-							</Button>
-						</Link>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={isExporting}
-							onClick={() => handleExport("markdown")}
-							className="gap-1.5"
-						>
-							<Download size={12} />
-							Export .md
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={isExporting}
-							onClick={() => handleExport("json")}
-							className="gap-1.5"
-						>
-							<Download size={12} />
-							Export .json
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={isCopyingScript}
-							onClick={handleCopyScript}
-							className="gap-1.5"
-						>
-							{isCopyingScript ? (
-								<Loader2 size={12} className="animate-spin" />
-							) : (
-								<Copy size={12} />
-							)}
-							Copy script
-						</Button>
-						<ResetDialog isResetting={isResetting} onConfirm={handleReset} />
-					</div>
-				</div>
-
-				{error && (
-					<div className="mb-3">
-						<ErrorAlert
-							message={error}
-							onDismiss={() => setError(null)}
-						/>
-					</div>
-				)}
-
-				{/* Flat shot list */}
-				<div className="space-y-2">
-					{previewShots.map((shot, shotIdx) => {
-						return (
-							// biome-ignore lint/a11y/noStaticElementInteractions: draggable shot row; native HTML5 DnD on structural container
-							<div
-								key={shot.id}
-								draggable
-								onDragStart={(e) => handleShotDragStart(e, shot.id)}
-								onDragOver={(e) => handleShotDragOver(e, shotIdx)}
-								onDrop={(e) => handleShotDrop(e, shotIdx)}
-								onDragEnd={handleShotDragEnd}
-								className={draggedShotId === shot.id ? "opacity-50" : ""}
-							>
-								{/* Drop indicator before this shot */}
-								{dragOverShotIndex === shotIdx && draggedShotId !== shot.id && (
-									<div className="h-0.5 bg-primary rounded-full mb-1 transition-all" />
-								)}
-								<ShotCard
-									shot={shot}
-									globalIndex={globalShotIndex.get(shot.id) ?? 0}
-									assets={assetsByShotId.get(shot.id) ?? []}
-									isSelected={selectedShotId === shot.id}
-									onSelect={() => {
-										selectShot(shot.id);
-									}}
-									onDelete={() => handleDeleteShot(shot.id)}
-								/>
-							</div>
-						);
-					})}
-
-					{/* Drop zone at end */}
-					{draggedShotId && (
-						// biome-ignore lint/a11y/noStaticElementInteractions: HTML5 DnD drop zone
-						<div
-							className="h-8"
-							onDragOver={(e) =>
-								handleShotDragOver(e, previewShots.length)
-							}
-							onDrop={(e) => handleShotDrop(e, previewShots.length)}
-						/>
-					)}
-					{dragOverShotIndex !== null &&
-						dragOverShotIndex >= previewShots.length && (
-							<div className="h-0.5 bg-primary rounded-full mb-1 transition-all" />
-						)}
-				</div>
-
-				{/* Add Shot */}
-				<div className="mt-4">
-					<Button
-						variant="outline"
-						className="w-full border-dashed gap-1.5"
-						onClick={handleAddShot}
-					>
-						<Plus size={14} />
-						Add Shot
-					</Button>
-				</div>
-
-				{/* Project-level audio panel */}
-				{(allVoiceovers.length > 0 || allBackgroundMusic.length > 0) && (
-					<div className="mt-6">
-						<AudioGrid
-							projectId={projectId}
-							voiceovers={allVoiceovers}
-							backgroundMusic={allBackgroundMusic}
-						/>
-					</div>
-				)}
-			</div>
-		</div>
-	);
 }

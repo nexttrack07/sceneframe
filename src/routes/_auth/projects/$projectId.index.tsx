@@ -75,8 +75,6 @@ function ProjectPage() {
 		transitionVideos: projectTransitionVideos,
 		shotVideoAssets: projectShotVideoAssets,
 		motionGraphics: projectMotionGraphics,
-		voiceovers: projectVoiceovers,
-		backgroundMusic: projectBackgroundMusic,
 	} = data_;
 	const { shot: shotParam, from, to, mediaTab } = Route.useSearch();
 	const navigate = useNavigate();
@@ -217,8 +215,6 @@ function ProjectPage() {
 					transitionVideos={projectTransitionVideos}
 					shotVideoAssets={projectShotVideoAssets}
 					motionGraphics={projectMotionGraphics}
-					voiceovers={projectVoiceovers}
-					backgroundMusic={projectBackgroundMusic}
 					initialShotId={shot}
 					initialFromShotId={from}
 					initialToShotId={to}
