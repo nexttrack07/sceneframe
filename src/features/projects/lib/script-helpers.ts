@@ -1,4 +1,4 @@
-import type { IntakeAnswers, ScriptDraft } from "../project-types";
+import type { IntakeAnswers, WorkshopState } from "../project-types";
 
 export interface SelectionLabel {
 	kind: "outline" | "shot" | "prompt";
@@ -8,9 +8,9 @@ export interface SelectionLabel {
 
 export function getSelectionLabel(
 	selectedItemId: string | null | undefined,
-	scriptDraft: ScriptDraft | null | undefined,
+	workshop: WorkshopState | null | undefined,
 ): SelectionLabel | null {
-	if (!selectedItemId || !scriptDraft) return null;
+	if (!selectedItemId || !workshop) return null;
 
 	const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
 	if (!match) return null;
@@ -20,18 +20,18 @@ export function getSelectionLabel(
 	if (Number.isNaN(index)) return null;
 
 	if (kind === "outline") {
-		const entry = scriptDraft.outline?.[index];
+		const entry = workshop.outline?.[index];
 		if (!entry) return null;
 		return { kind, index, label: entry.title };
 	}
 
 	if (kind === "shot") {
-		const shot = scriptDraft.shots?.[index];
+		const shot = workshop.shots?.[index];
 		if (!shot) return null;
 		return { kind, index, label: shot.description };
 	}
 
-	const shot = scriptDraft.shots?.[index];
+	const shot = workshop.shots?.[index];
 	if (!shot) return null;
 	return { kind, index, label: shot.description };
 }

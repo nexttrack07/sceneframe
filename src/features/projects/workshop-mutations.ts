@@ -19,7 +19,7 @@ import { normalizeProjectSettings } from "./project-normalize";
 import type {
 	IntakeAnswers,
 	ProjectSettings,
-	ScriptDraft,
+	WorkshopState,
 	ShotDraftEntry,
 	ShotPlanEntry,
 } from "./project-types";
@@ -233,9 +233,9 @@ async function upsertShotRowsInTx(
 
 function buildSelectionContext(
 	selectedItemId: string | undefined,
-	scriptDraft: ScriptDraft | null,
+	workshop: WorkshopState | null,
 ): string {
-	if (!selectedItemId || !scriptDraft) return "";
+	if (!selectedItemId || !workshop) return "";
 
 	const match = selectedItemId.match(/^(outline|shot|prompt)-(\d+)$/);
 	if (!match) return "";
@@ -245,7 +245,7 @@ function buildSelectionContext(
 	if (Number.isNaN(index)) return "";
 
 	if (kind === "outline") {
-		const entry = scriptDraft.outline?.[index];
+		const entry = workshop.outline?.[index];
 		if (!entry) return "";
 		return `
 
@@ -257,7 +257,7 @@ When the user says "this", "that", "it", or gives instructions without naming a 
 	}
 
 	if (kind === "shot") {
-		const shot = scriptDraft.shots?.[index];
+		const shot = workshop.shots?.[index];
 		if (!shot) return "";
 		return `
 
@@ -268,10 +268,10 @@ When the user says "this", "that", "it", or gives instructions without naming a 
 	}
 
 	// prompt
-	const promptEntry = scriptDraft.imagePrompts?.find(
+	const promptEntry = workshop.imagePrompts?.find(
 		(p) => p.shotIndex === index,
 	);
-	const shot = scriptDraft.shots?.[index];
+	const shot = workshop.shots?.[index];
 	if (!promptEntry && !shot) return "";
 	return `
 
@@ -381,9 +381,9 @@ export const sendMessage = createServerFn({ method: "POST" })
 
 		const settings = normalizeProjectSettings(project.settings);
 		const intake = settings?.intake ?? null;
-		const scriptDraft = project.scriptDraft ?? null;
+		const workshop = project.workshop ?? null;
 
-		const currentStage = stage ?? scriptDraft?.stage ?? "outline";
+		const currentStage = stage ?? workshop?.stage ?? "outline";
 
 		const intakeContext = intake
 			? `
@@ -395,13 +395,13 @@ CREATIVE DIRECTION (from project setup):
 `
 			: "";
 
-		const draftContext = scriptDraft?.outline
-			? `\nCURRENT OUTLINE (${scriptDraft.outline.length} beats generated)`
+		const draftContext = workshop?.outline
+			? `\nCURRENT OUTLINE (${workshop.outline.length} beats generated)`
 			: "";
 
-		const selectionContext = buildSelectionContext(selectedItemId, scriptDraft);
+		const selectionContext = buildSelectionContext(selectedItemId, workshop);
 
-		const hasOutline = Boolean(scriptDraft?.outline?.length);
+		const hasOutline = Boolean(workshop?.outline?.length);
 		const stageInstruction =
 			currentStage === "outline" && !hasOutline
 				? `You are in the OUTLINE phase, but no outline has been generated yet. Your job is to understand what video the user wants to create through conversation.
@@ -504,7 +504,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data: { projectId, action, index, data: editData } }) => {
 		const { project } = await assertProjectOwner(projectId, "error");
-		const draft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const draft = (project.workshop ?? {}) as WorkshopState;
 
 		if (action === "update_outline") {
 			if (!draft.outline || !draft.outline[index]) {
@@ -579,7 +579,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 		// Save the updated draft
 		await db
 			.update(projects)
-			.set({ scriptDraft: draft })
+			.set({ workshop: draft })
 			.where(eq(projects.id, projectId));
 
 		return { success: true };
@@ -613,10 +613,10 @@ export const setWorkshopStage = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data: { projectId, stage } }) => {
 		const { project } = await assertProjectOwner(projectId, "error");
-		const currentDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const currentDraft = (project.workshop ?? {}) as WorkshopState;
 		await db
 			.update(projects)
-			.set({ scriptDraft: { ...currentDraft, stage } })
+			.set({ workshop: { ...currentDraft, stage } })
 			.where(eq(projects.id, projectId));
 	});
 
@@ -648,7 +648,7 @@ export const generateOutline = createServerFn({ method: "POST" })
 			)
 			.join("\n\n");
 
-		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const existingDraft = (project.workshop ?? {}) as WorkshopState;
 
 		const replicate = new Replicate({ auth: apiKey });
 		const controller = new AbortController();
@@ -701,7 +701,7 @@ Return a short note plus this exact fenced JSON block:
 				"generateOutline",
 			);
 
-			const nextDraft: ScriptDraft = {
+			const nextDraft: WorkshopState = {
 				...existingDraft,
 				outline: parsed,
 				stage: "outline",
@@ -709,7 +709,7 @@ Return a short note plus this exact fenced JSON block:
 
 			await db
 				.update(projects)
-				.set({ scriptDraft: nextDraft })
+				.set({ workshop: nextDraft })
 				.where(eq(projects.id, projectId));
 
 			return { content: assistantContent };
@@ -730,7 +730,7 @@ export const generateShots = createServerFn({ method: "POST" })
 		const settings = normalizeProjectSettings(project.settings) ?? {};
 		const intake = settings.intake ?? null;
 
-		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const existingDraft = (project.workshop ?? {}) as WorkshopState;
 		const outlineList = existingDraft.outline;
 		if (!outlineList || outlineList.length === 0) {
 			throw new Error("Generate an outline before breaking down into shots");
@@ -805,7 +805,7 @@ Return only this fenced JSON block with a flat array of shots in playback order:
 				"generateShots",
 			);
 
-			const nextDraft: ScriptDraft = {
+			const nextDraft: WorkshopState = {
 				...existingDraft,
 				shots: parsed,
 				stage: "shots",
@@ -820,7 +820,7 @@ Return only this fenced JSON block with a flat array of shots in playback order:
 				cleanup = await upsertShotRowsInTx(tx, projectId, parsed);
 				await tx
 					.update(projects)
-					.set({ scriptDraft: nextDraft, scriptStatus: "done" })
+					.set({ workshop: nextDraft, scriptStatus: "done" })
 					.where(eq(projects.id, projectId));
 			});
 
@@ -841,7 +841,7 @@ export const reviewAndFixShots = createServerFn({ method: "POST" })
 	.handler(async ({ data: { projectId } }) => {
 		const { userId } = await assertProjectOwner(projectId, "error");
 		return withWorkshopLock(projectId, async (project) => {
-			const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+			const existingDraft = (project.workshop ?? {}) as WorkshopState;
 			const shotList = existingDraft.shots;
 			if (!shotList || shotList.length === 0) {
 				throw new Error("No shots to review");
@@ -909,7 +909,7 @@ Return only this fenced JSON block:
 					"reviewAndFixShots",
 				);
 
-				const nextDraft: ScriptDraft = {
+				const nextDraft: WorkshopState = {
 					...existingDraft,
 					shots: parsed,
 					stage: "shots",
@@ -924,7 +924,7 @@ Return only this fenced JSON block:
 					cleanup = await upsertShotRowsInTx(tx, projectId, parsed);
 					await tx
 						.update(projects)
-						.set({ scriptDraft: nextDraft, scriptStatus: "done" })
+						.set({ workshop: nextDraft, scriptStatus: "done" })
 						.where(eq(projects.id, projectId));
 				});
 
@@ -948,7 +948,7 @@ export const generateImagePrompts = createServerFn({ method: "POST" })
 		const settings = normalizeProjectSettings(project.settings) ?? {};
 		const intake = settings.intake ?? null;
 
-		const existingDraft = (project.scriptDraft ?? {}) as ScriptDraft;
+		const existingDraft = (project.workshop ?? {}) as WorkshopState;
 		const outlineList = existingDraft.outline;
 		const shotList = existingDraft.shots;
 		if (!outlineList || outlineList.length === 0) {
@@ -1012,7 +1012,7 @@ RULES:
 				"generateImagePrompts",
 			);
 
-			const nextDraft: ScriptDraft = {
+			const nextDraft: WorkshopState = {
 				...existingDraft,
 				imagePrompts: parsed,
 				stage: "prompts",
@@ -1037,7 +1037,7 @@ RULES:
 				}
 				await tx
 					.update(projects)
-					.set({ scriptDraft: nextDraft })
+					.set({ workshop: nextDraft })
 					.where(eq(projects.id, projectId));
 			});
 
@@ -1139,7 +1139,7 @@ export const resetWorkshop = createServerFn({ method: "POST" })
 					directorPrompt: "",
 					scriptRaw: null,
 					scriptJobId: null,
-					scriptDraft: null,
+					workshop: null,
 					settings: currentSettings
 						? {
 								intake: currentSettings.intake,

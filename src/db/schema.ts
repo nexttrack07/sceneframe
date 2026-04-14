@@ -17,7 +17,7 @@ import type {
 	MotionGraphicPreset,
 	MotionGraphicSpec,
 	ProjectSettings,
-	ScriptDraft,
+	WorkshopState,
 	ShotSize,
 } from "@/features/projects/project-types";
 
@@ -61,7 +61,7 @@ export const projects = pgTable(
 			.$type<"idle" | "generating" | "done" | "error">(),
 		scriptJobId: text("script_job_id"),
 		settings: jsonb("settings").$type<ProjectSettings | null>(),
-		scriptDraft: jsonb("script_draft").$type<ScriptDraft | null>(),
+		workshop: jsonb("script_draft").$type<WorkshopState | null>(),
 		// biome-ignore lint/suspicious/noExplicitAny: TanStack route serialization in this repo expects a permissive JSON object shape here
 		editorState: jsonb("editor_state").$type<Record<string, any> | null>(),
 		workshopBusyUntil: timestamp("workshop_busy_until", { withTimezone: true }),

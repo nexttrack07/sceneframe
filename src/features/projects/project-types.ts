@@ -66,13 +66,16 @@ export interface ShotDraftEntry {
 	durationSec: number;
 }
 
-export interface ScriptDraft {
+export interface WorkshopState {
 	stage: WorkshopStage;
 	outline?: OutlineEntry[];
 	shots?: ShotDraftEntry[];
 	imagePrompts?: Array<{ shotIndex: number; prompt: string }>;
 	staleStages?: Array<"outline" | "shots" | "prompts">;
 }
+
+/** @deprecated Use WorkshopState instead */
+export type ScriptDraft = WorkshopState;
 
 export interface ScriptEditSelection {
 	project: boolean;

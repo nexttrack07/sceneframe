@@ -246,7 +246,7 @@ function ProjectPage() {
 					projectId={project.id}
 					existingMessages={projectMessages}
 					projectSettings={project.settings}
-					scriptDraft={project.scriptDraft}
+					workshop={project.workshop}
 					selectedItemId={workshopSelectedItemId}
 					onSelectedItemIdChange={setWorkshopSelectedItemId}
 				/>

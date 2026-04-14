@@ -1,19 +1,19 @@
 import type { Message } from "@/db/schema";
-import type { ProjectSettings, ScriptDraft } from "../project-types";
+import type { ProjectSettings, WorkshopState } from "../project-types";
 import { ChatWorkshop } from "./workshop/chat-workshop";
 
 export function ScriptWorkshop({
 	projectId,
 	existingMessages,
 	projectSettings,
-	scriptDraft,
+	workshop,
 	selectedItemId,
 	onSelectedItemIdChange,
 }: {
 	projectId: string;
 	existingMessages: Message[];
 	projectSettings: ProjectSettings | null;
-	scriptDraft?: ScriptDraft | null;
+	workshop?: WorkshopState | null;
 	selectedItemId: string | null;
 	onSelectedItemIdChange: (id: string | null) => void;
 }) {
@@ -22,7 +22,7 @@ export function ScriptWorkshop({
 			projectId={projectId}
 			existingMessages={existingMessages}
 			project={{
-				scriptDraft: scriptDraft ?? null,
+				workshop: workshop ?? null,
 				settings: projectSettings,
 			}}
 			selectedItemId={selectedItemId}

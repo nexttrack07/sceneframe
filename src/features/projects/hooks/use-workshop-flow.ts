@@ -4,7 +4,7 @@ import type {
 	IntakeAnswers,
 	OutlineEntry,
 	ProjectSettings,
-	ScriptDraft,
+	WorkshopState,
 	ShotDraftEntry,
 	WorkshopStage,
 } from "../project-types";
@@ -19,7 +19,7 @@ import {
 interface UseWorkshopFlowArgs {
 	projectId: string;
 	project: {
-		scriptDraft?: ScriptDraft | null;
+		workshop?: WorkshopState | null;
 		settings?: ProjectSettings | null;
 	};
 }
@@ -30,7 +30,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [generatingStage, setGeneratingStage] = useState<WorkshopStage | null>(null);
 
-	const draft = project.scriptDraft ?? null;
+	const draft = project.workshop ?? null;
 	const serverStage: WorkshopStage = draft?.stage ?? "outline";
 
 	// Local stage for instant tab switching - initialized from server, updated locally

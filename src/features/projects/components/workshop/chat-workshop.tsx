@@ -22,7 +22,7 @@ import {
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
 import { getSelectionLabel } from "../../lib/script-helpers";
-import type { ProjectSettings, ScriptDraft } from "../../project-types";
+import type { ProjectSettings, WorkshopState } from "../../project-types";
 import { ChatBubble } from "../chat-bubble";
 import { OutlinePanel } from "./outline-panel";
 import { PromptsPanel } from "./prompts-panel";
@@ -40,7 +40,7 @@ interface ChatWorkshopProps {
 	projectId: string;
 	existingMessages: Message[];
 	project: {
-		scriptDraft?: ScriptDraft | null;
+		workshop?: WorkshopState | null;
 		settings?: ProjectSettings | null;
 	};
 	selectedItemId: string | null;
@@ -66,8 +66,8 @@ export function ChatWorkshop({
 	});
 
 	const selectionLabel = useMemo(
-		() => getSelectionLabel(selectedItemId, project.scriptDraft ?? null),
-		[selectedItemId, project.scriptDraft],
+		() => getSelectionLabel(selectedItemId, project.workshop ?? null),
+		[selectedItemId, project.workshop],
 	);
 
 	const handleSend = useCallback(async () => {
@@ -262,7 +262,7 @@ export function ChatWorkshop({
 					<div className="px-5 py-3 border-t bg-card/50">
 						<WorkshopEditSuggestion
 							edit={chat.pendingEdit}
-							scriptDraft={project.scriptDraft ?? null}
+							workshop={project.workshop ?? null}
 							onApply={() => void chat.handleApplyEdit()}
 							onDismiss={chat.handleDismissEdit}
 							isApplying={chat.isApplyingEdit}

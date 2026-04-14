@@ -7,11 +7,11 @@ import {
 	type WorkshopEditShotData,
 	getEditTargetLabel,
 } from "../../lib/parse-workshop-edit";
-import type { ScriptDraft } from "../../project-types";
+import type { WorkshopState } from "../../project-types";
 
 interface WorkshopEditSuggestionProps {
 	edit: WorkshopEdit;
-	scriptDraft: ScriptDraft | null;
+	workshop: WorkshopState | null;
 	onApply: () => void;
 	onDismiss: () => void;
 	isApplying: boolean;
@@ -19,13 +19,13 @@ interface WorkshopEditSuggestionProps {
 
 export function WorkshopEditSuggestion({
 	edit,
-	scriptDraft,
+	workshop,
 	onApply,
 	onDismiss,
 	isApplying,
 }: WorkshopEditSuggestionProps) {
 	const targetLabel = getEditTargetLabel(edit);
-	const { currentValue, proposedValue } = getEditValues(edit, scriptDraft);
+	const { currentValue, proposedValue } = getEditValues(edit, workshop);
 
 	return (
 		<div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
@@ -98,11 +98,11 @@ export function WorkshopEditSuggestion({
 
 function getEditValues(
 	edit: WorkshopEdit,
-	scriptDraft: ScriptDraft | null,
+	workshop: WorkshopState | null,
 ): { currentValue: string | null; proposedValue: string } {
 	if (edit.action === "update_shot") {
 		const data = edit.data as WorkshopEditShotData;
-		const currentShot = scriptDraft?.shots?.[edit.index];
+		const currentShot = workshop?.shots?.[edit.index];
 		return {
 			currentValue: currentShot?.description ?? null,
 			proposedValue: data.description ?? "Update shot details",
@@ -111,7 +111,7 @@ function getEditValues(
 
 	if (edit.action === "update_prompt") {
 		const data = edit.data as WorkshopEditPromptData;
-		const currentPrompt = scriptDraft?.imagePrompts?.find(
+		const currentPrompt = workshop?.imagePrompts?.find(
 			(p) => p.shotIndex === edit.index,
 		);
 		return {
@@ -122,7 +122,7 @@ function getEditValues(
 
 	if (edit.action === "update_outline") {
 		const data = edit.data as WorkshopEditOutlineData;
-		const currentBeat = scriptDraft?.outline?.[edit.index];
+		const currentBeat = workshop?.outline?.[edit.index];
 		const proposedParts: string[] = [];
 		if (data.title) proposedParts.push(`Title: ${data.title}`);
 		if (data.summary) proposedParts.push(data.summary);
