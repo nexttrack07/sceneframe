@@ -34,6 +34,7 @@ import {
 	PromptsPanelSkeleton,
 	ShotsPanelSkeleton,
 } from "./workshop-skeletons";
+import { WorkshopEditSuggestion } from "./workshop-edit-suggestion";
 
 interface ChatWorkshopProps {
 	projectId: string;
@@ -54,7 +55,15 @@ export function ChatWorkshop({
 	onSelectedItemIdChange,
 }: ChatWorkshopProps) {
 	const flow = useWorkshopFlow({ projectId, project });
-	const chat = useWorkshopChat({ projectId, existingMessages, stage: flow.stage });
+	const chat = useWorkshopChat({
+		projectId,
+		existingMessages,
+		stage: flow.stage,
+		onEditApplied: () => {
+			// Refresh the flow data after an edit is applied
+			flow.refetch();
+		},
+	});
 
 	const selectionLabel = useMemo(
 		() => getSelectionLabel(selectedItemId, project.scriptDraft ?? null),
@@ -246,6 +255,18 @@ export function ChatWorkshop({
 								{reply}
 							</button>
 						))}
+					</div>
+				)}
+
+				{chat.pendingEdit && (
+					<div className="px-5 py-3 border-t bg-card/50">
+						<WorkshopEditSuggestion
+							edit={chat.pendingEdit}
+							scriptDraft={project.scriptDraft ?? null}
+							onApply={() => void chat.handleApplyEdit()}
+							onDismiss={chat.handleDismissEdit}
+							isApplying={chat.isApplyingEdit}
+						/>
 					</div>
 				)}
 

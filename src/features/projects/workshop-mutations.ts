@@ -28,6 +28,65 @@ const MAX_MESSAGE_LENGTH = 5_000;
 const MAX_HISTORY_MESSAGES = 30;
 const REPLICATE_TIMEOUT_MS = 60_000;
 
+// ---------------------------------------------------------------------------
+// Edit instruction templates (injected when user has selected an item)
+// ---------------------------------------------------------------------------
+
+const EDIT_INSTRUCTION_SHOT = `
+EDIT MODE: When the user asks you to change, update, or modify the selected shot, respond with TWO parts:
+1. A brief conversational acknowledgment (1-2 sentences)
+2. A fenced code block with the suggested edit:
+
+\`\`\`workshop-edit
+{
+  "action": "update_shot",
+  "index": <shot index from SELECTED ITEM>,
+  "data": {
+    "description": "<new shot description>",
+    "shotSize": "<optional: wide/medium/close-up/extreme-close-up>",
+    "shotType": "<optional: static/pan/tilt/dolly/handheld/drone/tracking>",
+    "durationSec": <optional: number>
+  }
+}
+\`\`\`
+
+Only include the workshop-edit block if the user is requesting a change. For questions or discussion, respond conversationally without the block.`;
+
+const EDIT_INSTRUCTION_PROMPT = `
+EDIT MODE: When the user asks you to change, update, or modify the selected image prompt, respond with TWO parts:
+1. A brief conversational acknowledgment (1-2 sentences)
+2. A fenced code block with the suggested edit:
+
+\`\`\`workshop-edit
+{
+  "action": "update_prompt",
+  "index": <shot index from SELECTED ITEM>,
+  "data": {
+    "prompt": "<new image generation prompt>"
+  }
+}
+\`\`\`
+
+Only include the workshop-edit block if the user is requesting a change. For questions or discussion, respond conversationally without the block.`;
+
+const EDIT_INSTRUCTION_OUTLINE = `
+EDIT MODE: When the user asks you to change, update, or modify the selected outline beat, respond with TWO parts:
+1. A brief conversational acknowledgment (1-2 sentences)
+2. A fenced code block with the suggested edit:
+
+\`\`\`workshop-edit
+{
+  "action": "update_outline",
+  "index": <beat index from SELECTED ITEM>,
+  "data": {
+    "title": "<optional: new beat title>",
+    "summary": "<optional: new beat summary>"
+  }
+}
+\`\`\`
+
+Only include the workshop-edit block if the user is requesting a change. For questions or discussion, respond conversationally without the block.`;
+
 /**
  * Reconcile DB shot rows for a project against a new shot list.
  *
@@ -361,18 +420,21 @@ STRICT RULES:
 - Help the user refine individual beats in the outline through conversation.
 - If a SELECTED ITEM is included below, the user is pointing directly at that beat — focus your suggestions there.
 - Do NOT regenerate the entire outline unless explicitly asked.
-- Do NOT write shot descriptions — that's the next stage.`
+- Do NOT write shot descriptions — that's the next stage.
+${selectedItemId ? EDIT_INSTRUCTION_OUTLINE : ""}`
 					: currentStage === "shots"
 						? `You are in the SHOTS phase. A flat shot list is visible in the right panel.
 - Help the user refine specific shot descriptions through conversation.
 - If a SELECTED ITEM is included below, the user is pointing directly at that shot — focus there.
 - Focus on cinematography, framing, visual detail, and production-ready direction.
 - Each shot should be visually distinct from its neighbors.
-- Do NOT regenerate all shots unless explicitly asked.`
+- Do NOT regenerate all shots unless explicitly asked.
+${selectedItemId ? EDIT_INSTRUCTION_SHOT : ""}`
 						: `You are in the IMAGE PROMPTS phase. Per-shot image prompts are visible in the right panel.
 - Help the user refine image generation prompts for specific shots.
 - If a SELECTED ITEM is included below, the user is pointing directly at that prompt — focus there.
-- Each prompt should be a standalone visual description suitable for AI image generation.`;
+- Each prompt should be a standalone visual description suitable for AI image generation.
+${selectedItemId ? EDIT_INSTRUCTION_PROMPT : ""}`;
 
 		const systemPrompt = `You are a creative director and cinematographer helping plan a video project called "${project.name}".
 
@@ -417,6 +479,110 @@ Global rules:
 		} finally {
 			clearTimeout(timeout);
 		}
+	});
+
+// ---------------------------------------------------------------------------
+// applyWorkshopEdit — applies a single edit suggested by the LLM
+// ---------------------------------------------------------------------------
+
+export const applyWorkshopEdit = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			projectId: string;
+			action: "update_shot" | "update_prompt" | "update_outline";
+			index: number;
+			data: Record<string, unknown>;
+		}) => {
+			if (typeof data.index !== "number" || data.index < 0) {
+				throw new Error("Invalid index");
+			}
+			if (!data.action || !data.data) {
+				throw new Error("Missing action or data");
+			}
+			return data;
+		},
+	)
+	.handler(async ({ data: { projectId, action, index, data: editData } }) => {
+		const { project } = await assertProjectOwner(projectId, "error");
+		const draft = (project.scriptDraft ?? {}) as ScriptDraft;
+
+		if (action === "update_outline") {
+			if (!draft.outline || !draft.outline[index]) {
+				throw new Error(`Outline beat ${index + 1} not found`);
+			}
+			const { title, summary } = editData as { title?: string; summary?: string };
+			if (title) draft.outline[index].title = title;
+			if (summary) draft.outline[index].summary = summary;
+		} else if (action === "update_shot") {
+			if (!draft.shots || !draft.shots[index]) {
+				throw new Error(`Shot ${index + 1} not found`);
+			}
+			const { description, shotSize, shotType, durationSec } = editData as {
+				description?: string;
+				shotSize?: ShotDraftEntry["shotSize"];
+				shotType?: ShotDraftEntry["shotType"];
+				durationSec?: number;
+			};
+			if (description) draft.shots[index].description = description;
+			if (shotSize) draft.shots[index].shotSize = shotSize;
+			if (shotType) draft.shots[index].shotType = shotType;
+			if (typeof durationSec === "number") draft.shots[index].durationSec = durationSec;
+
+			// Also update the shots table if this shot has been promoted
+			const shotRows = await db
+				.select()
+				.from(shots)
+				.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+				.orderBy(shots.order);
+
+			if (shotRows[index]) {
+				await db
+					.update(shots)
+					.set({
+						description: description ?? shotRows[index].description,
+						updatedAt: new Date(),
+					})
+					.where(eq(shots.id, shotRows[index].id));
+			}
+		} else if (action === "update_prompt") {
+			if (!draft.imagePrompts) {
+				draft.imagePrompts = [];
+			}
+			const { prompt } = editData as { prompt: string };
+			if (!prompt) throw new Error("Prompt is required");
+
+			const existing = draft.imagePrompts.find((p) => p.shotIndex === index);
+			if (existing) {
+				existing.prompt = prompt;
+			} else {
+				draft.imagePrompts.push({ shotIndex: index, prompt });
+			}
+
+			// Also update the shots table imagePrompt field if this shot has been promoted
+			const shotRows = await db
+				.select()
+				.from(shots)
+				.where(and(eq(shots.projectId, projectId), isNull(shots.deletedAt)))
+				.orderBy(shots.order);
+
+			if (shotRows[index]) {
+				await db
+					.update(shots)
+					.set({
+						imagePrompt: prompt,
+						updatedAt: new Date(),
+					})
+					.where(eq(shots.id, shotRows[index].id));
+			}
+		}
+
+		// Save the updated draft
+		await db
+			.update(projects)
+			.set({ scriptDraft: draft })
+			.where(eq(projects.id, projectId));
+
+		return { success: true };
 	});
 
 /**

@@ -1,24 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Message } from "@/db/schema";
+import {
+	type WorkshopEdit,
+	parseWorkshopEdit,
+} from "../lib/parse-workshop-edit";
 import { parseQuickReplies } from "../lib/script-helpers";
-import { sendMessage } from "../project-mutations";
+import { applyWorkshopEdit, sendMessage } from "../project-mutations";
 import type { WorkshopStage } from "../project-types";
 
 interface UseWorkshopChatArgs {
 	projectId: string;
 	existingMessages: Message[];
 	stage?: WorkshopStage;
+	onEditApplied?: () => void;
 }
 
 export function useWorkshopChat({
 	projectId,
 	existingMessages,
 	stage,
+	onEditApplied,
 }: UseWorkshopChatArgs) {
 	const [chatMessages, setChatMessages] = useState<Message[]>(existingMessages);
 	const [input, setInput] = useState("");
 	const [isSending, setIsSending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [pendingEdit, setPendingEdit] = useState<WorkshopEdit | null>(null);
+	const [isApplyingEdit, setIsApplyingEdit] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -27,6 +35,7 @@ export function useWorkshopChat({
 		setInput("");
 		setError(null);
 		setIsSending(false);
+		setPendingEdit(null);
 	}, [existingMessages]);
 
 	const lastMessageId = chatMessages[chatMessages.length - 1]?.id;
@@ -93,6 +102,8 @@ export function useWorkshopChat({
 			const tempId = appendUserMessage(trimmed, clientMessageId);
 			setIsSending(true);
 			setError(null);
+			// Clear any pending edit when sending a new message
+			setPendingEdit(null);
 
 			try {
 				const result = await sendMessage({
@@ -104,7 +115,14 @@ export function useWorkshopChat({
 						selectedItemId: selectedItemId ?? undefined,
 					},
 				});
-				appendAssistantMessage(result.content);
+
+				// Parse the response for structured edits
+				const { conversational, edit } = parseWorkshopEdit(result.content);
+				appendAssistantMessage(conversational);
+
+				if (edit) {
+					setPendingEdit(edit);
+				}
 			} catch (err) {
 				removeMessage(tempId);
 				setError(
@@ -122,6 +140,36 @@ export function useWorkshopChat({
 			stage,
 		],
 	);
+
+	const handleApplyEdit = useCallback(async () => {
+		if (!pendingEdit) return;
+
+		setIsApplyingEdit(true);
+		setError(null);
+
+		try {
+			await applyWorkshopEdit({
+				data: {
+					projectId,
+					action: pendingEdit.action,
+					index: pendingEdit.index,
+					data: pendingEdit.data as Record<string, unknown>,
+				},
+			});
+			setPendingEdit(null);
+			onEditApplied?.();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to apply edit",
+			);
+		} finally {
+			setIsApplyingEdit(false);
+		}
+	}, [pendingEdit, projectId, onEditApplied]);
+
+	const handleDismissEdit = useCallback(() => {
+		setPendingEdit(null);
+	}, []);
 
 	function handleKeyDown(
 		e: React.KeyboardEvent,
@@ -155,5 +203,10 @@ export function useWorkshopChat({
 		runChatMessage,
 		handleKeyDown,
 		clearInput,
+		// Edit-related state and handlers
+		pendingEdit,
+		isApplyingEdit,
+		handleApplyEdit,
+		handleDismissEdit,
 	};
 }

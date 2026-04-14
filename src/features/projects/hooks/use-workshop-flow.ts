@@ -144,5 +144,6 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 		handleGenerateImagePrompts,
 		isGenerating,
 		generatingStage,
+		refetch: invalidateProject,
 	};
 }

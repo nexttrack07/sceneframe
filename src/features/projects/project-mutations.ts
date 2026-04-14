@@ -19,6 +19,7 @@ import { cleanupStorageKeys } from "@/lib/r2-cleanup.server";
 export {
 	saveIntake,
 	sendMessage,
+	applyWorkshopEdit,
 	approveWorkshop,
 	resetWorkshop,
 	setWorkshopStage,
