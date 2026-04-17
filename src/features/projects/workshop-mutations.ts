@@ -313,7 +313,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 		(data: {
 			projectId: string;
 			content: string;
-			stage?: "outline" | "shots" | "prompts";
+			stage?: "outline" | "shots" | "prompts" | "audio";
 			clientMessageId?: string;
 			selectedItemId?: string;
 		}) => {

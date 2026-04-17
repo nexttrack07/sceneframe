@@ -5,6 +5,7 @@ const STAGES: { key: WorkshopStage; label: string }[] = [
 	{ key: "outline", label: "Outline" },
 	{ key: "shots", label: "Shots" },
 	{ key: "prompts", label: "Prompts" },
+	{ key: "audio", label: "Audio" },
 ];
 
 interface StageIndicatorProps {

@@ -52,7 +52,8 @@ export interface OpeningHookDraft {
 export type WorkshopStage =
 	| "outline"
 	| "shots"
-	| "prompts";
+	| "prompts"
+	| "audio";
 
 export interface OutlineEntry {
 	title: string;
@@ -86,7 +87,7 @@ export interface WorkshopState {
 	outline?: OutlineEntry[];
 	shots?: ShotDraftEntry[];
 	imagePrompts?: ImagePromptEntry[];
-	staleStages?: Array<"outline" | "shots" | "prompts">;
+	staleStages?: Array<"outline" | "shots" | "prompts" | "audio">;
 }
 
 /** @deprecated Use WorkshopState instead */

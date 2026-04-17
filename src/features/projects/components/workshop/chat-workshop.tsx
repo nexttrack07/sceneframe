@@ -22,12 +22,14 @@ import {
 } from "../../generation-toast";
 import { applyWorkshopEdit } from "../../workshop-mutations";
 import { useReviewMode } from "../../hooks/use-review-mode";
+import { useWorkshopAudio } from "../../hooks/use-workshop-audio";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
 import { useWorkshopUndo } from "../../hooks/use-workshop-undo";
 import { getSelectionLabel } from "../../lib/script-helpers";
 import type { ProjectSettings, WorkshopState } from "../../project-types";
 import { ChatBubble } from "../chat-bubble";
+import { AudioPanel } from "./audio-panel";
 import { OutlinePanel } from "./outline-panel";
 import { PromptsPanel } from "./prompts-panel";
 import { QuickActionChips } from "./quick-action-chips";
@@ -87,6 +89,7 @@ export function ChatWorkshop({
 			flow.refetch();
 		},
 	});
+	const audio = useWorkshopAudio({ projectId });
 
 	// Handler for when user clicks a shot chip in review mode
 	const handleReviewShotClick = useCallback(
@@ -684,6 +687,31 @@ export function ChatWorkshop({
 								onRegenerate={() =>
 									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
 								}
+							/>
+						</div>
+					)}
+
+					{flow.stage === "audio" && (
+						<div className="animate-fade-in-up">
+							<AudioPanel
+								shots={flow.shots}
+								voices={audio.voices}
+								isLoadingVoices={audio.isLoadingVoices}
+								voicesError={audio.voicesError}
+								selectedVoiceId={audio.selectedVoiceId}
+								onSelectVoice={audio.setSelectedVoiceId}
+								voiceovers={audio.voiceovers}
+								isLoadingVoiceovers={audio.isLoadingVoiceovers}
+								usage={audio.usage}
+								isGenerating={audio.isGenerating}
+								generationError={audio.generationError}
+								onClearError={audio.clearGenerationError}
+								onGenerateVoiceover={audio.handleGenerateVoiceover}
+								playingAssetId={audio.playingAssetId}
+								isPlaying={audio.isPlaying}
+								onPlay={audio.handlePlay}
+								onPause={audio.handlePause}
+								onStop={audio.handleStop}
 							/>
 						</div>
 					)}

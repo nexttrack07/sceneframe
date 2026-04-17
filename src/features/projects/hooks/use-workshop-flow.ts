@@ -46,7 +46,7 @@ export function useWorkshopFlow({ projectId, project }: UseWorkshopFlowArgs) {
 	const outline: OutlineEntry[] | null = draft?.outline ?? null;
 	const shots: ShotDraftEntry[] | null = draft?.shots ?? null;
 	const imagePrompts = draft?.imagePrompts ?? null;
-	const staleStages: Array<"outline" | "shots" | "prompts"> =
+	const staleStages: Array<"outline" | "shots" | "prompts" | "audio"> =
 		draft?.staleStages ?? [];
 	const intake: IntakeAnswers | null =
 		(project.settings as ProjectSettings | null | undefined)?.intake ?? null;
