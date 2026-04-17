@@ -1,5 +1,12 @@
-/* Inter font — must be first */
+/* ============================================
+   TYPOGRAPHY — Distinctive font stack
+   Display: Satoshi (headers, titles)
+   Body: Inter (UI text)
+   Mono: JetBrains Mono (prompts, code)
+   ============================================ */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @import 'tailwindcss';
 @import 'tw-animate-css';
@@ -8,20 +15,37 @@
 
 body {
   @apply m-0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
-    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+code, .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Display font for headings */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* Tighter tracking for large display text */
+.display-tight {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+  font-weight: 700;
 }
 
 /* ============================================
    DARK-ONLY THEME — True black, cool blue accent
    ============================================ */
 :root {
+  /* Typography */
+  --font-display: 'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
   /* Backgrounds — true black with subtle blue tint */
   --background: oklch(0.06 0.01 240);
   --foreground: oklch(0.95 0 0);
@@ -85,6 +109,11 @@ code {
 }
 
 @theme inline {
+  /* Font families */
+  --font-family-display: var(--font-display);
+  --font-family-body: var(--font-body);
+  --font-family-mono: var(--font-mono);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
