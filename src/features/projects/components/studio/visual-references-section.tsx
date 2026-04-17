@@ -143,9 +143,9 @@ export function VisualReferencesSection({
 											e.stopPropagation();
 											onRemove(url);
 										}}
-										className="absolute -top-1 -right-1 rounded-full bg-destructive p-0.5 text-white opacity-0 transition-opacity group-hover/thumb:opacity-100"
+										className="absolute -top-1.5 -right-1.5 rounded-full bg-destructive p-1 text-white opacity-0 transition-opacity group-hover/thumb:opacity-100"
 									>
-										<X size={10} />
+										<X size={12} />
 									</button>
 								</div>
 							))}

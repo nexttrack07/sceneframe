@@ -523,11 +523,11 @@ export function ChatWorkshop({
 							<button
 								type="button"
 								onClick={() => onSelectedItemIdsChange([])}
-								className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground"
+								className="shrink-0 rounded p-1.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground"
 								title="Clear selection"
 								aria-label="Clear selection"
 							>
-								<X size={12} />
+								<X size={14} />
 							</button>
 						</div>
 					)}

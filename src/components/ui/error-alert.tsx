@@ -48,7 +48,7 @@ export function ErrorAlert({
 				<button
 					type="button"
 					onClick={onDismiss}
-					className="shrink-0 p-0.5 rounded hover:bg-destructive/20 text-destructive/50 hover:text-destructive transition-colors"
+					className="shrink-0 p-1.5 rounded hover:bg-destructive/20 text-destructive/50 hover:text-destructive transition-colors"
 					aria-label="Dismiss error"
 				>
 					<X size={14} />

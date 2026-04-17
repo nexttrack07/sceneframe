@@ -30,7 +30,7 @@ export function UndoToast({ show, isUndoing, label, onUndo, onDismiss }: UndoToa
 			<button
 				type="button"
 				onClick={onDismiss}
-				className="ml-1 rounded p-0.5 text-muted-foreground/60 hover:bg-muted hover:text-muted-foreground"
+				className="ml-1 rounded p-1.5 text-muted-foreground/60 hover:bg-muted hover:text-muted-foreground"
 				aria-label="Dismiss"
 			>
 				<X size={14} />

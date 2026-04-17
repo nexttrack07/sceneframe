@@ -39,7 +39,7 @@ export function WorkshopEditSuggestion({
 					type="button"
 					onClick={onDismiss}
 					disabled={isApplying}
-					className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground disabled:opacity-50"
+					className="shrink-0 rounded p-1.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground disabled:opacity-50"
 					title="Dismiss"
 					aria-label="Dismiss suggestion"
 				>

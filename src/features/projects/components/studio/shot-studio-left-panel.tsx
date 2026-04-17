@@ -232,9 +232,9 @@ export function ShotStudioLeftPanel({
 								<button
 									type="button"
 									onClick={onClearEditingReference}
-									className="absolute top-1.5 right-1.5 bg-black/60 text-white p-0.5 rounded-md hover:bg-black/80 transition-colors"
+									className="absolute top-1.5 right-1.5 bg-black/60 text-white p-1.5 rounded-md hover:bg-black/80 transition-colors"
 								>
-									<X size={12} />
+									<X size={14} />
 								</button>
 							)}
 						</div>
