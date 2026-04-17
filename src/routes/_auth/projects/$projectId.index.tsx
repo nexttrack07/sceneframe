@@ -81,10 +81,10 @@ function ProjectPage() {
 
 	// Workshop selection lives at the route level so the header can read
 	// it for the "Open shot detail" affordance. ChatWorkshop receives it
-	// as a controlled prop pair.
-	const [workshopSelectedItemId, setWorkshopSelectedItemId] = useState<
-		string | null
-	>(null);
+	// as a controlled prop pair. Supports multi-select via cmd/ctrl-click.
+	const [workshopSelectedItemIds, setWorkshopSelectedItemIds] = useState<
+		string[]
+	>([]);
 
 	// Resolve "first" to the actual first shot ID
 	const shot =
@@ -107,9 +107,11 @@ function ProjectPage() {
 	// Resolve the workshop selection to a real DB shot ID, if applicable.
 	// Selections of the form "shot-N" or "prompt-N" point at projectShots[N].
 	// Outline selections have no corresponding shot, so the button hides.
+	// For multi-select, we use the first selected item for the detail view.
 	const selectedShotForDetail = (() => {
-		if (!workshopSelectedItemId) return null;
-		const match = workshopSelectedItemId.match(/^(shot|prompt)-(\d+)$/);
+		const firstSelected = workshopSelectedItemIds[0];
+		if (!firstSelected) return null;
+		const match = firstSelected.match(/^(shot|prompt)-(\d+)$/);
 		if (!match) return null;
 		const index = Number.parseInt(match[2], 10);
 		if (Number.isNaN(index)) return null;
@@ -248,8 +250,8 @@ function ProjectPage() {
 					existingMessages={projectMessages}
 					projectSettings={project.settings}
 					workshop={project.workshop}
-					selectedItemId={workshopSelectedItemId}
-					onSelectedItemIdChange={setWorkshopSelectedItemId}
+					selectedItemIds={workshopSelectedItemIds}
+					onSelectedItemIdsChange={setWorkshopSelectedItemIds}
 				/>
 			)}
 		</div>

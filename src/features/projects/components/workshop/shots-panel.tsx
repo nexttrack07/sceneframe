@@ -1,28 +1,110 @@
-import { AlertTriangle, Camera, Loader2, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Camera, Loader2, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { ReviewFinding } from "../../lib/review-finding-types";
 import type { ShotDraftEntry } from "../../project-types";
 import { CopyButton } from "./copy-button";
+import { InlineEditField } from "./inline-edit-field";
+import { ReviewModePanel, ReviewModePanelSkeleton } from "./review-mode-panel";
 
 interface ShotsPanelProps {
 	shots: ShotDraftEntry[];
-	selectedItemId: string | null;
-	onSelectItem: (id: string | null) => void;
+	selectedItemIds: string[];
+	onSelectItem: (id: string | null, event?: React.MouseEvent) => void;
 	isStale: boolean;
 	onRegenerate: () => void;
 	onGeneratePrompts?: () => void;
 	isGenerating?: boolean;
+	/** Called when user saves an inline edit */
+	onInlineEdit?: (shotIndex: number, newDescription: string) => Promise<void>;
+	/** Review mode state */
+	isReviewMode?: boolean;
+	isReviewLoading?: boolean;
+	reviewFindings?: ReviewFinding[];
+	reviewSummary?: string | null;
+	/** Map of shot ID to index */
+	shotIndexById?: Map<string, number>;
+	/** Called to start review */
+	onStartReview?: () => void;
+	/** Called to exit review mode */
+	onExitReview?: () => void;
+	/** Called when user clicks a shot chip in review mode */
+	onReviewShotClick?: (shotId: string) => void;
+	/** Called when user applies a finding */
+	onApplyFinding?: (finding: ReviewFinding) => void;
+	/** Called when user dismisses a finding */
+	onDismissFinding?: (findingId: string) => void;
+	/** Finding ID currently being applied */
+	applyingFindingId?: string | null;
 }
 
 export function ShotsPanel({
 	shots,
-	selectedItemId,
+	selectedItemIds,
 	onSelectItem,
 	isStale,
 	onRegenerate,
 	onGeneratePrompts,
 	isGenerating,
+	onInlineEdit,
+	isReviewMode,
+	isReviewLoading,
+	reviewFindings,
+	reviewSummary,
+	shotIndexById,
+	onStartReview,
+	onExitReview,
+	onReviewShotClick,
+	onApplyFinding,
+	onDismissFinding,
+	applyingFindingId,
 }: ShotsPanelProps) {
 	const totalDuration = shots.reduce((sum, s) => sum + s.durationSec, 0);
+	const [editingIndex, setEditingIndex] = useState<number | null>(null);
+	const [isSaving, setIsSaving] = useState(false);
+
+	// Show review loading state
+	if (isReviewLoading) {
+		return <ReviewModePanelSkeleton />;
+	}
+
+	// Show review mode panel
+	if (isReviewMode && reviewFindings && onExitReview && onReviewShotClick && onApplyFinding && onDismissFinding) {
+		return (
+			<ReviewModePanel
+				findings={reviewFindings}
+				summary={reviewSummary ?? null}
+				shots={shots}
+				shotIndexById={shotIndexById ?? new Map()}
+				onBack={onExitReview}
+				onShotClick={onReviewShotClick}
+				onApplyFinding={onApplyFinding}
+				onDismissFinding={onDismissFinding}
+				applyingFindingId={applyingFindingId}
+			/>
+		);
+	}
+
+	const handleDoubleClick = (shotIdx: number) => {
+		if (onInlineEdit) {
+			setEditingIndex(shotIdx);
+		}
+	};
+
+	const handleSave = async (shotIdx: number, newValue: string) => {
+		if (!onInlineEdit) return;
+		setIsSaving(true);
+		try {
+			await onInlineEdit(shotIdx, newValue);
+			setEditingIndex(null);
+		} finally {
+			setIsSaving(false);
+		}
+	};
+
+	const handleCancel = () => {
+		setEditingIndex(null);
+	};
 
 	return (
 		<div className="max-w-4xl space-y-5">
@@ -33,6 +115,18 @@ export function ShotsPanel({
 						Shot Breakdown — {shots.length} shots · {totalDuration}s total
 					</span>
 				</div>
+				{onStartReview && (
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={onStartReview}
+						disabled={isReviewLoading}
+						className="gap-1.5"
+					>
+						<Search size={14} />
+						Review shots
+					</Button>
+				)}
 			</div>
 
 			{isStale && (
@@ -50,13 +144,22 @@ export function ShotsPanel({
 			<div className="space-y-2">
 				{shots.map((shot, shotIdx) => {
 					const itemId = `shot-${shotIdx}`;
-					const isSelected = selectedItemId === itemId;
+					const isSelected = selectedItemIds.includes(itemId);
+					const isEditing = editingIndex === shotIdx;
+
 					return (
-						<button
+						<div
 							key={itemId}
-							type="button"
-							onClick={() => onSelectItem(isSelected ? null : itemId)}
-							className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
+							role="button"
+							tabIndex={0}
+							onClick={(e) => !isEditing && onSelectItem(itemId, e)}
+							onDoubleClick={() => handleDoubleClick(shotIdx)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !isEditing) {
+									onSelectItem(itemId);
+								}
+							}}
+							className={`w-full text-left rounded-xl border p-4 transition-all duration-150 cursor-pointer ${
 								isSelected
 									? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
 									: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
@@ -78,14 +181,32 @@ export function ShotsPanel({
 								<span className="text-xs text-muted-foreground">
 									~{shot.durationSec}s
 								</span>
+								{onInlineEdit && !isEditing && (
+									<span className="ml-auto text-xs text-muted-foreground/50">
+										Double-click to edit
+									</span>
+								)}
 							</div>
-							<p className="text-sm text-foreground leading-relaxed">
-								{shot.description}
-							</p>
-							<div className="flex justify-end mt-2">
-								<CopyButton text={shot.description} title="Copy shot description" />
-							</div>
-						</button>
+							{isEditing ? (
+								<InlineEditField
+									value={shot.description}
+									onSave={(newValue) => void handleSave(shotIdx, newValue)}
+									onCancel={handleCancel}
+									isSaving={isSaving}
+									placeholder="Shot description..."
+									rows={3}
+								/>
+							) : (
+								<>
+									<p className="text-sm text-foreground leading-relaxed">
+										{shot.description}
+									</p>
+									<div className="flex justify-end mt-2">
+										<CopyButton text={shot.description} title="Copy shot description" />
+									</div>
+								</>
+							)}
+						</div>
 					);
 				})}
 			</div>

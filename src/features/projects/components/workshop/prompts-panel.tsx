@@ -1,5 +1,6 @@
-import { AlertTriangle, ImageIcon } from "lucide-react";
+import { AlertTriangle, ImageIcon, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isPromptStale } from "../../lib/stale-prompt-detection";
 import type { ImagePromptEntry, ShotDraftEntry } from "../../project-types";
 import { CopyButton } from "./copy-button";
 
@@ -7,19 +8,21 @@ interface PromptsPanelProps {
 	projectId: string;
 	shots: ShotDraftEntry[];
 	imagePrompts: ImagePromptEntry[];
-	selectedItemId: string | null;
-	onSelectItem: (id: string | null) => void;
+	selectedItemIds: string[];
+	onSelectItem: (id: string | null, event?: React.MouseEvent) => void;
 	isStale: boolean;
 	onRegenerate: () => void;
+	onRegeneratePrompt?: (shotIndex: number) => void;
 }
 
 export function PromptsPanel({
 	shots,
 	imagePrompts,
-	selectedItemId,
+	selectedItemIds,
 	onSelectItem,
 	isStale,
 	onRegenerate,
+	onRegeneratePrompt,
 }: PromptsPanelProps) {
 	return (
 		<div className="max-w-4xl space-y-5">
@@ -35,7 +38,7 @@ export function PromptsPanel({
 						<span>These prompts were generated from earlier shots.</span>
 					</div>
 					<Button size="sm" variant="outline" onClick={onRegenerate}>
-						Regenerate
+						Regenerate All
 					</Button>
 				</div>
 			)}
@@ -45,16 +48,24 @@ export function PromptsPanel({
 					// Support both v2 (shotId - not available in draft) and v1 (shotIndex)
 					const prompt = imagePrompts.find((p) => p.shotIndex === shotIdx);
 					const itemId = `prompt-${shotIdx}`;
-					const isSelected = selectedItemId === itemId;
+					const isSelected = selectedItemIds.includes(itemId);
+
+					// Check per-prompt staleness using sourceHash
+					const promptIsStale = prompt
+						? isPromptStale(prompt.sourceHash, shot.description)
+						: false;
+
 					return (
 						<button
 							key={itemId}
 							type="button"
-							onClick={() => onSelectItem(isSelected ? null : itemId)}
+							onClick={(e) => onSelectItem(itemId, e)}
 							className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
 								isSelected
 									? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"
-									: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
+									: promptIsStale
+										? "border-warning/40 bg-warning/5 hover:border-warning/50"
+										: "border-border bg-background hover:border-primary/30 hover:scale-[1.005] hover:shadow-sm"
 							}`}
 						>
 							<div className="flex items-center gap-2 mb-1">
@@ -69,13 +80,37 @@ export function PromptsPanel({
 								<span className="text-xs text-muted-foreground">
 									{shot.shotType}
 								</span>
+								{promptIsStale && (
+									<>
+										<span className="text-xs text-muted-foreground">·</span>
+										<span className="flex items-center gap-1 text-xs text-warning">
+											<AlertTriangle size={12} />
+											Stale
+										</span>
+									</>
+								)}
 							</div>
 							{prompt ? (
 								<>
-									<p className="text-sm text-foreground leading-relaxed">
+									<p className={`text-sm leading-relaxed ${promptIsStale ? "text-muted-foreground" : "text-foreground"}`}>
 										{prompt.prompt}
 									</p>
-									<div className="flex justify-end mt-2">
+									<div className="flex items-center justify-between mt-2">
+										{promptIsStale && onRegeneratePrompt && (
+											<Button
+												size="xs"
+												variant="ghost"
+												onClick={(e) => {
+													e.stopPropagation();
+													onRegeneratePrompt(shotIdx);
+												}}
+												className="gap-1 text-warning hover:text-warning hover:bg-warning/10"
+											>
+												<RefreshCw size={12} />
+												Regenerate
+											</Button>
+										)}
+										<div className="flex-1" />
 										<CopyButton text={prompt.prompt} title="Copy image prompt" />
 									</div>
 								</>

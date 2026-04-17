@@ -3,17 +3,19 @@ import type { Message } from "@/db/schema";
 import {
 	type WorkshopEdit,
 	parseWorkshopEdit,
+	getEditTargetLabel,
 } from "../lib/parse-workshop-edit";
 import { parseQuickReplies } from "../lib/script-helpers";
 import { applyWorkshopEdit, sendMessage } from "../project-mutations";
-import type { WorkshopStage } from "../project-types";
+import type { WorkshopState, WorkshopStage } from "../project-types";
 
 interface UseWorkshopChatArgs {
 	projectId: string;
 	existingMessages: Message[];
 	stage?: WorkshopStage;
 	selectedItemId?: string | null;
-	onEditApplied?: () => void;
+	/** Called after an edit is successfully applied, with the preState for undo */
+	onEditApplied?: (preState: WorkshopState, editLabel: string) => void;
 }
 
 export function useWorkshopChat({
@@ -150,7 +152,7 @@ export function useWorkshopChat({
 		setError(null);
 
 		try {
-			await applyWorkshopEdit({
+			const result = await applyWorkshopEdit({
 				data: {
 					projectId,
 					action: pendingEdit.action,
@@ -159,8 +161,9 @@ export function useWorkshopChat({
 					selectedItemId: selectedItemId ?? null,
 				},
 			});
+			const editLabel = getEditTargetLabel(pendingEdit);
 			setPendingEdit(null);
-			onEditApplied?.();
+			onEditApplied?.(result.preState, editLabel);
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to apply edit",

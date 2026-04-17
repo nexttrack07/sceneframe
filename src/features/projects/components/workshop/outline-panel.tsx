@@ -4,8 +4,8 @@ import type { OutlineEntry } from "../../project-types";
 
 interface OutlinePanelProps {
 	outline: OutlineEntry[];
-	selectedItemId: string | null;
-	onSelectItem: (id: string | null) => void;
+	selectedItemIds: string[];
+	onSelectItem: (id: string | null, event?: React.MouseEvent) => void;
 	isStale: boolean;
 	onRegenerate: () => void;
 	onBreakdownToShots?: () => void;
@@ -14,7 +14,7 @@ interface OutlinePanelProps {
 
 export function OutlinePanel({
 	outline,
-	selectedItemId,
+	selectedItemIds,
 	onSelectItem,
 	isStale,
 	onRegenerate,
@@ -42,12 +42,12 @@ export function OutlinePanel({
 
 			{outline.map((entry, i) => {
 				const itemId = `outline-${i}`;
-				const isSelected = selectedItemId === itemId;
+				const isSelected = selectedItemIds.includes(itemId);
 				return (
 					<button
 						key={itemId}
 						type="button"
-						onClick={() => onSelectItem(isSelected ? null : itemId)}
+						onClick={(e) => onSelectItem(itemId, e)}
 						className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
 							isSelected
 								? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 scale-[1.01] shadow-md"

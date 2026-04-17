@@ -8,6 +8,7 @@ import {
 	MessageSquare,
 	Send,
 	Sparkles,
+	Undo2,
 	X,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -19,15 +20,20 @@ import {
 	resolveGenerationToast,
 	updateGenerationToast,
 } from "../../generation-toast";
+import { applyWorkshopEdit } from "../../workshop-mutations";
+import { useReviewMode } from "../../hooks/use-review-mode";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
+import { useWorkshopUndo } from "../../hooks/use-workshop-undo";
 import { getSelectionLabel } from "../../lib/script-helpers";
 import type { ProjectSettings, WorkshopState } from "../../project-types";
 import { ChatBubble } from "../chat-bubble";
 import { OutlinePanel } from "./outline-panel";
 import { PromptsPanel } from "./prompts-panel";
+import { QuickActionChips } from "./quick-action-chips";
 import { ShotsPanel } from "./shots-panel";
 import { StageIndicator } from "./stage-indicator";
+import { UndoToast } from "./undo-toast";
 import { WorkshopBadges } from "./workshop-badges";
 import {
 	OutlinePanelSkeleton,
@@ -43,28 +49,143 @@ interface ChatWorkshopProps {
 		workshop?: WorkshopState | null;
 		settings?: ProjectSettings | null;
 	};
-	selectedItemId: string | null;
-	onSelectedItemIdChange: (id: string | null) => void;
+	selectedItemIds: string[];
+	onSelectedItemIdsChange: (ids: string[]) => void;
 }
 
 export function ChatWorkshop({
 	projectId,
 	existingMessages,
 	project,
-	selectedItemId,
-	onSelectedItemIdChange,
+	selectedItemIds,
+	onSelectedItemIdsChange,
 }: ChatWorkshopProps) {
+	// For backward compat with single-select code paths, use first selected
+	const selectedItemId = selectedItemIds[0] ?? null;
 	const flow = useWorkshopFlow({ projectId, project });
+	const undo = useWorkshopUndo({
+		projectId,
+		onUndoComplete: () => {
+			flow.refetch();
+		},
+	});
 	const chat = useWorkshopChat({
 		projectId,
 		existingMessages,
 		stage: flow.stage,
 		selectedItemId,
-		onEditApplied: () => {
-			// Refresh the flow data after an edit is applied
+		onEditApplied: (preState, editLabel) => {
+			// Push to undo stack and refresh the flow data
+			undo.pushSnapshot(preState, editLabel);
 			flow.refetch();
 		},
 	});
+	const review = useReviewMode({
+		projectId,
+		onFindingApplied: () => {
+			// Refresh flow data after applying a finding
+			flow.refetch();
+		},
+	});
+
+	// Handler for when user clicks a shot chip in review mode
+	const handleReviewShotClick = useCallback(
+		(shotId: string) => {
+			// Find the shot index from the map and select it
+			const idx = review.shotIndexById.get(shotId);
+			if (idx !== undefined) {
+				review.exitReview();
+				onSelectedItemIdsChange([`shot-${idx}`]);
+			}
+		},
+		[review, onSelectedItemIdsChange],
+	);
+
+	// Handler for applying a review finding
+	const handleApplyFinding = useCallback(
+		async (finding: import("../../lib/review-finding-types").ReviewFinding) => {
+			const action = finding.suggestedAction;
+			review.setApplyingFindingId(finding.id);
+
+			try {
+				if (action.type === "delete") {
+					const idx = review.shotIndexById.get(action.shotId);
+					if (idx === undefined) {
+						throw new Error("Shot not found");
+					}
+					const result = await applyWorkshopEdit({
+						data: {
+							projectId,
+							action: "delete_shot",
+							index: idx,
+							data: {},
+							selectedItemId: `shot-${idx}`,
+						},
+					});
+					undo.pushSnapshot(result.preState, `Shot ${idx + 1} deleted`);
+					flow.refetch();
+				} else if (action.type === "update") {
+					const idx = review.shotIndexById.get(action.shotId);
+					if (idx === undefined) {
+						throw new Error("Shot not found");
+					}
+					if (action.suggestedDescription) {
+						const result = await applyWorkshopEdit({
+							data: {
+								projectId,
+								action: "manual_edit",
+								index: idx,
+								data: { description: action.suggestedDescription },
+								selectedItemId: `shot-${idx}`,
+							},
+						});
+						undo.pushSnapshot(result.preState, `Shot ${idx + 1} updated`);
+						flow.refetch();
+					}
+				} else if (action.type === "merge") {
+					// For merge, update the first shot with the merged description and delete the second
+					const idxA = review.shotIndexById.get(action.shotIdA);
+					const idxB = review.shotIndexById.get(action.shotIdB);
+					if (idxA === undefined || idxB === undefined) {
+						throw new Error("Shots not found");
+					}
+					// Update the first shot with the merged description
+					if (action.suggestedDescription) {
+						await applyWorkshopEdit({
+							data: {
+								projectId,
+								action: "manual_edit",
+								index: idxA,
+								data: { description: action.suggestedDescription },
+								selectedItemId: `shot-${idxA}`,
+							},
+						});
+					}
+					// Delete the second shot (note: index may have shifted if idxB > idxA)
+					const adjustedIdxB = idxB > idxA ? idxB - 1 : idxB;
+					const result = await applyWorkshopEdit({
+						data: {
+							projectId,
+							action: "delete_shot",
+							index: adjustedIdxB,
+							data: {},
+							selectedItemId: `shot-${adjustedIdxB}`,
+						},
+					});
+					undo.pushSnapshot(result.preState, `Shots ${idxA + 1} & ${idxB + 1} merged`);
+					flow.refetch();
+				}
+
+				review.markFindingApplied(finding.id);
+			} catch (err) {
+				console.error("Failed to apply finding:", err);
+				chat.setError(err instanceof Error ? err.message : "Failed to apply finding");
+			} finally {
+				review.setApplyingFindingId(null);
+			}
+		},
+		[projectId, review, undo, flow, chat],
+	);
 
 	const selectionLabel = useMemo(
 		() => getSelectionLabel(selectedItemId, project.workshop ?? null),
@@ -94,13 +215,39 @@ export function ChatWorkshop({
 	}, [chat, flow.isGenerating, selectedItemId, selectionLabel]);
 
 	const handleSelectItem = useCallback(
-		(id: string | null) => {
-			onSelectedItemIdChange(id);
-			if (id !== null) {
-				requestAnimationFrame(() => chat.textareaRef.current?.focus());
+		(id: string | null, event?: React.MouseEvent) => {
+			if (id === null) {
+				// Clear selection
+				onSelectedItemIdsChange([]);
+				return;
 			}
+
+			// Multi-select with cmd/ctrl key
+			if (event && (event.metaKey || event.ctrlKey)) {
+				if (selectedItemIds.includes(id)) {
+					// Remove from selection
+					onSelectedItemIdsChange(selectedItemIds.filter((i) => i !== id));
+				} else {
+					// Add to selection (only if same kind)
+					const existingKind = selectedItemIds[0]?.match(/^(outline|shot|prompt)/)?.[1];
+					const newKind = id.match(/^(outline|shot|prompt)/)?.[1];
+					if (existingKind && existingKind !== newKind) {
+						// Different kind - replace selection
+						onSelectedItemIdsChange([id]);
+					} else {
+						onSelectedItemIdsChange([...selectedItemIds, id]);
+					}
+				}
+			} else {
+				// Single select (toggle)
+				onSelectedItemIdsChange(
+					selectedItemIds.length === 1 && selectedItemIds[0] === id ? [] : [id],
+				);
+			}
+
+			requestAnimationFrame(() => chat.textareaRef.current?.focus());
 		},
-		[chat.textareaRef, onSelectedItemIdChange],
+		[chat.textareaRef, onSelectedItemIdsChange, selectedItemIds],
 	);
 
 	const [transcriptCopied, setTranscriptCopied] = useState(false);
@@ -186,6 +333,28 @@ export function ChatWorkshop({
 			chat.setIsSending(false);
 		}
 	}, [chat, flow]);
+
+	const handleInlineShotEdit = useCallback(
+		async (shotIndex: number, newDescription: string) => {
+			try {
+				const result = await applyWorkshopEdit({
+					data: {
+						projectId,
+						action: "manual_edit",
+						index: shotIndex,
+						data: { description: newDescription },
+						selectedItemId,
+					},
+				});
+				undo.pushSnapshot(result.preState, `Shot ${shotIndex + 1}`);
+				flow.refetch();
+			} catch (err) {
+				console.error("Failed to save inline edit:", err);
+				throw err; // Re-throw so the InlineEditField can handle it
+			}
+		},
+		[projectId, selectedItemId, undo, flow],
+	);
 
 	return (
 		<div className="flex-1 min-h-0 flex overflow-hidden">
@@ -287,6 +456,33 @@ export function ChatWorkshop({
 				)}
 
 				<div className="px-5 py-4 border-t bg-card">
+					{/* Undo toast - appears briefly after each edit */}
+					<div className="mb-2">
+						<UndoToast
+							show={undo.showToast}
+							isUndoing={undo.isUndoing}
+							label={undo.lastEditLabel}
+							onUndo={() => void undo.undo()}
+							onDismiss={undo.dismissToast}
+						/>
+					</div>
+
+					{/* Persistent undo button when stack is non-empty but toast is hidden */}
+					{undo.canUndo && !undo.showToast && (
+						<div className="mb-2">
+							<Button
+								size="xs"
+								variant="ghost"
+								onClick={() => void undo.undo()}
+								disabled={undo.isUndoing}
+								className="gap-1.5 text-muted-foreground hover:text-foreground"
+							>
+								<Undo2 size={14} />
+								{undo.isUndoing ? "Undoing..." : `Undo${undo.undoDepth > 1 ? ` (${undo.undoDepth})` : ""}`}
+							</Button>
+						</div>
+					)}
+
 					{chat.error && (
 						<div className="flex items-center gap-2 mb-2 text-xs text-destructive">
 							<span className="flex-1">{chat.error}</span>
@@ -323,7 +519,7 @@ export function ChatWorkshop({
 							</span>
 							<button
 								type="button"
-								onClick={() => onSelectedItemIdChange(null)}
+								onClick={() => onSelectedItemIdsChange([])}
 								className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-primary/10 hover:text-foreground"
 								title="Clear selection"
 								aria-label="Clear selection"
@@ -332,6 +528,16 @@ export function ChatWorkshop({
 							</button>
 						</div>
 					)}
+					{/* Quick action chips for the selected item */}
+					<QuickActionChips
+						selectionKind={selectionLabel?.kind ?? null}
+						onSelectAction={(prompt) => {
+							chat.setInput(prompt);
+							// Auto-send after a short delay so user sees what was selected
+							setTimeout(() => void handleSend(), 100);
+						}}
+						disabled={chat.isSending || flow.isGenerating}
+					/>
 					<div className="flex gap-2">
 						<Textarea
 							ref={chat.textareaRef}
@@ -418,7 +624,7 @@ export function ChatWorkshop({
 						<div className="animate-fade-in-up">
 							<OutlinePanel
 								outline={flow.outline}
-								selectedItemId={selectedItemId}
+								selectedItemIds={selectedItemIds}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("outline")}
 								onRegenerate={() =>
@@ -438,7 +644,7 @@ export function ChatWorkshop({
 						<div className="animate-fade-in-up">
 							<ShotsPanel
 								shots={flow.shots}
-								selectedItemId={selectedItemId}
+								selectedItemIds={selectedItemIds}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("shots")}
 								onRegenerate={() => void handleGenerateShotsWithReview()}
@@ -446,6 +652,18 @@ export function ChatWorkshop({
 									void handleGenerateWithChat(flow.handleGenerateImagePrompts, "Generating image prompts")
 								}
 								isGenerating={flow.isGenerating}
+								onInlineEdit={handleInlineShotEdit}
+								isReviewMode={review.isReviewMode}
+								isReviewLoading={review.isLoading}
+								reviewFindings={review.findings}
+								reviewSummary={review.summary}
+								shotIndexById={review.shotIndexById}
+								onStartReview={review.startReview}
+								onExitReview={review.exitReview}
+								onReviewShotClick={handleReviewShotClick}
+								onApplyFinding={(finding) => void handleApplyFinding(finding)}
+								onDismissFinding={review.dismissFinding}
+								applyingFindingId={review.applyingFindingId}
 							/>
 						</div>
 					)}
@@ -460,7 +678,7 @@ export function ChatWorkshop({
 								projectId={projectId}
 								shots={flow.shots}
 								imagePrompts={flow.imagePrompts ?? []}
-								selectedItemId={selectedItemId}
+								selectedItemIds={selectedItemIds}
 								onSelectItem={handleSelectItem}
 								isStale={flow.staleStages.includes("prompts")}
 								onRegenerate={() =>

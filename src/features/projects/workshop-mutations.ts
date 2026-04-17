@@ -13,8 +13,10 @@ import {
 	ImagePromptArraySchema,
 	OutlineArraySchema,
 	parseLlmJson,
+	ReviewFindingsResponseSchema,
 	ShotDraftArraySchema,
 } from "./lib/llm-schemas";
+import { computeSourceHash } from "./lib/stale-prompt-detection";
 import { normalizeProjectSettings } from "./project-normalize";
 import type {
 	IntakeAnswers,
@@ -513,6 +515,9 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data: { projectId, action, index: llmIndex, data: editData, selectedItemId } }) => {
 		const { project } = await assertProjectOwner(projectId, "error");
+
+		// Capture preState for undo before any modifications
+		const preState = structuredClone(project.workshop ?? {}) as WorkshopState;
 		const draft = (project.workshop ?? {}) as WorkshopState;
 
 		// The LLM is unreliable at echoing 0-based indices. If the UI has an
@@ -526,7 +531,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 				const expectedKind =
 					action === "update_outline"
 						? "outline"
-						: action === "update_shot"
+						: action === "update_shot" || action === "delete_shot" || action === "manual_edit"
 							? "shot"
 							: "prompt";
 				if (kind !== expectedKind) {
@@ -614,7 +619,7 @@ export const applyWorkshopEdit = createServerFn({ method: "POST" })
 			.set({ workshop: draft })
 			.where(eq(projects.id, projectId));
 
-		return { success: true };
+		return { success: true, preState };
 	});
 
 // ---------------------------------------------------------------------------
@@ -740,6 +745,8 @@ export const applyWorkshopEdits = createServerFn({ method: "POST" })
 
 		// Track which DB shots need updates
 		const shotUpdates: Map<string, { description?: string; imagePrompt?: string }> = new Map();
+		// Track which shots need to be deleted
+		const shotsToDelete: string[] = [];
 
 		// Apply each edit
 		for (const edit of edits) {
@@ -819,16 +826,43 @@ export const applyWorkshopEdits = createServerFn({ method: "POST" })
 						shotUpdates.set(shotRows[index].id, existingUpdate);
 					}
 				} else if (action === "delete_shot") {
-					// delete_shot will be fully implemented in Phase 3
-					// For now, just validate the shot exists
 					if (!draft.shots || !draft.shots[index]) {
 						throw new Error(`Shot ${index + 1} not found`);
 					}
-					// Placeholder: actual deletion logic comes in Phase 3
-					throw new Error("delete_shot is not yet implemented");
+
+					// Get the shot ID from the database for cascade cleanup
+					const shotToDelete = shotRows[index];
+					if (shotToDelete) {
+						shotsToDelete.push(shotToDelete.id);
+					}
+
+					// Remove the shot from the draft
+					draft.shots.splice(index, 1);
+
+					// Remove matching imagePrompts entries
+					if (draft.imagePrompts && draft.imagePrompts.length > 0) {
+						const shotId = shotToDelete?.id;
+						draft.imagePrompts = draft.imagePrompts.filter((entry) => {
+							// Remove by shotId if available, otherwise by shotIndex
+							if (shotId && entry.shotId === shotId) return false;
+							if (!entry.shotId && entry.shotIndex === index) return false;
+							return true;
+						});
+
+						// Re-index remaining imagePrompts that used shotIndex > deleted index
+						for (const entry of draft.imagePrompts) {
+							if (!entry.shotId && entry.shotIndex !== undefined && entry.shotIndex > index) {
+								entry.shotIndex = entry.shotIndex - 1;
+							}
+						}
+					}
 				}
 			}
 		}
+
+		// Collect storage keys for R2 cleanup (outside transaction)
+		const assetKeysToCleanup: string[] = [];
+		const transitionKeysToCleanup: string[] = [];
 
 		// Apply all changes in a transaction
 		await db.transaction(async (tx) => {
@@ -844,12 +878,77 @@ export const applyWorkshopEdits = createServerFn({ method: "POST" })
 					.where(eq(shots.id, shotId));
 			}
 
+			// Soft-delete shots and cascade to assets/transitions
+			if (shotsToDelete.length > 0) {
+				const now = new Date();
+
+				// Collect storage keys for R2 cleanup before soft-deleting
+				const orphanAssets = await tx
+					.select({ storageKey: assets.storageKey })
+					.from(assets)
+					.where(
+						and(inArray(assets.shotId, shotsToDelete), isNull(assets.deletedAt)),
+					);
+				for (const a of orphanAssets) {
+					if (a.storageKey) assetKeysToCleanup.push(a.storageKey);
+				}
+
+				const orphanTransitions = await tx
+					.select({ storageKey: transitionVideos.storageKey })
+					.from(transitionVideos)
+					.where(
+						and(
+							or(
+								inArray(transitionVideos.fromShotId, shotsToDelete),
+								inArray(transitionVideos.toShotId, shotsToDelete),
+							),
+							isNull(transitionVideos.deletedAt),
+						),
+					);
+				for (const t of orphanTransitions) {
+					if (t.storageKey) transitionKeysToCleanup.push(t.storageKey);
+				}
+
+				// Soft-delete the shots
+				await tx
+					.update(shots)
+					.set({ deletedAt: now })
+					.where(inArray(shots.id, shotsToDelete));
+
+				// Soft-delete associated assets
+				await tx
+					.update(assets)
+					.set({ deletedAt: now })
+					.where(
+						and(inArray(assets.shotId, shotsToDelete), isNull(assets.deletedAt)),
+					);
+
+				// Soft-delete associated transitions
+				await tx
+					.update(transitionVideos)
+					.set({ deletedAt: now })
+					.where(
+						and(
+							or(
+								inArray(transitionVideos.fromShotId, shotsToDelete),
+								inArray(transitionVideos.toShotId, shotsToDelete),
+							),
+							isNull(transitionVideos.deletedAt),
+						),
+					);
+			}
+
 			// Save the updated draft
 			await tx
 				.update(projects)
 				.set({ workshop: draft })
 				.where(eq(projects.id, projectId));
 		});
+
+		// Clean up R2 storage (best effort, after transaction commit)
+		if (assetKeysToCleanup.length > 0 || transitionKeysToCleanup.length > 0) {
+			await cleanupStorageKeys([...assetKeysToCleanup, ...transitionKeysToCleanup]);
+		}
 
 		return { success: true, preState };
 	});
@@ -1286,6 +1385,157 @@ Return only this fenced JSON block:
 		});
 	});
 
+/**
+ * Review shots for quality issues without modifying them.
+ * Returns findings that the user can choose to apply or dismiss.
+ */
+export const reviewShots = createServerFn({ method: "POST" })
+	.inputValidator((data: { projectId: string }) => data)
+	.handler(async ({ data: { projectId } }) => {
+		const { userId } = await assertProjectOwner(projectId, "error");
+
+		const project = await db.query.projects.findFirst({
+			where: eq(projects.id, projectId),
+		});
+		if (!project) {
+			throw new Error("Project not found");
+		}
+
+		const existingDraft = (project.workshop ?? {}) as WorkshopState;
+		const shotList = existingDraft.shots;
+		if (!shotList || shotList.length === 0) {
+			throw new Error("No shots to review");
+		}
+
+		// Get shot IDs from the database for stable references
+		const dbShots = await db.query.shots.findMany({
+			where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+			orderBy: asc(shots.order),
+			columns: { id: true, order: true },
+		});
+
+		// Map draft index to shot ID
+		const shotIdByIndex = new Map<number, string>();
+		for (const dbShot of dbShots) {
+			shotIdByIndex.set(dbShot.order, dbShot.id);
+		}
+
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		// Build shots block with IDs for the LLM
+		const shotsBlock = shotList
+			.map((shot, idx) => {
+				const shotId = shotIdByIndex.get(idx) ?? `temp-${idx}`;
+				return `Shot ${idx + 1} (id: "${shotId}"): [${shot.shotSize}, ${shot.shotType}, ${shot.durationSec}s] ${shot.description}`;
+			})
+			.join("\n\n");
+
+		// Include image prompts if available
+		const imagePrompts = existingDraft.imagePrompts ?? [];
+		const promptsBlock = imagePrompts.length > 0
+			? `\n\nIMAGE PROMPTS:\n${imagePrompts.map((p, idx) => {
+				const shotIdx = p.shotIndex ?? idx;
+				const shotId = shotIdByIndex.get(shotIdx) ?? `temp-${shotIdx}`;
+				return `Shot ${shotIdx + 1} (id: "${shotId}"): ${p.prompt}`;
+			}).join("\n\n")}`
+			: "";
+
+		const prompt = `You are a cinematographer reviewing a shot list for quality issues. Analyze the shots and identify problems.
+
+SHOT LIST:
+${shotsBlock}
+${promptsBlock}
+
+IDENTIFY THESE ISSUE TYPES:
+
+1. **similar_pair**: Two shots that are visually or narratively too similar. They might have the same framing, subject, or describe essentially the same moment. Consider suggesting to merge them or differentiate one.
+
+2. **redundant_delete**: A shot that adds nothing to the sequence and could be removed entirely. This is for truly unnecessary shots, not just similar ones.
+
+3. **continuity_break**: A jarring transition between shots that breaks visual or narrative flow. This could be a sudden change in lighting, location, or time without proper setup.
+
+RULES:
+- Only report genuine issues. If the shot list is well-crafted, return an empty findings array.
+- Use the exact shot IDs provided (the "id" field in quotes).
+- Each finding must have a clear, actionable explanation.
+- For suggestedAction, choose the most appropriate fix:
+  - "delete" for redundant shots
+  - "update" when a shot needs revision (include suggestedDescription if you have a specific fix)
+  - "merge" for similar pairs that should become one shot
+
+Return only this fenced JSON block:
+
+\`\`\`review
+{
+  "findings": [
+    {
+      "type": "similar_pair",
+      "id": "finding-1",
+      "shotIdA": "<shot id>",
+      "shotIdB": "<shot id>",
+      "explanation": "Why these shots are too similar...",
+      "suggestedAction": { "type": "merge", "shotIdA": "<id>", "shotIdB": "<id>", "suggestedDescription": "Merged description..." }
+    },
+    {
+      "type": "redundant_delete",
+      "id": "finding-2",
+      "shotId": "<shot id>",
+      "explanation": "Why this shot is redundant...",
+      "suggestedAction": { "type": "delete", "shotId": "<id>" }
+    },
+    {
+      "type": "continuity_break",
+      "id": "finding-3",
+      "shotId": "<shot id>",
+      "previousShotId": "<optional previous shot id>",
+      "explanation": "What breaks continuity...",
+      "suggestedAction": { "type": "update", "shotId": "<id>", "suggestedDescription": "Revised description..." }
+    }
+  ],
+  "summary": "Brief overall assessment of the shot list quality..."
+}
+\`\`\``;
+
+		try {
+			const chunks: string[] = [];
+			for await (const event of replicate.stream("anthropic/claude-4.5-haiku", {
+				input: { prompt, max_tokens: 4096, temperature: 0.3 },
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const assistantContent = chunks.join("").trim();
+			if (!assistantContent) {
+				throw new Error("AI returned empty review — please try again");
+			}
+
+			const parsed = parseLlmJson(
+				assistantContent,
+				ReviewFindingsResponseSchema,
+				"reviewShots",
+			);
+
+			// Convert Map to plain object for serialization
+			const shotIdToIndex: Record<string, number> = {};
+			for (const [idx, id] of shotIdByIndex.entries()) {
+				shotIdToIndex[id] = idx;
+			}
+
+			return {
+				findings: parsed.findings,
+				summary: parsed.summary,
+				shotCount: shotList.length,
+				shotIdToIndex,
+			};
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
 export const generateImagePrompts = createServerFn({ method: "POST" })
 	.inputValidator((data: { projectId: string }) => data)
 	.handler(async ({ data: { projectId } }) => {
@@ -1358,9 +1608,18 @@ RULES:
 				"generateImagePrompts",
 			);
 
+			// Enrich parsed prompts with sourceHash for staleness detection
+			const enrichedPrompts = parsed.map((entry) => {
+				const shot = shotList[entry.shotIndex];
+				return {
+					...entry,
+					sourceHash: shot ? computeSourceHash(shot.description) : undefined,
+				};
+			});
+
 			const nextDraft: WorkshopState = {
 				...existingDraft,
-				imagePrompts: parsed,
+				imagePrompts: enrichedPrompts,
 				stage: "prompts",
 			};
 

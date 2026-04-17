@@ -93,3 +93,62 @@ export const ImagePromptEntrySchema = z.object({
 export const ImagePromptArraySchema = z
 	.array(ImagePromptEntrySchema)
 	.min(1, "at least one image prompt is required");
+
+// ---------------------------------------------------------------------------
+// Review findings schemas
+// ---------------------------------------------------------------------------
+
+const SuggestedActionSchema = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("delete"),
+		shotId: z.string(),
+	}),
+	z.object({
+		type: z.literal("update"),
+		shotId: z.string(),
+		suggestedDescription: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("merge"),
+		shotIdA: z.string(),
+		shotIdB: z.string(),
+		suggestedDescription: z.string().optional(),
+	}),
+]);
+
+const SimilarPairFindingSchema = z.object({
+	type: z.literal("similar_pair"),
+	id: z.string(),
+	shotIdA: z.string(),
+	shotIdB: z.string(),
+	explanation: z.string(),
+	suggestedAction: SuggestedActionSchema,
+});
+
+const RedundantDeleteFindingSchema = z.object({
+	type: z.literal("redundant_delete"),
+	id: z.string(),
+	shotId: z.string(),
+	explanation: z.string(),
+	suggestedAction: SuggestedActionSchema,
+});
+
+const ContinuityBreakFindingSchema = z.object({
+	type: z.literal("continuity_break"),
+	id: z.string(),
+	shotId: z.string(),
+	previousShotId: z.string().optional(),
+	explanation: z.string(),
+	suggestedAction: SuggestedActionSchema,
+});
+
+export const ReviewFindingSchema = z.discriminatedUnion("type", [
+	SimilarPairFindingSchema,
+	RedundantDeleteFindingSchema,
+	ContinuityBreakFindingSchema,
+]);
+
+export const ReviewFindingsResponseSchema = z.object({
+	findings: z.array(ReviewFindingSchema),
+	summary: z.string(),
+});

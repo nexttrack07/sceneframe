@@ -7,15 +7,15 @@ export function ScriptWorkshop({
 	existingMessages,
 	projectSettings,
 	workshop,
-	selectedItemId,
-	onSelectedItemIdChange,
+	selectedItemIds,
+	onSelectedItemIdsChange,
 }: {
 	projectId: string;
 	existingMessages: Message[];
 	projectSettings: ProjectSettings | null;
 	workshop?: WorkshopState | null;
-	selectedItemId: string | null;
-	onSelectedItemIdChange: (id: string | null) => void;
+	selectedItemIds: string[];
+	onSelectedItemIdsChange: (ids: string[]) => void;
 }) {
 	return (
 		<ChatWorkshop
@@ -25,8 +25,8 @@ export function ScriptWorkshop({
 				workshop: workshop ?? null,
 				settings: projectSettings,
 			}}
-			selectedItemId={selectedItemId}
-			onSelectedItemIdChange={onSelectedItemIdChange}
+			selectedItemIds={selectedItemIds}
+			onSelectedItemIdsChange={onSelectedItemIdsChange}
 		/>
 	);
 }
