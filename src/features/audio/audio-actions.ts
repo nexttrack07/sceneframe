@@ -7,6 +7,7 @@
 import { auth } from "@clerk/tanstack-react-start/server";
 import { createServerFn } from "@tanstack/react-start";
 import { and, eq, isNull } from "drizzle-orm";
+import { parseBuffer } from "music-metadata";
 import Replicate from "replicate";
 import { db } from "@/db/index";
 import { assets, projects } from "@/db/schema";
@@ -222,6 +223,17 @@ export const generateVoiceover = createServerFn({ method: "POST" })
 		// Generate speech
 		const result = await provider.generateSpeech(text, voiceId, options);
 
+		// Parse audio to get duration
+		let durationMs: number | null = null;
+		try {
+			const metadata = await parseBuffer(result.audio, { mimeType: result.contentType });
+			if (metadata.format.duration) {
+				durationMs = Math.round(metadata.format.duration * 1000);
+			}
+		} catch (err) {
+			console.error("Failed to parse audio duration:", err);
+		}
+
 		// Upload to R2
 		const fileName = `voiceover-${Date.now()}.mp3`;
 		const storageKey = `projects/${projectId}/audio/${fileName}`;
@@ -242,6 +254,7 @@ export const generateVoiceover = createServerFn({ method: "POST" })
 				storageKey,
 				status: "done",
 				isSelected: false,
+				durationMs,
 			})
 			.returning();
 

@@ -708,6 +708,8 @@ export function ChatWorkshop({
 								onGenerateVoiceover={audio.handleGenerateVoiceover}
 								playingAssetId={audio.playingAssetId}
 								isPlaying={audio.isPlaying}
+								currentTimeMs={audio.currentTimeMs}
+								totalDurationMs={audio.totalDurationMs}
 								onPlay={audio.handlePlay}
 								onPause={audio.handlePause}
 								onStop={audio.handleStop}

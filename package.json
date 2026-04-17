@@ -74,6 +74,7 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.544.0",
     "mediabunny": "1.37.0",
+    "music-metadata": "^11.12.3",
     "pg": "^8.16.3",
     "radix-ui": "^1.4.3",
     "react": "^19.2.0",

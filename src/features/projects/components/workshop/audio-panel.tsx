@@ -57,6 +57,8 @@ interface AudioPanelProps {
 	onGenerateVoiceover: (text: string) => Promise<unknown>;
 	playingAssetId: string | null;
 	isPlaying: boolean;
+	currentTimeMs: number;
+	totalDurationMs: number;
 	onPlay: (assetId: string, url: string) => void;
 	onPause: () => void;
 	onStop: () => void;
@@ -78,6 +80,8 @@ export function AudioPanel({
 	onGenerateVoiceover,
 	playingAssetId,
 	isPlaying,
+	currentTimeMs,
+	totalDurationMs,
 	onPlay,
 	onPause,
 }: AudioPanelProps) {
@@ -166,8 +170,16 @@ export function AudioPanel({
 						</button>
 
 						<div className="flex-1 min-w-0">
-							<p className="font-display text-lg font-semibold text-foreground">
-								{formatDuration(latestVoiceover.durationMs)}
+							<p className="font-display text-lg font-semibold text-foreground tabular-nums">
+								{playingAssetId === latestVoiceover.id && isPlaying ? (
+									<>
+										{formatDuration(currentTimeMs)}
+										<span className="text-muted-foreground mx-1">/</span>
+										{formatDuration(totalDurationMs || latestVoiceover.durationMs)}
+									</>
+								) : (
+									formatDuration(latestVoiceover.durationMs)
+								)}
 							</p>
 							<p className="text-sm text-muted-foreground">
 								Generated {formatDate(latestVoiceover.createdAt)}

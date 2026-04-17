@@ -50,6 +50,8 @@ export function useWorkshopAudio({ projectId }: UseWorkshopAudioArgs) {
 	// Playback state
 	const [playingAssetId, setPlayingAssetId] = useState<string | null>(null);
 	const [isPlaying, setIsPlaying] = useState(false);
+	const [currentTimeMs, setCurrentTimeMs] = useState(0);
+	const [totalDurationMs, setTotalDurationMs] = useState(0);
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 
 	// Fetch available voices
@@ -159,19 +161,30 @@ export function useWorkshopAudio({ projectId }: UseWorkshopAudioArgs) {
 		const audio = new Audio(url);
 		audioRef.current = audio;
 
+		audio.addEventListener("loadedmetadata", () => {
+			setTotalDurationMs(Math.round(audio.duration * 1000));
+		});
+
+		audio.addEventListener("timeupdate", () => {
+			setCurrentTimeMs(Math.round(audio.currentTime * 1000));
+		});
+
 		audio.addEventListener("ended", () => {
 			setIsPlaying(false);
 			setPlayingAssetId(null);
+			setCurrentTimeMs(0);
 		});
 
 		audio.addEventListener("error", () => {
 			setIsPlaying(false);
 			setPlayingAssetId(null);
+			setCurrentTimeMs(0);
 		});
 
 		audio.play();
 		setPlayingAssetId(assetId);
 		setIsPlaying(true);
+		setCurrentTimeMs(0);
 	}, []);
 
 	const handlePause = useCallback(() => {
@@ -226,6 +239,8 @@ export function useWorkshopAudio({ projectId }: UseWorkshopAudioArgs) {
 		// Playback
 		playingAssetId,
 		isPlaying,
+		currentTimeMs,
+		totalDurationMs,
 		handlePlay,
 		handlePause,
 		handleStop,
