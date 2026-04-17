@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { Clock, Film, Plus, Trash2 } from "lucide-react";
+import { Clock, Film, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
 	AlertDialog,
@@ -21,6 +21,7 @@ import {
 	AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { EmptyState, emptyStatePresets } from "@/components/ui/empty-state";
 import { db } from "@/db/index";
 import type { Project } from "@/db/schema";
 import { users } from "@/db/schema";
@@ -73,7 +74,7 @@ function DashboardPage() {
 			</div>
 
 			{userProjects.length === 0 ? (
-				<EmptyState />
+				<DashboardEmptyState />
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 					{userProjects.map((project: Project) => (
@@ -92,26 +93,16 @@ function DashboardPage() {
 	);
 }
 
-function EmptyState() {
+function DashboardEmptyState() {
 	return (
-		<div className="flex flex-col items-center justify-center py-24 text-center">
-			<div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-				<Film size={24} className="text-primary" />
-			</div>
-			<h2 className="text-lg font-semibold text-foreground mb-1">
-				No projects yet
-			</h2>
-			<p className="text-sm text-muted-foreground max-w-xs mb-6">
-				Create your first project by writing a Director Prompt — a short concept
-				for your video.
-			</p>
-			<Button asChild variant="accent">
-				<Link to="/projects/new">
-					<Plus size={16} className="mr-1.5" />
-					New Project
-				</Link>
-			</Button>
-		</div>
+		<EmptyState
+			icon={Sparkles}
+			title={emptyStatePresets.projects.title}
+			description={emptyStatePresets.projects.description}
+			hint={emptyStatePresets.projects.hint}
+			actionLabel="Create your first project"
+			actionHref="/projects/new"
+		/>
 	);
 }
 
