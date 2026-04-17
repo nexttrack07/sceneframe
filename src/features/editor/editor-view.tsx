@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 import type { Shot } from "@/db/schema";
 import { saveEditorState } from "@/features/projects/project-mutations";
 import type {
+	AudioSegmentSummary,
 	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
 	ShotVideoSummary,
@@ -22,6 +23,7 @@ export function EditorView({
 	transitionVideos,
 	voiceovers,
 	backgroundMusic,
+	audioSegments = [],
 	projectId,
 	savedEditorState,
 }: {
@@ -31,6 +33,7 @@ export function EditorView({
 	transitionVideos: TransitionVideoSummary[];
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
+	audioSegments?: AudioSegmentSummary[];
 	projectId: string;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsonb from DB arrives as Record<string, any>
 	savedEditorState?: Record<string, any> | null;
@@ -44,6 +47,7 @@ export function EditorView({
 			transitionVideos,
 			voiceovers,
 			backgroundMusic,
+			audioSegments,
 		});
 	}, [
 		shots,
@@ -52,6 +56,7 @@ export function EditorView({
 		transitionVideos,
 		voiceovers,
 		backgroundMusic,
+		audioSegments,
 		savedEditorState,
 	]);
 

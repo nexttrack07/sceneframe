@@ -22,7 +22,6 @@ import {
 } from "../../generation-toast";
 import { applyWorkshopEdit } from "../../workshop-mutations";
 import { useReviewMode } from "../../hooks/use-review-mode";
-import { useWorkshopAudio } from "../../hooks/use-workshop-audio";
 import { useWorkshopChat } from "../../hooks/use-workshop-chat";
 import { useWorkshopFlow } from "../../hooks/use-workshop-flow";
 import { useWorkshopUndo } from "../../hooks/use-workshop-undo";
@@ -89,7 +88,6 @@ export function ChatWorkshop({
 			flow.refetch();
 		},
 	});
-	const audio = useWorkshopAudio({ projectId });
 
 	// Handler for when user clicks a shot chip in review mode
 	const handleReviewShotClick = useCallback(
@@ -693,26 +691,8 @@ export function ChatWorkshop({
 					{flow.stage === "audio" && (
 						<div className="animate-fade-in-up">
 							<AudioPanel
-								shots={flow.shots}
-								voices={audio.voices}
-								isLoadingVoices={audio.isLoadingVoices}
-								voicesError={audio.voicesError}
-								selectedVoiceId={audio.selectedVoiceId}
-								onSelectVoice={audio.setSelectedVoiceId}
-								voiceovers={audio.voiceovers}
-								isLoadingVoiceovers={audio.isLoadingVoiceovers}
-								usage={audio.usage}
-								isGenerating={audio.isGenerating}
-								generationError={audio.generationError}
-								onClearError={audio.clearGenerationError}
-								onGenerateVoiceover={audio.handleGenerateVoiceover}
-								playingAssetId={audio.playingAssetId}
-								isPlaying={audio.isPlaying}
-								currentTimeMs={audio.currentTimeMs}
-								totalDurationMs={audio.totalDurationMs}
-								onPlay={audio.handlePlay}
-								onPause={audio.handlePause}
-								onStop={audio.handleStop}
+								projectId={projectId}
+								hasShotsInDraft={!!flow.shots && flow.shots.length > 0}
 							/>
 						</div>
 					)}

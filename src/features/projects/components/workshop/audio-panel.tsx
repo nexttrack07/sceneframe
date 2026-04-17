@@ -1,133 +1,106 @@
 /**
  * AudioPanel Component
  *
- * Workshop panel for generating and previewing voiceover audio.
- * Redesigned for better UX: generated audio prominent, script collapsed.
+ * Workshop panel for multi-track voiceover audio with segment management.
+ * Auto-segments shots into ~60-90 second chunks for optimal TTS generation.
  */
 
 import {
 	AlertTriangle,
 	ChevronDown,
-	ChevronUp,
-	Edit3,
 	Loader2,
 	Mic,
-	Pause,
 	Play,
+	RefreshCw,
 	Sparkles,
 	Volume2,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { GeneratingIndicator } from "@/components/ui/generating-indicator";
-import type { VoiceInfo } from "@/features/audio";
-import type { ShotDraftEntry } from "../../project-types";
-
-interface VoiceoverAsset {
-	id: string;
-	url: string | null;
-	prompt: string | null;
-	model: string | null;
-	status: string;
-	isSelected: boolean;
-	durationMs: number | null;
-	createdAt: string;
-}
-
-interface VoiceUsage {
-	charactersUsed: number;
-	charactersLimit: number;
-	resetDate: string | null;
-}
+import { useAudioSegments } from "../../hooks/use-audio-segments";
+import { SegmentCard } from "./segment-card";
+import { getProjectShots } from "../../shot-actions";
 
 interface AudioPanelProps {
-	shots: ShotDraftEntry[] | null;
-	voices: VoiceInfo[];
-	isLoadingVoices: boolean;
-	voicesError: string | null;
-	selectedVoiceId: string | null;
-	onSelectVoice: (voiceId: string) => void;
-	voiceovers: VoiceoverAsset[];
-	isLoadingVoiceovers: boolean;
-	usage: VoiceUsage | null;
-	isGenerating: boolean;
-	generationError: string | null;
-	onClearError: () => void;
-	onGenerateVoiceover: (text: string) => Promise<unknown>;
-	playingAssetId: string | null;
-	isPlaying: boolean;
-	currentTimeMs: number;
-	totalDurationMs: number;
-	onPlay: (assetId: string, url: string) => void;
-	onPause: () => void;
-	onStop: () => void;
+	projectId: string;
+	/** Whether the project has shots (to show empty state) */
+	hasShotsInDraft?: boolean;
+	/** Legacy voiceover asset ID for migration */
+	legacyVoiceoverAssetId?: string;
 }
 
 export function AudioPanel({
-	shots,
-	voices,
-	isLoadingVoices,
-	voicesError,
-	selectedVoiceId,
-	onSelectVoice,
-	voiceovers,
-	isLoadingVoiceovers,
-	usage,
-	isGenerating,
-	generationError,
-	onClearError,
-	onGenerateVoiceover,
-	playingAssetId,
-	isPlaying,
-	currentTimeMs,
-	totalDurationMs,
-	onPlay,
-	onPause,
+	projectId,
+	hasShotsInDraft = false,
+	legacyVoiceoverAssetId,
 }: AudioPanelProps) {
-	const [scriptText, setScriptText] = useState("");
 	const [showVoiceSelector, setShowVoiceSelector] = useState(false);
-	const [showScriptEditor, setShowScriptEditor] = useState(false);
 
-	// Generate default script from shots
-	const defaultScript = useMemo(() => {
-		if (!shots || shots.length === 0) return "";
-		return shots.map((shot) => shot.description).join("\n\n");
-	}, [shots]);
+	// Fetch actual shots from database (needed for segment shot range UI)
+	const { data: shots = [], isLoading: isLoadingShots } = useQuery({
+		queryKey: ["projects", projectId, "shots"],
+		queryFn: () => getProjectShots({ data: { projectId } }),
+		enabled: hasShotsInDraft,
+	});
 
-	// Use default script if user hasn't edited
-	const effectiveScript = scriptText || defaultScript;
+	const {
+		// Voice data
+		voices,
+		isLoadingVoices,
+		voicesError,
+		selectedVoiceId,
+		setSelectedVoiceId,
+		// Segments
+		segments,
+		isLoadingSegments,
+		// Initialization
+		isInitializing,
+		handleCreateSegments,
+		// Script editing
+		editingSegmentId,
+		editingScript,
+		setEditingScript,
+		handleStartEditScript,
+		handleCancelEditScript,
+		handleSaveScript,
+		handleAutoGenerateScript,
+		// Shot range
+		handleUpdateShotRange,
+		// Segment management
+		handleDeleteSegment,
+		handleReAutoSegment,
+		// Generation
+		generatingSegmentId,
+		isGeneratingAll,
+		generationError,
+		clearGenerationError,
+		handleGenerateSegmentAudio,
+		handleGenerateAllAudio,
+		// Realtime status
+		runStatusesBySegmentId,
+		// Playback
+		playingSegmentId,
+		isPlaying,
+		currentTimeMs,
+		totalDurationMs,
+		handlePlay,
+		handlePause,
+	} = useAudioSegments({ projectId, legacyVoiceoverAssetId });
 
 	const selectedVoice = useMemo(
 		() => voices.find((v) => v.id === selectedVoiceId),
 		[voices, selectedVoiceId],
 	);
 
-	const handleGenerate = useCallback(async () => {
-		if (!effectiveScript.trim()) return;
-		await onGenerateVoiceover(effectiveScript);
-	}, [effectiveScript, onGenerateVoiceover]);
+	// Count segments that are ready
+	const readyCount = segments.filter((s) => s.status === "done").length;
+	const draftCount = segments.filter(
+		(s) => s.status === "draft" || s.status === "error",
+	).length;
 
-	const formatDuration = (ms: number | null) => {
-		if (!ms) return "--:--";
-		const seconds = Math.floor(ms / 1000);
-		const mins = Math.floor(seconds / 60);
-		const secs = seconds % 60;
-		return `${mins}:${secs.toString().padStart(2, "0")}`;
-	};
-
-	const formatDate = (dateStr: string) => {
-		const date = new Date(dateStr);
-		return date.toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-			hour: "numeric",
-			minute: "2-digit",
-		});
-	};
-
-	// Empty state
-	if (!shots || shots.length === 0) {
+	// Empty state - no shots yet
+	if (!hasShotsInDraft) {
 		return (
 			<div className="h-full rounded-2xl border border-dashed border-border/70 bg-background/70 flex items-center justify-center">
 				<div className="text-center max-w-md px-6">
@@ -143,83 +116,13 @@ export function AudioPanel({
 		);
 	}
 
-	const hasVoiceovers = voiceovers.length > 0;
-	const latestVoiceover = voiceovers[0];
-
 	return (
 		<div className="max-w-2xl space-y-5">
-			{/* Main Player Card - Show when we have voiceovers */}
-			{hasVoiceovers && latestVoiceover.status === "done" && latestVoiceover.url && (
-				<div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-6">
-					<div className="flex items-center gap-4">
-						{/* Large Play Button */}
-						<button
-							type="button"
-							onClick={() =>
-								playingAssetId === latestVoiceover.id && isPlaying
-									? onPause()
-									: onPlay(latestVoiceover.id, latestVoiceover.url!)
-							}
-							className="shrink-0 w-16 h-16 rounded-full bg-primary hover:bg-primary/90 flex items-center justify-center transition-all shadow-lg shadow-primary/25 hover:scale-105"
-						>
-							{playingAssetId === latestVoiceover.id && isPlaying ? (
-								<Pause size={28} className="text-primary-foreground" />
-							) : (
-								<Play size={28} className="text-primary-foreground ml-1" />
-							)}
-						</button>
-
-						<div className="flex-1 min-w-0">
-							<p className="font-display text-lg font-semibold text-foreground tabular-nums">
-								{playingAssetId === latestVoiceover.id && isPlaying ? (
-									<>
-										{formatDuration(currentTimeMs)}
-										<span className="text-muted-foreground mx-1">/</span>
-										{formatDuration(totalDurationMs || latestVoiceover.durationMs)}
-									</>
-								) : (
-									formatDuration(latestVoiceover.durationMs)
-								)}
-							</p>
-							<p className="text-sm text-muted-foreground">
-								Generated {formatDate(latestVoiceover.createdAt)}
-							</p>
-						</div>
-
-						{/* Voice indicator */}
-						{selectedVoice && (
-							<div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 text-sm">
-								<Volume2 size={14} className="text-muted-foreground" />
-								<span className="text-muted-foreground">{selectedVoice.name}</span>
-							</div>
-						)}
-					</div>
-
-					{/* Generated Script Text */}
-					{latestVoiceover.prompt && (
-						<div className="mt-4 pt-4 border-t border-primary/10">
-							<p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
-								{latestVoiceover.prompt}
-							</p>
-						</div>
-					)}
-				</div>
-			)}
-
-			{/* Generation in progress */}
-			{isGenerating && (
-				<GeneratingIndicator
-					status="Creating your voiceover..."
-					showPhases
-					variant="card"
-				/>
-			)}
-
-			{/* Compact Generation Controls */}
+			{/* Header Controls */}
 			<div className="rounded-xl border bg-card p-4 space-y-4">
-				{/* Voice + Generate Row */}
+				{/* Voice + Generate All Row */}
 				<div className="flex items-center gap-3">
-					{/* Voice Selector - Compact */}
+					{/* Voice Selector */}
 					<div className="relative flex-1">
 						{isLoadingVoices ? (
 							<div className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground">
@@ -239,7 +142,7 @@ export function AudioPanel({
 									className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border bg-background hover:bg-muted/50 transition-colors"
 								>
 									<div className="flex items-center gap-2">
-										<Mic size={14} className="text-primary" />
+										<Volume2 size={14} className="text-primary" />
 										<span className="text-sm font-medium">
 											{selectedVoice?.name ?? "Select voice"}
 										</span>
@@ -257,7 +160,7 @@ export function AudioPanel({
 												key={voice.id}
 												type="button"
 												onClick={() => {
-													onSelectVoice(voice.id);
+													setSelectedVoiceId(voice.id);
 													setShowVoiceSelector(false);
 												}}
 												className={`w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-muted/50 transition-colors ${
@@ -265,7 +168,9 @@ export function AudioPanel({
 												}`}
 											>
 												<div>
-													<span className="text-sm font-medium">{voice.name}</span>
+													<span className="text-sm font-medium">
+														{voice.name}
+													</span>
 													{voice.labels && (
 														<span className="ml-2 text-xs text-muted-foreground">
 															{[voice.labels.gender, voice.labels.accent]
@@ -282,7 +187,7 @@ export function AudioPanel({
 															new Audio(voice.previewUrl).play();
 														}}
 														className="p-1.5 rounded hover:bg-muted"
-														title="Preview"
+														title="Preview voice"
 													>
 														<Play size={12} />
 													</button>
@@ -295,142 +200,126 @@ export function AudioPanel({
 						)}
 					</div>
 
-					{/* Generate Button */}
+					{/* Generate All Button */}
 					<Button
-						onClick={handleGenerate}
-						disabled={isGenerating || !effectiveScript.trim() || !selectedVoiceId}
+						onClick={handleGenerateAllAudio}
+						disabled={
+							isGeneratingAll ||
+							draftCount === 0 ||
+							!selectedVoiceId ||
+							segments.length === 0
+						}
 						variant="accent"
 						className="gap-2 shrink-0"
 					>
-						<Sparkles size={14} />
-						{hasVoiceovers ? "Regenerate" : "Generate"}
+						{isGeneratingAll ? (
+							<Loader2 size={14} className="animate-spin" />
+						) : (
+							<Sparkles size={14} />
+						)}
+						Generate All ({draftCount})
 					</Button>
 				</div>
 
-				{/* Script Summary - Collapsed by default */}
-				<div className="border-t pt-3">
-					<button
-						type="button"
-						onClick={() => setShowScriptEditor(!showScriptEditor)}
-						className="w-full flex items-center justify-between text-left group"
-					>
-						<div className="flex items-center gap-2">
-							<Edit3 size={14} className="text-muted-foreground" />
-							<span className="text-sm text-muted-foreground">
-								Script from {shots?.length ?? 0} shots
-								<span className="mx-1.5">·</span>
-								<span className={effectiveScript.length > 5000 ? "text-warning" : ""}>
-									{effectiveScript.length.toLocaleString()} chars
-								</span>
-								{effectiveScript.length > 5000 && (
-									<span className="ml-1 text-xs">(will be summarized)</span>
-								)}
+				{/* Segment Summary */}
+				<div className="flex items-center justify-between text-sm">
+					<span className="text-muted-foreground">
+						{segments.length} segment{segments.length !== 1 ? "s" : ""} from{" "}
+						{shots.length} shots
+					</span>
+					<div className="flex items-center gap-3">
+						{readyCount > 0 && (
+							<span className="text-green-600">
+								{readyCount} ready
 							</span>
-						</div>
-						{showScriptEditor ? (
-							<ChevronUp size={14} className="text-muted-foreground" />
-						) : (
-							<ChevronDown size={14} className="text-muted-foreground" />
 						)}
-					</button>
-
-					{showScriptEditor && (
-						<div className="mt-3 space-y-2">
-							<Textarea
-								value={scriptText}
-								onChange={(e) => setScriptText(e.target.value)}
-								placeholder={defaultScript || "Enter your voiceover script..."}
-								rows={8}
-								className="resize-none text-sm"
-							/>
-							{scriptText === "" && defaultScript && (
-								<p className="text-xs text-muted-foreground">
-									Using auto-generated script. Edit to customize.
-								</p>
-							)}
-						</div>
-					)}
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={handleReAutoSegment}
+							disabled={isGeneratingAll}
+							className="gap-1 text-xs h-7"
+						>
+							<RefreshCw size={12} />
+							Re-segment
+						</Button>
+					</div>
 				</div>
 
-				{/* Error */}
+				{/* Global Error */}
 				{generationError && (
 					<div className="flex items-center justify-between gap-2 rounded-lg bg-destructive/10 px-3 py-2">
 						<span className="text-sm text-destructive">{generationError}</span>
 						<button
 							type="button"
-							onClick={onClearError}
+							onClick={clearGenerationError}
 							className="text-destructive/50 hover:text-destructive text-lg leading-none"
 						>
-							×
+							&times;
 						</button>
 					</div>
 				)}
-
-				{/* Usage */}
-				{usage && (
-					<p className="text-xs text-muted-foreground text-right">
-						{usage.charactersUsed.toLocaleString()} / {usage.charactersLimit.toLocaleString()} characters used
-					</p>
-				)}
 			</div>
 
-			{/* Previous Voiceovers - Compact list */}
-			{voiceovers.length > 1 && (
-				<div className="space-y-2">
-					<p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-						Previous Generations
+			{/* Segment List */}
+			{isLoadingSegments || isLoadingShots || isInitializing ? (
+				<div className="flex flex-col items-center justify-center py-12 gap-3">
+					<Loader2 size={24} className="animate-spin text-muted-foreground" />
+					<p className="text-sm text-muted-foreground">
+						{isInitializing ? "Creating segments..." : "Loading..."}
 					</p>
-					<div className="space-y-1.5">
-						{voiceovers.slice(1).map((vo) => {
-							const isCurrentlyPlaying = playingAssetId === vo.id && isPlaying;
-
-							return (
-								<div
-									key={vo.id}
-									className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-background hover:bg-muted/30 transition-colors"
-								>
-									{vo.status === "done" && vo.url ? (
-										<button
-											type="button"
-											onClick={() =>
-												isCurrentlyPlaying ? onPause() : onPlay(vo.id, vo.url!)
-											}
-											className="shrink-0 w-8 h-8 rounded-full bg-muted hover:bg-muted/80 flex items-center justify-center transition-colors"
-										>
-											{isCurrentlyPlaying ? (
-												<Pause size={14} className="text-foreground" />
-											) : (
-												<Play size={14} className="text-foreground ml-0.5" />
-											)}
-										</button>
-									) : vo.status === "generating" ? (
-										<div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-											<Loader2 size={14} className="animate-spin text-muted-foreground" />
-										</div>
-									) : (
-										<div className="shrink-0 w-8 h-8 rounded-full bg-destructive/10 flex items-center justify-center">
-											<AlertTriangle size={14} className="text-destructive" />
-										</div>
-									)}
-
-									<div className="flex-1 min-w-0 flex items-center gap-3">
-										<span className="text-sm font-medium">
-											{formatDuration(vo.durationMs)}
-										</span>
-										<span className="text-xs text-muted-foreground">
-											{formatDate(vo.createdAt)}
-										</span>
-									</div>
-								</div>
-							);
-						})}
-					</div>
 				</div>
-			)}
-
-			{isLoadingVoiceovers && voiceovers.length === 0 && (
-				<div className="flex items-center justify-center py-8">
-					<Loader2 size={20} className="animate-spin text-muted-foreground" />
+			) : segments.length === 0 ? (
+				<div className="rounded-xl border border-dashed p-8 text-center space-y-4">
+					<p className="text-sm text-muted-foreground">
+						No segments yet. Segments are created from shots saved to the project.
+					</p>
+					<Button
+						onClick={handleCreateSegments}
+						variant="outline"
+						className="gap-2"
+					>
+						<RefreshCw size={14} />
+						Create Segments
+					</Button>
+				</div>
+			) : (
+				<div className="space-y-4">
+					{segments.map((segment, index) => (
+						<SegmentCard
+							key={segment.id}
+							segment={segment}
+							segmentIndex={index}
+							totalSegments={segments.length}
+							allShots={shots}
+							isGenerating={
+								generatingSegmentId === segment.id ||
+								runStatusesBySegmentId[segment.id]?.status === "running" ||
+								runStatusesBySegmentId[segment.id]?.status === "queued"
+							}
+							runStatus={runStatusesBySegmentId[segment.id]?.status}
+							isEditing={editingSegmentId === segment.id}
+							editingScript={
+								editingSegmentId === segment.id ? editingScript : ""
+							}
+							playingSegmentId={playingSegmentId}
+							isPlaying={isPlaying}
+							currentTimeMs={currentTimeMs}
+							totalDurationMs={totalDurationMs}
+							onStartEdit={() => handleStartEditScript(segment)}
+							onCancelEdit={handleCancelEditScript}
+							onSaveScript={(script) => handleSaveScript(segment.id, script)}
+							onSetEditingScript={setEditingScript}
+							onAutoGenerateScript={() => handleAutoGenerateScript(segment.id)}
+							onGenerateAudio={() => handleGenerateSegmentAudio(segment.id)}
+							onUpdateShotRange={(startId, endId) =>
+								handleUpdateShotRange(segment.id, startId, endId)
+							}
+							onDelete={() => handleDeleteSegment(segment.id)}
+							onPlay={(url) => handlePlay(segment.id, url)}
+							onPause={handlePause}
+						/>
+					))}
 				</div>
 			)}
 		</div>

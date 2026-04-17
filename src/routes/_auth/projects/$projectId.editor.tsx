@@ -73,6 +73,7 @@ function EditorPage() {
 						transitionVideos={data_.transitionVideos}
 						voiceovers={data_.voiceovers}
 						backgroundMusic={data_.backgroundMusic}
+						audioSegments={data_.audioSegments}
 						projectId={projectId}
 						savedEditorState={data_.project.editorState}
 					/>

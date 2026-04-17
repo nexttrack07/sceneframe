@@ -271,6 +271,22 @@ export interface VoiceoverAssetSummary {
 	createdAt: string;
 }
 
+/**
+ * Audio segment summary for multi-track voiceover timeline placement.
+ * Each segment has its own voiceover that gets placed sequentially.
+ */
+export interface AudioSegmentSummary {
+	id: string;
+	projectId: string;
+	order: number;
+	status: "draft" | "generating" | "done" | "error";
+	voiceoverAsset: {
+		id: string;
+		url: string | null;
+		durationMs: number | null;
+	} | null;
+}
+
 export interface BackgroundMusicAssetSummary {
 	id: string;
 	projectId: string;

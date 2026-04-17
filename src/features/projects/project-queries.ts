@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db/index";
 import {
 	assets,
+	audioSegments,
 	messages,
 	motionGraphics,
 	shots,
@@ -86,6 +87,31 @@ export const loadProject = createServerFn({ method: "GET" })
 			),
 			orderBy: asc(motionGraphics.createdAt),
 		});
+
+		// Load audio segments with their voiceover assets
+		const projectAudioSegments = await db.query.audioSegments.findMany({
+			where: and(
+				eq(audioSegments.projectId, projectId),
+				isNull(audioSegments.deletedAt),
+			),
+			orderBy: asc(audioSegments.order),
+		});
+
+		// Fetch voiceover assets for segments that have them
+		const segmentVoiceoverAssetIds = projectAudioSegments
+			.map((seg) => seg.voiceoverAssetId)
+			.filter((id): id is string => id !== null);
+
+		const segmentVoiceoverAssets =
+			segmentVoiceoverAssetIds.length > 0
+				? await db.query.assets.findMany({
+						where: inArray(assets.id, segmentVoiceoverAssetIds),
+					})
+				: [];
+
+		const segmentVoiceoverMap = new Map(
+			segmentVoiceoverAssets.map((a) => [a.id, a]),
+		);
 
 		return {
 			project: {
@@ -239,6 +265,32 @@ export const loadProject = createServerFn({ method: "GET" })
 				spec: graphic.spec,
 				createdAt: graphic.createdAt.toISOString(),
 			})),
+			audioSegments: projectAudioSegments
+				.filter(
+					(seg): seg is typeof seg & { status: "draft" | "generating" | "done" | "error" } =>
+						seg.status === "draft" ||
+						seg.status === "generating" ||
+						seg.status === "done" ||
+						seg.status === "error",
+				)
+				.map((seg) => {
+					const voiceoverAsset = seg.voiceoverAssetId
+						? segmentVoiceoverMap.get(seg.voiceoverAssetId)
+						: null;
+					return {
+						id: seg.id,
+						projectId: seg.projectId,
+						order: seg.order,
+						status: seg.status,
+						voiceoverAsset: voiceoverAsset
+							? {
+									id: voiceoverAsset.id,
+									url: voiceoverAsset.url,
+									durationMs: voiceoverAsset.durationMs,
+								}
+							: null,
+					};
+				}),
 		};
 	});
 

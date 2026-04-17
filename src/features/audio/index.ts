@@ -9,11 +9,29 @@ export {
 	listVoices,
 	generateVoiceover,
 	summarizeForVoiceover,
+	generateNarrationFromShots,
 	selectVoiceover,
 	listProjectVoiceovers,
 	getVoiceUsage,
 	type VoiceInfo,
 } from "./audio-actions";
+
+// Segment actions
+export {
+	computeSegmentBoundaries,
+	listProjectSegments,
+	autoSegmentProject,
+	createAudioSegment,
+	updateSegmentScript,
+	updateSegmentShotRange,
+	deleteAudioSegment,
+	generateSegmentScript,
+	generateSegmentAudio,
+	generateAllSegments,
+	migrateProjectToSegments,
+	type SegmentWithShots,
+	type SegmentBoundary,
+} from "./segment-actions";
 
 // Provider types and utilities
 export {

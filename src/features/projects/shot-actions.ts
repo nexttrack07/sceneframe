@@ -2248,3 +2248,20 @@ export const deleteShotVideo = createServerFn({ method: "POST" })
 		// R2 cleanup AFTER the DB soft-delete
 		await cleanupStorageKeys([asset.storageKey]);
 	});
+
+// ---------------------------------------------------------------------------
+// getProjectShots - List all shots for a project (for audio segment UI)
+// ---------------------------------------------------------------------------
+
+export const getProjectShots = createServerFn({ method: "GET" })
+	.inputValidator((data: { projectId: string }) => data)
+	.handler(async ({ data: { projectId } }) => {
+		await assertProjectOwner(projectId);
+
+		const projectShots = await db.query.shots.findMany({
+			where: and(eq(shots.projectId, projectId), isNull(shots.deletedAt)),
+			orderBy: [asc(shots.order)],
+		});
+
+		return projectShots;
+	});

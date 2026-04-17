@@ -1,5 +1,6 @@
 import type { Shot } from "@/db/schema";
 import type {
+	AudioSegmentSummary,
 	BackgroundMusicAssetSummary,
 	SceneAssetSummary,
 	ShotVideoSummary,
@@ -27,6 +28,7 @@ export function buildEditorState({
 	transitionVideos,
 	voiceovers,
 	backgroundMusic,
+	audioSegments = [],
 }: {
 	shots: Shot[];
 	assets: SceneAssetSummary[];
@@ -34,6 +36,7 @@ export function buildEditorState({
 	transitionVideos: TransitionVideoSummary[];
 	voiceovers: VoiceoverAssetSummary[];
 	backgroundMusic: BackgroundMusicAssetSummary[];
+	audioSegments?: AudioSegmentSummary[];
 }): UndoableState {
 	const itemsMap: Record<string, EditorStarterItem> = {};
 	const assetsMap: Record<string, EditorStarterAsset> = {};
@@ -172,60 +175,115 @@ export function buildEditorState({
 		};
 	}
 
-	// --- Audio track: selected voiceovers + background music placed at frame 0 ---
+	// --- Audio track: segments (sequential) or legacy voiceovers (at frame 0) + background music ---
 	const audioItemIds: string[] = [];
+	let audioStartFrame = 0;
 
-	const selectedVoiceovers = voiceovers.filter(
-		(vo) => vo.isSelected && vo.status === "done" && vo.url != null,
-	);
+	// Check if we have audio segments with voiceover assets
+	const segmentsWithAudio = audioSegments
+		.filter((seg) => seg.status === "done" && seg.voiceoverAsset?.url)
+		.sort((a, b) => a.order - b.order);
+
+	if (segmentsWithAudio.length > 0) {
+		// Use segments: place audio sequentially
+		for (const seg of segmentsWithAudio) {
+			const vo = seg.voiceoverAsset!;
+			if (!vo.url) continue;
+
+			const durationInSeconds = (vo.durationMs ?? 5000) / 1000;
+			const durationInFrames = Math.round(durationInSeconds * DEFAULT_FPS);
+
+			const assetId = genId("asset-seg", seg.id);
+			const itemId = genId("item-seg", seg.id);
+
+			assetsMap[assetId] = {
+				type: "audio",
+				id: assetId,
+				remoteUrl: vo.url,
+				durationInSeconds,
+				filename: `Segment ${seg.order}.mp3`,
+				size: 0,
+				remoteFileKey: null,
+				mimeType: "audio/mpeg",
+			};
+
+			itemsMap[itemId] = {
+				type: "audio",
+				id: itemId,
+				assetId,
+				from: audioStartFrame,
+				durationInFrames,
+				top: 0,
+				left: 0,
+				width: 0,
+				height: 0,
+				opacity: 1,
+				isDraggingInTimeline: false,
+				audioStartFromInSeconds: 0,
+				decibelAdjustment: 0,
+				playbackRate: 1,
+				audioFadeInDurationInSeconds: 0,
+				audioFadeOutDurationInSeconds: 0,
+			};
+
+			audioItemIds.push(itemId);
+			audioStartFrame += durationInFrames;
+		}
+	} else {
+		// Fallback: use legacy voiceovers at frame 0
+		const selectedVoiceovers = voiceovers.filter(
+			(vo) => vo.isSelected && vo.status === "done" && vo.url != null,
+		);
+
+		for (const vo of selectedVoiceovers) {
+			if (!vo.url) continue;
+
+			const durationInSeconds = (vo.durationMs ?? 5000) / 1000;
+			const durationInFrames = Math.round(durationInSeconds * DEFAULT_FPS);
+
+			const assetId = genId("asset-vo", vo.id);
+			const itemId = genId("item-vo", vo.id);
+
+			assetsMap[assetId] = {
+				type: "audio",
+				id: assetId,
+				remoteUrl: vo.url,
+				durationInSeconds,
+				filename: labels.fileName(
+					labels.voiceoverLabel(vo, selectedVoiceovers),
+					"mp3",
+				),
+				size: 0,
+				remoteFileKey: null,
+				mimeType: "audio/mpeg",
+			};
+
+			itemsMap[itemId] = {
+				type: "audio",
+				id: itemId,
+				assetId,
+				from: 0,
+				durationInFrames,
+				top: 0,
+				left: 0,
+				width: 0,
+				height: 0,
+				opacity: 1,
+				isDraggingInTimeline: false,
+				audioStartFromInSeconds: 0,
+				decibelAdjustment: 0,
+				playbackRate: 1,
+				audioFadeInDurationInSeconds: 0,
+				audioFadeOutDurationInSeconds: 0,
+			};
+
+			audioItemIds.push(itemId);
+		}
+	}
+
 	const selectedBackgroundMusic = backgroundMusic.filter(
 		(track) => track.isSelected && track.status === "done" && track.url != null,
 	);
-
-	for (const vo of selectedVoiceovers) {
-		if (!vo.url) continue;
-
-		const durationInSeconds = (vo.durationMs ?? 5000) / 1000;
-		const durationInFrames = Math.round(durationInSeconds * DEFAULT_FPS);
-
-		const assetId = genId("asset-vo", vo.id);
-		const itemId = genId("item-vo", vo.id);
-
-		assetsMap[assetId] = {
-			type: "audio",
-			id: assetId,
-			remoteUrl: vo.url,
-			durationInSeconds,
-			filename: labels.fileName(
-				labels.voiceoverLabel(vo, selectedVoiceovers),
-				"mp3",
-			),
-			size: 0,
-			remoteFileKey: null,
-			mimeType: "audio/mpeg",
-		};
-
-		itemsMap[itemId] = {
-			type: "audio",
-			id: itemId,
-			assetId,
-			from: 0,
-			durationInFrames,
-			top: 0,
-			left: 0,
-			width: 0,
-			height: 0,
-			opacity: 1,
-			isDraggingInTimeline: false,
-			audioStartFromInSeconds: 0,
-			decibelAdjustment: 0,
-			playbackRate: 1,
-			audioFadeInDurationInSeconds: 0,
-			audioFadeOutDurationInSeconds: 0,
-		};
-
-		audioItemIds.push(itemId);
-	}
 
 	for (const track of selectedBackgroundMusic) {
 		if (!track.url) continue;

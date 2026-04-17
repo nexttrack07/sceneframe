@@ -139,6 +139,105 @@ Return ONLY the voiceover script text, nothing else.`;
 	});
 
 // ---------------------------------------------------------------------------
+// generateNarrationFromShots
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate voiceover narration from shot descriptions using AI.
+ * This ALWAYS uses AI to transform visual shot descriptions into
+ * proper spoken narration - never returns raw shot descriptions.
+ */
+export const generateNarrationFromShots = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			shotDescriptions: string[];
+			targetDurationSec: number;
+			projectContext?: string;
+		}) => data,
+	)
+	.handler(
+		async ({
+			data: { shotDescriptions, targetDurationSec, projectContext },
+		}) => {
+			const { userId } = await assertAuth();
+
+			if (shotDescriptions.length === 0) {
+				throw new Error("No shot descriptions provided");
+			}
+
+			// Format shots for the prompt
+			const formattedShots = shotDescriptions
+				.map((desc, i) => `Shot ${i + 1}: ${desc}`)
+				.join("\n");
+
+			// Calculate target word count (~2.5 words per second for narration)
+			const targetWords = Math.round(targetDurationSec * 2.5);
+
+			const apiKey = await getUserApiKey(userId);
+			const replicate = new Replicate({ auth: apiKey });
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+			try {
+				const prompt = `You are a professional voiceover script writer for video content. Transform these visual shot descriptions into engaging spoken narration.
+
+${projectContext ? `PROJECT CONTEXT: ${projectContext}\n` : ""}
+SHOT DESCRIPTIONS:
+${formattedShots}
+
+REQUIREMENTS:
+- Write smooth, flowing narration that a voice actor would read aloud
+- Target approximately ${targetWords} words (${targetDurationSec} seconds of audio)
+- MUST be under ${TTS_MAX_CHARS} characters total
+- Transform visual descriptions into narrative storytelling
+- Use natural, conversational language suitable for voiceover
+- Create emotional connection and maintain viewer interest
+- Do NOT describe what viewers see literally (e.g., don't say "we see a close-up of...")
+- Do NOT include stage directions, shot numbers, or technical terms
+- Do NOT use quotes, markdown formatting, or speaker labels
+- Write in second person ("you") or third person, whichever fits the content
+
+Return ONLY the voiceover script text, nothing else.`;
+
+				const chunks: string[] = [];
+				for await (const event of replicate.stream(SUMMARIZE_MODEL, {
+					input: {
+						prompt,
+						max_tokens: 1500,
+						temperature: 0.7,
+					},
+					signal: controller.signal,
+				})) {
+					chunks.push(String(event));
+				}
+
+				const script = chunks.join("").trim();
+				if (!script) {
+					throw new Error("AI returned an empty script");
+				}
+
+				// Safety check - if over limit, truncate at sentence boundary
+				if (script.length > TTS_MAX_CHARS) {
+					const truncated = script.slice(0, TTS_MAX_CHARS);
+					const lastPeriod = Math.max(
+						truncated.lastIndexOf("."),
+						truncated.lastIndexOf("!"),
+						truncated.lastIndexOf("?"),
+					);
+					if (lastPeriod > TTS_MAX_CHARS * 0.7) {
+						return { script: truncated.slice(0, lastPeriod + 1).trim() };
+					}
+					return { script: truncated.trim() };
+				}
+
+				return { script };
+			} finally {
+				clearTimeout(timeout);
+			}
+		},
+	);
+
+// ---------------------------------------------------------------------------
 // listVoices
 // ---------------------------------------------------------------------------
 

@@ -9,7 +9,7 @@ function GradientSpinner() {
 	return <div className="gradient-spinner" />;
 }
 
-type GenerationMedium = "image" | "video" | "workshop";
+type GenerationMedium = "image" | "video" | "audio" | "workshop";
 type GenerationPhase = "loading" | "success" | "error";
 
 interface GenerationMetadata {

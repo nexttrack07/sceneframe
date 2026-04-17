@@ -605,3 +605,55 @@ export const projectLocationLinks = pgTable(
 
 export type ProjectLocationLink = typeof projectLocationLinks.$inferSelect;
 export type NewProjectLocationLink = typeof projectLocationLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// audio_segments (multi-track voiceover segments)
+// ---------------------------------------------------------------------------
+
+export const audioSegments = pgTable(
+	"audio_segments",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		projectId: uuid("project_id")
+			.notNull()
+			.references(() => projects.id),
+		order: doublePrecision("order").notNull(),
+		startShotId: uuid("start_shot_id")
+			.notNull()
+			.references(() => shots.id),
+		endShotId: uuid("end_shot_id")
+			.notNull()
+			.references(() => shots.id),
+		script: text("script"),
+		voiceId: text("voice_id"),
+		targetDurationSec: integer("target_duration_sec"),
+		status: text("status")
+			.notNull()
+			.default("draft")
+			.$type<"draft" | "generating" | "done" | "error">(),
+		voiceoverAssetId: uuid("voiceover_asset_id").references(() => assets.id),
+		errorMessage: text("error_message"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow()
+			.$onUpdateFn(() => new Date()),
+	},
+	(table) => [
+		index("idx_audio_segments_project_id").on(table.projectId),
+		index("idx_audio_segments_start_shot").on(table.startShotId),
+		index("idx_audio_segments_end_shot").on(table.endShotId),
+		index("idx_audio_segments_deleted").on(table.deletedAt),
+		index("idx_audio_segments_project_order").on(table.projectId, table.order),
+		check(
+			"audio_segments_status_check",
+			sql`${table.status} IN ('draft', 'generating', 'done', 'error')`,
+		),
+	],
+);
+
+export type AudioSegment = typeof audioSegments.$inferSelect;
+export type NewAudioSegment = typeof audioSegments.$inferInsert;
