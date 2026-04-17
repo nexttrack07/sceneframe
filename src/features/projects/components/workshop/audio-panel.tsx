@@ -182,6 +182,15 @@ export function AudioPanel({
 							</div>
 						)}
 					</div>
+
+					{/* Generated Script Text */}
+					{latestVoiceover.prompt && (
+						<div className="mt-4 pt-4 border-t border-primary/10">
+							<p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+								{latestVoiceover.prompt}
+							</p>
+						</div>
+					)}
 				</div>
 			)}
 
