@@ -27,4 +27,4 @@ src/**/.omc/
 .agent-workspace
 .agent-workspace/*
 .agent-workspace-local
-.agent-workspace-local/*
+.agent-workspace-local/*.agents/tmp/
