@@ -4,7 +4,6 @@ import {
 	FileText,
 	Film,
 	Image as ImageIcon,
-	Loader2,
 	MessageSquare,
 	Send,
 	Sparkles,
@@ -13,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { GeneratingIndicator } from "@/components/ui/generating-indicator";
 import { Textarea } from "@/components/ui/textarea";
 import type { Message } from "@/db/schema";
 import {
@@ -418,12 +418,11 @@ export function ChatWorkshop({
 							<div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
 								<Film size={13} className="text-primary" />
 							</div>
-							<div className="bg-muted rounded-2xl rounded-tl-md px-4 py-3">
-								<Loader2
-									size={16}
-									className="animate-spin text-muted-foreground"
-								/>
-							</div>
+							<GeneratingIndicator
+								variant="inline"
+								size="sm"
+								showPhases={flow.isGenerating}
+							/>
 						</div>
 					)}
 				</div>
