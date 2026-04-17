@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	listVoices,
 	generateVoiceover,
+	summarizeForVoiceover,
 	listProjectVoiceovers,
 	getVoiceUsage,
 } from "@/features/audio";
@@ -91,6 +92,7 @@ export function useWorkshopAudio({ projectId }: UseWorkshopAudioArgs) {
 	}, [voices, selectedVoiceId]);
 
 	// Generate voiceover from script text
+	// Automatically summarizes long scripts (>5000 chars) using LLM
 	const handleGenerateVoiceover = useCallback(
 		async (text: string, options?: { stability?: number; similarityBoost?: number }) => {
 			if (!selectedVoiceId) {
@@ -107,10 +109,22 @@ export function useWorkshopAudio({ projectId }: UseWorkshopAudioArgs) {
 			setGenerationError(null);
 
 			try {
+				// Summarize if text exceeds TTS limit (5000 chars)
+				let finalText = text.trim();
+				if (finalText.length > 5000) {
+					const { script } = await summarizeForVoiceover({
+						data: {
+							text: finalText,
+							targetDurationSec: 60, // ~2.5 min narration
+						},
+					});
+					finalText = script;
+				}
+
 				const result = await generateVoiceover({
 					data: {
 						projectId,
-						text: text.trim(),
+						text: finalText,
 						voiceId: selectedVoiceId,
 						options,
 					},

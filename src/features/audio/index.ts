@@ -8,6 +8,7 @@
 export {
 	listVoices,
 	generateVoiceover,
+	summarizeForVoiceover,
 	selectVoiceover,
 	listProjectVoiceovers,
 	getVoiceUsage,

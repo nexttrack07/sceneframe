@@ -7,11 +7,17 @@
 import { auth } from "@clerk/tanstack-react-start/server";
 import { createServerFn } from "@tanstack/react-start";
 import { and, eq, isNull } from "drizzle-orm";
+import Replicate from "replicate";
 import { db } from "@/db/index";
 import { assets, projects } from "@/db/schema";
 import { getUserElevenLabsKey } from "@/lib/elevenlabs.server";
+import { getUserApiKey } from "@/features/projects/image-generation-helpers.server";
 import { uploadBuffer } from "@/lib/r2.server";
 import { createTTSProvider } from "./providers";
+
+const TTS_MAX_CHARS = 5000;
+const SUMMARIZE_MODEL = "anthropic/claude-4.5-haiku";
+const REPLICATE_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +46,96 @@ async function assertAuth() {
 	if (!userId) throw new Error("Unauthenticated");
 	return { userId };
 }
+
+// ---------------------------------------------------------------------------
+// summarizeForVoiceover
+// ---------------------------------------------------------------------------
+
+export const summarizeForVoiceover = createServerFn({ method: "POST" })
+	.inputValidator(
+		(data: {
+			text: string;
+			projectName?: string;
+			targetDurationSec?: number;
+		}) => data,
+	)
+	.handler(async ({ data: { text, projectName, targetDurationSec } }) => {
+		const { userId } = await assertAuth();
+
+		const trimmedText = text.trim();
+
+		// If already under limit, return as-is
+		if (trimmedText.length <= TTS_MAX_CHARS) {
+			return { script: trimmedText, wasSummarized: false };
+		}
+
+		// Use LLM to condense into a voiceover-friendly script
+		const targetWords = targetDurationSec
+			? Math.round(targetDurationSec * 2.5)
+			: 200; // ~80 seconds at 2.5 words/sec
+
+		const apiKey = await getUserApiKey(userId);
+		const replicate = new Replicate({ auth: apiKey });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REPLICATE_TIMEOUT_MS);
+
+		try {
+			const prompt = `You are a professional voiceover script writer. Convert the following content into a concise, engaging voiceover narration.
+
+${projectName ? `PROJECT: ${projectName}\n` : ""}
+ORIGINAL CONTENT:
+${trimmedText}
+
+REQUIREMENTS:
+- Write 2-3 short paragraphs suitable for spoken narration
+- Target approximately ${targetWords} words (${targetDurationSec ?? 80} seconds of audio)
+- MUST be under ${TTS_MAX_CHARS} characters total
+- Focus on the key narrative points and emotional arc
+- Use natural, conversational language that sounds good when spoken
+- Do NOT include stage directions, timestamps, or speaker labels
+- Do NOT use quotes or markdown formatting
+
+Return ONLY the voiceover script text, nothing else.`;
+
+			const chunks: string[] = [];
+			for await (const event of replicate.stream(SUMMARIZE_MODEL, {
+				input: {
+					prompt,
+					max_tokens: 1024,
+					temperature: 0.7,
+				},
+				signal: controller.signal,
+			})) {
+				chunks.push(String(event));
+			}
+
+			const script = chunks.join("").trim();
+			if (!script) {
+				throw new Error("AI returned an empty script");
+			}
+
+			// Safety check - if still over limit, truncate at sentence boundary
+			if (script.length > TTS_MAX_CHARS) {
+				const truncated = script.slice(0, TTS_MAX_CHARS);
+				const lastPeriod = Math.max(
+					truncated.lastIndexOf("."),
+					truncated.lastIndexOf("!"),
+					truncated.lastIndexOf("?"),
+				);
+				if (lastPeriod > TTS_MAX_CHARS * 0.7) {
+					return {
+						script: truncated.slice(0, lastPeriod + 1).trim(),
+						wasSummarized: true,
+					};
+				}
+				return { script: truncated.trim(), wasSummarized: true };
+			}
+
+			return { script, wasSummarized: true };
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
 
 // ---------------------------------------------------------------------------
 // listVoices
