@@ -1,4 +1,4 @@
-import { Loader2, Pencil, Plus, Star, Trash2, Users } from "lucide-react";
+import { Library, Loader2, Pencil, Plus, Star, Trash2, Users } from "lucide-react";
 import { ErrorAlert } from "@/components/ui/error-alert";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -32,6 +32,7 @@ import {
 import { IMAGE_MODELS } from "../../image-models";
 import type { CharacterWithImages } from "../../project-types";
 import { CharacterForm } from "./character-form";
+import { ImportFromLibraryDialog } from "./import-from-library-dialog";
 
 interface CharactersPanelProps {
 	projectId: string;
@@ -62,6 +63,7 @@ export function CharactersPanel({
 	const [imageModelId, setImageModelId] = useState(IMAGE_MODELS[0]?.id ?? "");
 	const [error, setError] = useState<string | null>(null);
 	const [promptDraft, setPromptDraft] = useState("");
+	const [showImportDialog, setShowImportDialog] = useState(false);
 
 	const loadCharacters = useCallback(async () => {
 		setLoading(true);
@@ -329,15 +331,26 @@ export function CharactersPanel({
 							</span>
 						</div>
 						{!showForm && !editingCharacter && (
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={() => setShowForm(true)}
-								className="h-8 gap-1 text-xs"
-							>
-								<Plus size={13} />
-								Add character
-							</Button>
+							<div className="flex items-center gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setShowImportDialog(true)}
+									className="h-8 gap-1 text-xs"
+								>
+									<Library size={13} />
+									Import from Library
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setShowForm(true)}
+									className="h-8 gap-1 text-xs"
+								>
+									<Plus size={13} />
+									Add character
+								</Button>
+							</div>
 						)}
 					</div>
 
@@ -519,6 +532,12 @@ export function CharactersPanel({
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
+			<ImportFromLibraryDialog
+				projectId={projectId}
+				open={showImportDialog}
+				onOpenChange={setShowImportDialog}
+				onImported={refresh}
+			/>
 		</Sheet>
 	);
 }

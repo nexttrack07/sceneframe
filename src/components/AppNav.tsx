@@ -24,6 +24,17 @@ export default function AppNav() {
 				>
 					Projects
 				</Link>
+				<Link
+					to="/library/characters"
+					className="text-sm px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+					activeProps={{
+						className:
+							"text-sm px-3 py-1.5 rounded-md text-foreground bg-muted font-medium",
+					}}
+					activeOptions={{ includeSearch: false }}
+				>
+					Library
+				</Link>
 			</nav>
 
 			<UserButton />

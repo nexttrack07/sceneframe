@@ -14,9 +14,13 @@ import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SignInSplatRouteImport } from './routes/sign-in/$'
 import { Route as AuthOnboardingRouteImport } from './routes/_auth/onboarding'
+import { Route as AuthLibraryRouteImport } from './routes/_auth/library'
 import { Route as AuthDashboardRouteImport } from './routes/_auth/dashboard'
+import { Route as AuthLibraryIndexRouteImport } from './routes/_auth/library/index'
 import { Route as AuthProjectsNewRouteImport } from './routes/_auth/projects/new'
 import { Route as AuthProjectsProjectIdRouteImport } from './routes/_auth/projects/$projectId'
+import { Route as AuthLibraryLocationsRouteImport } from './routes/_auth/library/locations'
+import { Route as AuthLibraryCharactersRouteImport } from './routes/_auth/library/characters'
 import { Route as AuthProjectsProjectIdIndexRouteImport } from './routes/_auth/projects/$projectId.index'
 import { Route as AuthProjectsProjectIdReferencesRouteImport } from './routes/_auth/projects/$projectId.references'
 import { Route as AuthProjectsProjectIdEditorRouteImport } from './routes/_auth/projects/$projectId.editor'
@@ -45,10 +49,20 @@ const AuthOnboardingRoute = AuthOnboardingRouteImport.update({
   path: '/onboarding',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthLibraryRoute = AuthLibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthDashboardRoute = AuthDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
   getParentRoute: () => AuthRoute,
+} as any)
+const AuthLibraryIndexRoute = AuthLibraryIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthLibraryRoute,
 } as any)
 const AuthProjectsNewRoute = AuthProjectsNewRouteImport.update({
   id: '/projects/new',
@@ -59,6 +73,16 @@ const AuthProjectsProjectIdRoute = AuthProjectsProjectIdRouteImport.update({
   id: '/projects/$projectId',
   path: '/projects/$projectId',
   getParentRoute: () => AuthRoute,
+} as any)
+const AuthLibraryLocationsRoute = AuthLibraryLocationsRouteImport.update({
+  id: '/locations',
+  path: '/locations',
+  getParentRoute: () => AuthLibraryRoute,
+} as any)
+const AuthLibraryCharactersRoute = AuthLibraryCharactersRouteImport.update({
+  id: '/characters',
+  path: '/characters',
+  getParentRoute: () => AuthLibraryRoute,
 } as any)
 const AuthProjectsProjectIdIndexRoute =
   AuthProjectsProjectIdIndexRouteImport.update({
@@ -83,10 +107,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/dashboard': typeof AuthDashboardRoute
+  '/library': typeof AuthLibraryRouteWithChildren
   '/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
+  '/library/characters': typeof AuthLibraryCharactersRoute
+  '/library/locations': typeof AuthLibraryLocationsRoute
   '/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/projects/new': typeof AuthProjectsNewRoute
+  '/library/': typeof AuthLibraryIndexRoute
   '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
   '/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
@@ -97,7 +125,10 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthDashboardRoute
   '/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
+  '/library/characters': typeof AuthLibraryCharactersRoute
+  '/library/locations': typeof AuthLibraryLocationsRoute
   '/projects/new': typeof AuthProjectsNewRoute
+  '/library': typeof AuthLibraryIndexRoute
   '/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
   '/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/projects/$projectId': typeof AuthProjectsProjectIdIndexRoute
@@ -108,10 +139,14 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren
   '/sign-in': typeof SignInRouteWithChildren
   '/_auth/dashboard': typeof AuthDashboardRoute
+  '/_auth/library': typeof AuthLibraryRouteWithChildren
   '/_auth/onboarding': typeof AuthOnboardingRoute
   '/sign-in/$': typeof SignInSplatRoute
+  '/_auth/library/characters': typeof AuthLibraryCharactersRoute
+  '/_auth/library/locations': typeof AuthLibraryLocationsRoute
   '/_auth/projects/$projectId': typeof AuthProjectsProjectIdRouteWithChildren
   '/_auth/projects/new': typeof AuthProjectsNewRoute
+  '/_auth/library/': typeof AuthLibraryIndexRoute
   '/_auth/projects/$projectId/editor': typeof AuthProjectsProjectIdEditorRoute
   '/_auth/projects/$projectId/references': typeof AuthProjectsProjectIdReferencesRoute
   '/_auth/projects/$projectId/': typeof AuthProjectsProjectIdIndexRoute
@@ -122,10 +157,14 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/dashboard'
+    | '/library'
     | '/onboarding'
     | '/sign-in/$'
+    | '/library/characters'
+    | '/library/locations'
     | '/projects/$projectId'
     | '/projects/new'
+    | '/library/'
     | '/projects/$projectId/editor'
     | '/projects/$projectId/references'
     | '/projects/$projectId/'
@@ -136,7 +175,10 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/onboarding'
     | '/sign-in/$'
+    | '/library/characters'
+    | '/library/locations'
     | '/projects/new'
+    | '/library'
     | '/projects/$projectId/editor'
     | '/projects/$projectId/references'
     | '/projects/$projectId'
@@ -146,10 +188,14 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/sign-in'
     | '/_auth/dashboard'
+    | '/_auth/library'
     | '/_auth/onboarding'
     | '/sign-in/$'
+    | '/_auth/library/characters'
+    | '/_auth/library/locations'
     | '/_auth/projects/$projectId'
     | '/_auth/projects/new'
+    | '/_auth/library/'
     | '/_auth/projects/$projectId/editor'
     | '/_auth/projects/$projectId/references'
     | '/_auth/projects/$projectId/'
@@ -198,12 +244,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthOnboardingRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/library': {
+      id: '/_auth/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof AuthLibraryRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/dashboard': {
       id: '/_auth/dashboard'
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthDashboardRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_auth/library/': {
+      id: '/_auth/library/'
+      path: '/'
+      fullPath: '/library/'
+      preLoaderRoute: typeof AuthLibraryIndexRouteImport
+      parentRoute: typeof AuthLibraryRoute
     }
     '/_auth/projects/new': {
       id: '/_auth/projects/new'
@@ -218,6 +278,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId'
       preLoaderRoute: typeof AuthProjectsProjectIdRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_auth/library/locations': {
+      id: '/_auth/library/locations'
+      path: '/locations'
+      fullPath: '/library/locations'
+      preLoaderRoute: typeof AuthLibraryLocationsRouteImport
+      parentRoute: typeof AuthLibraryRoute
+    }
+    '/_auth/library/characters': {
+      id: '/_auth/library/characters'
+      path: '/characters'
+      fullPath: '/library/characters'
+      preLoaderRoute: typeof AuthLibraryCharactersRouteImport
+      parentRoute: typeof AuthLibraryRoute
     }
     '/_auth/projects/$projectId/': {
       id: '/_auth/projects/$projectId/'
@@ -243,6 +317,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthLibraryRouteChildren {
+  AuthLibraryCharactersRoute: typeof AuthLibraryCharactersRoute
+  AuthLibraryLocationsRoute: typeof AuthLibraryLocationsRoute
+  AuthLibraryIndexRoute: typeof AuthLibraryIndexRoute
+}
+
+const AuthLibraryRouteChildren: AuthLibraryRouteChildren = {
+  AuthLibraryCharactersRoute: AuthLibraryCharactersRoute,
+  AuthLibraryLocationsRoute: AuthLibraryLocationsRoute,
+  AuthLibraryIndexRoute: AuthLibraryIndexRoute,
+}
+
+const AuthLibraryRouteWithChildren = AuthLibraryRoute._addFileChildren(
+  AuthLibraryRouteChildren,
+)
+
 interface AuthProjectsProjectIdRouteChildren {
   AuthProjectsProjectIdEditorRoute: typeof AuthProjectsProjectIdEditorRoute
   AuthProjectsProjectIdReferencesRoute: typeof AuthProjectsProjectIdReferencesRoute
@@ -262,6 +352,7 @@ const AuthProjectsProjectIdRouteWithChildren =
 
 interface AuthRouteChildren {
   AuthDashboardRoute: typeof AuthDashboardRoute
+  AuthLibraryRoute: typeof AuthLibraryRouteWithChildren
   AuthOnboardingRoute: typeof AuthOnboardingRoute
   AuthProjectsProjectIdRoute: typeof AuthProjectsProjectIdRouteWithChildren
   AuthProjectsNewRoute: typeof AuthProjectsNewRoute
@@ -269,6 +360,7 @@ interface AuthRouteChildren {
 
 const AuthRouteChildren: AuthRouteChildren = {
   AuthDashboardRoute: AuthDashboardRoute,
+  AuthLibraryRoute: AuthLibraryRouteWithChildren,
   AuthOnboardingRoute: AuthOnboardingRoute,
   AuthProjectsProjectIdRoute: AuthProjectsProjectIdRouteWithChildren,
   AuthProjectsNewRoute: AuthProjectsNewRoute,

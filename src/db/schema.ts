@@ -419,3 +419,189 @@ export const referenceImages = pgTable(
 
 export type ReferenceImage = typeof referenceImages.$inferSelect;
 export type NewReferenceImage = typeof referenceImages.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// global_characters (user-level, reusable across projects)
+// ---------------------------------------------------------------------------
+
+export const globalCharacters = pgTable(
+	"global_characters",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id),
+		name: text("name").notNull(),
+		description: text("description").notNull().default(""),
+		visualPromptFragment: text("visual_prompt_fragment").notNull().default(""),
+		primaryImageId: uuid("primary_image_id"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow()
+			.$onUpdateFn(() => new Date()),
+	},
+	(table) => [
+		index("idx_global_characters_user_id").on(table.userId),
+		index("idx_global_characters_deleted").on(table.deletedAt),
+	],
+);
+
+export type GlobalCharacter = typeof globalCharacters.$inferSelect;
+export type NewGlobalCharacter = typeof globalCharacters.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// global_character_images
+// ---------------------------------------------------------------------------
+
+export const globalCharacterImages = pgTable(
+	"global_character_images",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		characterId: uuid("character_id")
+			.notNull()
+			.references(() => globalCharacters.id),
+		url: text("url").notNull(),
+		storageKey: text("storage_key"),
+		label: text("label"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		index("idx_global_character_images_character_id").on(table.characterId),
+		index("idx_global_character_images_deleted").on(table.deletedAt),
+	],
+);
+
+export type GlobalCharacterImage = typeof globalCharacterImages.$inferSelect;
+export type NewGlobalCharacterImage = typeof globalCharacterImages.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// global_locations (user-level, reusable across projects)
+// ---------------------------------------------------------------------------
+
+export const globalLocations = pgTable(
+	"global_locations",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id),
+		name: text("name").notNull(),
+		description: text("description").notNull().default(""),
+		visualPromptFragment: text("visual_prompt_fragment").notNull().default(""),
+		primaryImageId: uuid("primary_image_id"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow()
+			.$onUpdateFn(() => new Date()),
+	},
+	(table) => [
+		index("idx_global_locations_user_id").on(table.userId),
+		index("idx_global_locations_deleted").on(table.deletedAt),
+	],
+);
+
+export type GlobalLocation = typeof globalLocations.$inferSelect;
+export type NewGlobalLocation = typeof globalLocations.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// global_location_images
+// ---------------------------------------------------------------------------
+
+export const globalLocationImages = pgTable(
+	"global_location_images",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		locationId: uuid("location_id")
+			.notNull()
+			.references(() => globalLocations.id),
+		url: text("url").notNull(),
+		storageKey: text("storage_key"),
+		label: text("label"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		index("idx_global_location_images_location_id").on(table.locationId),
+		index("idx_global_location_images_deleted").on(table.deletedAt),
+	],
+);
+
+export type GlobalLocationImage = typeof globalLocationImages.$inferSelect;
+export type NewGlobalLocationImage = typeof globalLocationImages.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// project_character_links (import global characters into projects)
+// ---------------------------------------------------------------------------
+
+export const projectCharacterLinks = pgTable(
+	"project_character_links",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		projectId: uuid("project_id")
+			.notNull()
+			.references(() => projects.id),
+		globalCharacterId: uuid("global_character_id")
+			.notNull()
+			.references(() => globalCharacters.id),
+		defaultEnabled: boolean("default_enabled").notNull().default(true),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		index("idx_project_character_links_project_id").on(table.projectId),
+		index("idx_project_character_links_character_id").on(table.globalCharacterId),
+		uniqueIndex("idx_project_character_links_unique").on(
+			table.projectId,
+			table.globalCharacterId,
+		),
+	],
+);
+
+export type ProjectCharacterLink = typeof projectCharacterLinks.$inferSelect;
+export type NewProjectCharacterLink = typeof projectCharacterLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// project_location_links (import global locations into projects)
+// ---------------------------------------------------------------------------
+
+export const projectLocationLinks = pgTable(
+	"project_location_links",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		projectId: uuid("project_id")
+			.notNull()
+			.references(() => projects.id),
+		globalLocationId: uuid("global_location_id")
+			.notNull()
+			.references(() => globalLocations.id),
+		defaultEnabled: boolean("default_enabled").notNull().default(true),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		index("idx_project_location_links_project_id").on(table.projectId),
+		index("idx_project_location_links_location_id").on(table.globalLocationId),
+		uniqueIndex("idx_project_location_links_unique").on(
+			table.projectId,
+			table.globalLocationId,
+		),
+	],
+);
+
+export type ProjectLocationLink = typeof projectLocationLinks.$inferSelect;
+export type NewProjectLocationLink = typeof projectLocationLinks.$inferInsert;

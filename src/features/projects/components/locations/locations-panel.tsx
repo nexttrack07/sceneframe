@@ -1,4 +1,4 @@
-import { Loader2, MapPinned, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { Library, Loader2, MapPinned, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	AlertDialog,
@@ -30,6 +30,7 @@ import {
 	uploadLocationReferenceImage,
 } from "../../location-actions";
 import type { Location, LocationWithImages } from "../../project-types";
+import { ImportFromLibraryDialog } from "./import-from-library-dialog";
 import { LocationForm } from "./location-form";
 
 interface LocationsPanelProps {
@@ -63,6 +64,7 @@ export function LocationsPanel({
 	const [imageModelId, setImageModelId] = useState("google/nano-banana");
 	const [error, setError] = useState<string | null>(null);
 	const [promptDraft, setPromptDraft] = useState("");
+	const [showImportDialog, setShowImportDialog] = useState(false);
 
 	const loadLocations = useCallback(async () => {
 		setLoading(true);
@@ -312,18 +314,30 @@ export function LocationsPanel({
 								{loading ? "Loading..." : `${sortedLocations.length} locations`}
 							</span>
 						</div>
-						<Button
-							type="button"
-							size="sm"
-							onClick={() => {
-								setEditingLocation(null);
-								setShowForm((current) => !current);
-							}}
-							className="gap-1.5"
-						>
-							<Plus size={12} />
-							Add location
-						</Button>
+						<div className="flex items-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => setShowImportDialog(true)}
+								className="gap-1.5"
+							>
+								<Library size={12} />
+								Import from Library
+							</Button>
+							<Button
+								type="button"
+								size="sm"
+								onClick={() => {
+									setEditingLocation(null);
+									setShowForm((current) => !current);
+								}}
+								className="gap-1.5"
+							>
+								<Plus size={12} />
+								Add location
+							</Button>
+						</div>
 					</div>
 
 					{(showForm || editingLocation) && (
@@ -485,6 +499,12 @@ export function LocationsPanel({
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
+			<ImportFromLibraryDialog
+				projectId={projectId}
+				open={showImportDialog}
+				onOpenChange={setShowImportDialog}
+				onImported={refresh}
+			/>
 		</Sheet>
 	);
 }
